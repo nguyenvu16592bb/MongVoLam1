@@ -269,11 +269,18 @@ const Info = {
 
     const mini = $('#ii-skillmini');
     if (mini) {
-      mini.innerHTML = [
-        ['👊', 'Song Ma Quyền', 10, 82],
-        ['🔥', 'Liệt Hỏa Chưởng', 9, 64],
-        ['🌪️', 'Vô Ảnh Cước', 9, 48]
-      ].map(x => `<div class="sm"><span class="i">${x[0]}</span><span>${x[1]}</span><span style="color:#8c1616">Lv.${x[2]}</span><span class="bar"><i style="width:${x[3]}%"></i></span></div>`).join('');
+      /* HERO20-BEGIN — hiện bộ skill riêng của nhân vật đang chọn (3 thường +
+         1 tuyệt kỹ, lấy từ heroSkills): tên, icon, hồi chiêu, tốn nội lực,
+         tag TUYỆT KỸ; fallback heroSkills() đã lo khi nhân vật thiếu skill. */
+      const hSkills = heroSkills(h.id);
+      const ult = hSkills.find(s => s.ult);
+      mini.innerHTML = hSkills.map((s, k) => {
+        const pct = s.ult ? 100 : Math.round(55 + s.mult * 12);
+        return `<div class="sm" title="${esc(s.desc)} — Hồi chiêu ${s.cd}s · Tốn ${s.cost} nội lực${s.aoe ? ' · Diện rộng' : ''}${s.kind === 'heal' ? ' · Hồi máu' : ''}">
+          <span class="i">${s.icon}</span><span>${esc(s.name)}${s.ult ? ' <b style="color:#f0b429">★TUYỆT KỸ</b>' : ''}</span>
+          <span style="color:#8c1616">Lv.10</span><span class="bar"><i style="width:${pct}%"></i></span></div>`;
+      }).join('') + (ult ? `<div class="sm" style="color:#7c5a10"><span class="i">🐉</span><span>Tuyệt kỹ: ${esc(ult.name)}</span><span>x${ult.mult} công lực</span></div>` : '');
+      /* HERO20-END */
     }
 
     $('#ii-gold').textContent = fmtFull(State.player.gold);

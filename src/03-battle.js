@@ -114,11 +114,21 @@ const Battle = {
     }
     this.arenaGroup = new THREE.Group();
     scene.add(this.arenaGroup);
+    /* ARENA10-BEGIN — map id cũ (save v2) sang Battle Map 1..10 + dispatch 7 builder mới */
+    key = (typeof resolveArenaKey === 'function') ? resolveArenaKey(key) : key;
     this.arena = key;
     const b = (ARENAS[key] && ARENAS[key].builder) || key;
     if (b === 'buddha') this.buildBuddha();
     else if (b === 'city') this.buildCity();
+    else if (b === 'snow') this.buildSnow();
+    else if (b === 'desert') this.buildDesert();
+    else if (b === 'volcano') this.buildVolcano();
+    else if (b === 'swamp') this.buildSwamp();
+    else if (b === 'sky') this.buildSky();
+    else if (b === 'cave') this.buildCave();
+    else if (b === 'lake') this.buildLake();
     else this.buildBamboo();
+    /* ARENA10-END */
     ArenaUI.mark(key);
   },
 
@@ -388,11 +398,16 @@ const Battle = {
     const waveMul = n === 1 ? 1 : n === 2 ? 1.22 : 1.5;
     const hpMul = (.78 + .42 * arena.mul) * waveMul;
     const atkMul = (.82 + .32 * arena.mul) * (n === 1 ? 1 : n === 2 ? 1.1 : 1.22);
-    const defs = n === 3
-      ? [ENEMY_DEFS[0], ENEMY_DEFS[1], ENEMY_DEFS[2], ENEMY_DEFS[3]]
+    /* ARENA10-BEGIN — dàn quái riêng từng Battle Map; đợt 3 có Boss riêng của map */
+    const roster = (typeof ARENA_ENEMIES !== 'undefined' && ARENA_ENEMIES[this.arena]) || ENEMY_DEFS;
+    const bossDef = (typeof ARENA_BOSSES !== 'undefined' && ARENA_BOSSES[this.arena]) || null;
+    const rot = k => roster[(k + (n - 1)) % roster.length];
+    const defs = n === 3 && bossDef
+      ? [bossDef, rot(0), rot(1), rot(2)]
       : n === 2
-        ? [ENEMY_DEFS[2], ENEMY_DEFS[3], ENEMY_DEFS[1], ENEMY_DEFS[2]]
-        : [ENEMY_DEFS[1], ENEMY_DEFS[2], ENEMY_DEFS[3], ENEMY_DEFS[1]];
+        ? [rot(1), rot(2), rot(0), rot(1)]
+        : [rot(0), rot(1), rot(2), rot(0)];
+    /* ARENA10-END */
     const pos = [[4.8, -2.4], [5.6, .2], [4.2, 2.6], [6.6, -4.0]];
 
     defs.forEach((d, i) => {
@@ -426,6 +441,15 @@ const Battle = {
     this.clearEffects();
     this.spawnAllies();
     this.spawnWave(1);
+    /* HERO20-BEGIN — bộ skill của đội trưởng cho trận này: clone từ
+       heroSkills(leader) để giữ currentCd/lvl riêng từng trận; hết nội lực
+       (mp) thì không tung được chiêu tốn nội lực. Fallback SKILLS chung cũ
+       khi nhân vật thiếu skill (heroSkills đã lo). */
+    this.mp = 100;
+    this.maxMp = 100;
+    const leaderId = (State.heroes[State.leader] && State.heroes[State.leader].id) || 'det';
+    this.heroSkills = heroSkills(leaderId).map(s => Object.assign({}, s, { currentCd: 0, lvl: 10 }));
+    /* HERO20-END */
     SKILLS.forEach(s => { s.currentCd = 0; });
 
     this.active = true;
@@ -497,17 +521,33 @@ const Battle = {
   },
 
   /* ---------- chiêu thức ---------- */
+  /* HERO20-BEGIN — skill đang dùng trong trận: bộ skill riêng của đội trưởng
+     (Battle.heroSkills, build ở start), fallback SKILLS chung cũ. */
+  activeSkills() {
+    return (Array.isArray(this.heroSkills) && this.heroSkills.length >= 4) ? this.heroSkills : SKILLS;
+  },
+  /* HERO20-END */
+
   triggerSkill(i) {
     if (!this.active || this.finished) return;
-    const sk = SKILLS[i];
+    /* HERO20-BEGIN — lấy skill theo đội trưởng thay vì SKILLS chung cố định */
+    const sk = this.activeSkills()[i];
     if (!sk) return;
     if (sk.currentCd > 0) {
       UI.toast(`${sk.name} đang hồi chiêu (${sk.currentCd.toFixed(1)}s)`, 'red');
       return;
     }
+    if (typeof this.mp === 'number' && (sk.cost || 0) > this.mp) {
+      UI.toast(`${sk.name} cần ${sk.cost} nội lực (đang có ${Math.floor(this.mp)})`, 'red');
+      return;
+    }
+    /* HERO20-END */
     const allies = this.allies.filter(u => !u.dead);
     const enemies = this.enemies.filter(u => !u.dead);
     if (!allies.length || !enemies.length) return;
+    /* HERO20-BEGIN — trừ nội lực sau khi đã chắc chắn có mục tiêu để đánh */
+    if (typeof this.mp === 'number') this.mp = Math.max(0, this.mp - (sk.cost || 0));
+    /* HERO20-END */
 
     sk.currentCd = sk.cd;
     const caster = allies[0];
@@ -519,20 +559,25 @@ const Battle = {
     Sfx.skill();
     this.spawnVFX(target.mesh.position, sk.color, sk.ring);
 
+    /* HERO20-BEGIN — kind 'heal' hồi máu toàn đội (hồi 10% Mệnh tối đa × mult),
+       kind 'dmg' gây sát thương như cũ (aoe = toàn bộ địch, không aoe = 1 mục tiêu) */
+    if (sk.kind === 'heal') {
+      allies.forEach(a => {
+        const heal = a.maxHp * .10 * (sk.mult || 1);
+        a.hp = Math.min(a.maxHp, a.hp + heal);
+        this.floatText(a.mesh.position, 2.2, '+' + fmt(heal * 40), 'heal');
+      });
+      this.setLog(`Thi triển [${sk.name}] — hồi phục cho toàn đội!`);
+      return;
+    }
     const list = sk.aoe ? enemies : [target];
     list.forEach(en => {
       const crit = Math.random() < .62;
       const dmg = caster.atk * sk.mult * rnd(.9, 1.15) * (crit ? 1.45 : 1);
       this.applyDamage(en, dmg, crit);
     });
-    if (i === 3) {
-      allies.forEach(a => {
-        const heal = a.maxHp * .12;
-        a.hp = Math.min(a.maxHp, a.hp + heal);
-        this.floatText(a.mesh.position, 2.2, '+' + fmt(heal * 40), 'heal');
-      });
-    }
     this.setLog(`Thi triển [${sk.name}] — ${list.length} mục tiêu trúng đòn!`);
+    /* HERO20-END */
   },
 
   applyDamage(target, dmg, crit) {
@@ -584,6 +629,12 @@ const Battle = {
     State.stats.wins++;
     State.player.gold += gold;
     State.player.silver += silver;
+    /* ARENA10-BEGIN — thắng trận nhận thêm phần thưởng riêng của Boss map này */
+    if (a.bossReward) {
+      addItem(a.bossReward, a.bossRewardIcon || '🎁', 'Bảo vật', 'Phần thưởng Boss ' + (a.boss || a.name), 1);
+      UI.toast(`🏆 Hạ Boss ${a.boss} — nhận ${a.bossReward}!`, 'gold');
+    }
+    /* ARENA10-END */
     gainExp(exp, true);
     progressQuest('q2', 1);
     progressQuest('q5', 1);
@@ -677,13 +728,16 @@ const Battle = {
     const enemies = this.enemies.filter(u => !u.dead);
 
     // hồi chiêu + auto skill
-    SKILLS.forEach((sk, i) => {
+    /* HERO20-BEGIN — hồi chiêu + hồi nội lực theo bộ skill của đội trưởng */
+    if (typeof this.mp === 'number') this.mp = Math.min(this.maxMp || 100, this.mp + sdt * 6);
+    this.activeSkills().forEach((sk, i) => {
       if (sk.currentCd > 0) {
         sk.currentCd = Math.max(0, sk.currentCd - sdt);
       } else if (allies.length && enemies.length && State.settings.autoBattle && State.settings.autoSkill && Math.random() < .05) {
         this.triggerSkill(i);
       }
     });
+    /* HERO20-END */
 
     allies.forEach(a => {
       a.phase += sdt * 6;

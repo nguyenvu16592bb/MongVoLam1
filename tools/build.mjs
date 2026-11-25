@@ -47,3 +47,15 @@ writeFileSync(path.join(chkDir, 'game.js'), js, 'utf8');
 
 const kb = (n) => Math.round(n / 1024);
 console.log(`OK -> ${dest} (${kb(statSync(dest).size)} KB, js ${kb(Buffer.byteLength(js, 'utf8'))} KB)`);
+
+/* SHOP-BEGIN */
+// Ghép Shop.html từ src/shop.template.html + src/07-shop.js (trang chợ độc lập,
+// tự chứa, không CDN). Build lại mongvolam.html không đổi ngoài hook chợ.
+const shopTpl = readText(path.join(src, 'shop.template.html'));
+const shopJs = readText(path.join(src, '07-shop.js'));
+if (shopJs.includes('</script')) throw new Error('07-shop.js chua </script');
+const shopOut = shopTpl.replaceAll('__SHOP__', () => shopJs);
+const shopDest = path.join(root, 'Shop.html');
+writeFileSync(shopDest, shopOut, 'utf8');
+console.log(`OK -> ${shopDest} (${kb(statSync(shopDest).size)} KB)`);
+/* SHOP-END */

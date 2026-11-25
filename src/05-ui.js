@@ -320,10 +320,14 @@ Object.assign(UI, {
     const hb = $('#b-hp'); if (hb) hb.style.width = hpPct + '%';
     set('b-hptext', fmt(leader.hp) + ' / ' + fmt(leader.maxHp));
 
-    const ready = SKILLS.reduce((a, s) => a + (s.currentCd <= 0 ? 1 : 0), 0) / SKILLS.length;
-    const mpPct = Math.round(35 + ready * 65);
+    /* HERO20-BEGIN — thanh nội lực lấy từ Battle.mp (hồi dần trong trận);
+       chưa vào trận thì giữ cách tính cũ theo số skill sẵn sàng */
+    const mpPct = (typeof Battle !== 'undefined' && typeof Battle.mp === 'number' && Battle.active)
+      ? Math.round(clamp(Battle.mp / (Battle.maxMp || 100) * 100, 0, 100))
+      : Math.round(35 + (SKILLS.reduce((a, s) => a + (s.currentCd <= 0 ? 1 : 0), 0) / SKILLS.length) * 65);
     const mb = $('#b-mp'); if (mb) mb.style.width = mpPct + '%';
     set('b-mptext', mpPct + '%');
+    /* HERO20-END */
 
     set('b-gold', fmtFull(State.player.gold));
     set('b-silver', fmtFull(State.player.silver));
@@ -342,14 +346,25 @@ Object.assign(UI, {
     set('qi-l-name', hero.name);
     set('qi-r-name', (aliveEnemies[0] && aliveEnemies[0].name) || 'Toàn diệt');
 
-    SKILLS.forEach((s, i) => {
+    /* HERO20-BEGIN — nút skill 1–4 hiển thị theo bộ skill của đội trưởng
+       (tên/icon/hồi chiêu/cấp); chưa vào trận thì fallback SKILLS chung cũ */
+    const bSkills = (typeof Battle !== 'undefined' && Battle.activeSkills) ? Battle.activeSkills() : SKILLS;
+    bSkills.forEach((s, i) => {
       const el = document.getElementById('cd-' + i);
       if (!el) return;
+      const slot = el.parentElement;
+      if (slot) {
+        const fill = slot.querySelector('.fill');
+        if (fill && fill.textContent !== s.icon) fill.textContent = s.icon;
+        const tip = `${s.name}${s.ult ? ' ★ TUYỆT KỸ' : ''} — ${s.desc} (Hồi ${s.cd}s · Tốn ${s.cost} nội lực · phím ${i + 1})`;
+        if (slot.getAttribute('title') !== tip) slot.setAttribute('title', tip);
+      }
       if (s.currentCd > 0) { el.classList.remove('hidden'); el.textContent = Math.ceil(s.currentCd); }
       else el.classList.add('hidden');
       const lv = el.parentElement.querySelector('.lv');
       if (lv) lv.textContent = 'Lv.' + (s.lvl || 10);
     });
+    /* HERO20-END */
     const ab = $('#auto-badge');
     if (ab) ab.textContent = State.settings.autoBattle ? 'AUTO' : 'TAY';
     const sp = $('#battle-speed-text');
@@ -416,8 +431,14 @@ Object.assign(UI, {
   },
 
   mapDetailHTML(a) {
+    /* ARENA10-BEGIN — chi tiết map: dàn quái, kỹ năng Boss, phần thưởng Boss */
+    const foes = (a.enemies && a.enemies.length) ? `<div class="ms">👹 Quái trấn giữ: ${esc(a.enemies.join(' · '))}</div>` : '';
+    const skill = a.bossSkill ? `<div class="ms">⚡ Kỹ năng Boss: <b style="color:#ffb4b4">${esc(a.bossSkill)}</b></div>` : '';
+    const reward = a.bossReward ? `<div class="ms">🏆 Thưởng Boss: <b style="color:#ffd97a">${esc(a.bossRewardIcon || '')} ${esc(a.bossReward)}</b></div>` : '';
+    /* ARENA10-END */
     return `<div class="mt"><span class="tag">${esc(a.badge)}</span>${a.isBoss ? '<span class="tag red">🔥 BOSS CUỐI</span>' : ''}</div>
       <div class="ms" style="margin-top:4px">👹 Trấn giữ: <b style="color:#ffe3ac">${esc(a.boss)}</b></div>
+      ${foes}${skill}${reward}
       <div class="ms">🎖️ Cấp đề nghị: ${esc(a.recLvl)} <span class="muted">(chỉ hiển thị, không khóa map)</span></div>
       <div class="ms">🎁 Vật phẩm rơi: ${esc(a.drops)}</div>
       <p style="margin-top:4px">${esc(a.desc)}</p>`;
@@ -452,25 +473,31 @@ Object.assign(UI, {
     }
     if (kind === 'arena') {
       const diff = a => a.mul <= 1.5 ? ['Dễ', 'green'] : a.mul <= 2.5 ? ['Trung', 'blue'] : ['Khó', 'red'];
-      const sel = (UI._selectedArena && ARENAS[UI._selectedArena]) ? UI._selectedArena
-        : (ARENAS[Battle.arena] ? Battle.arena : 'bamboo');
+      /* ARENA10-BEGIN — modal chỉ liệt kê 10 Battle Map (ẩn 8 id legacy), xếp theo số map */
+      let sel = (UI._selectedArena && ARENAS[UI._selectedArena]) ? UI._selectedArena
+        : (ARENAS[Battle.arena] ? Battle.arena : 'bm1');
+      if (typeof resolveArenaKey === 'function') sel = resolveArenaKey(sel);
       UI._selectedArena = sel;
-      const cards = Object.keys(ARENAS).map(k => {
+      const keys = Object.keys(ARENAS).filter(k => !ARENAS[k].legacy)
+        .sort((x, y) => (ARENAS[x].num || 0) - (ARENAS[y].num || 0));
+      const cards = keys.map(k => {
         const a = ARENAS[k];
         const [label, cls] = diff(a);
         return `<div class="map-card ${k === sel ? 'on' : ''} ${a.isBoss ? 'boss' : ''}" data-act="map-select" data-arena="${k}" role="button" tabindex="0">
           <div class="mt"><span style="font-size:18px">${a.icon}</span> ${esc(a.name)} <span class="tag ${cls}">${label}</span></div>
           <div class="ms">${esc(a.tip)}</div>
+          <div class="ms">👹 ${esc((a.enemies || []).join(' · '))} — Boss: <b style="color:#ffe3ac">${esc(a.boss)}</b></div>
           <div class="ms" style="color:#ffd97a">+${fmt(a.exp)} EXP · +${fmt(a.silver)} bạc · ${a.gold} KNB</div>
         </div>`;
       }).join('');
-      const body = `<p class="muted" style="margin-bottom:8px">Tám chiến trường, ba độ khó. Chạm vào một map để xem chi tiết, rồi Xuất Chiến để đánh 3 đợt ma giáo nhận thưởng lớn.</p>
+      const body = `<p class="muted" style="margin-bottom:8px">Mười Battle Map, độ khó tăng dần từ Map 1 đến Map 10. Chạm vào một map để xem chi tiết quái, Boss và kỹ năng Boss, rồi Xuất Chiến để đánh 3 đợt nhận thưởng lớn.</p>
         <div class="map-grid">${cards}</div>
         <div class="map-detail" id="map-detail">${this.mapDetailHTML(ARENAS[sel])}</div>
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
           <button class="btn red btn-lg" id="map-start-btn" data-act="arena-start" data-arena="${sel}">⚔️ Xuất Chiến</button>
           <button class="btn dark btn-lg" data-act="close-modal">← Quay lại</button>
         </div>`;
+      /* ARENA10-END */
       return { icon: '⚔️', title: 'Chọn chiến trường', body };
     }
     if (kind === 'recruit') {
@@ -808,7 +835,9 @@ Object.assign(UI, {
         }
         case 'arena-start': this.closeModal(); Battle.start(el.dataset.arena); break;
         case 'arena': if (Battle.active) Battle.start(el.dataset.arena); break;
-        case 'open-shop': this.openModal('shop'); break;
+        /* SHOP-BEGIN */
+        case 'open-shop': SaveManager.save(); location.href = 'Shop.html'; break;
+        /* SHOP-END */
         case 'open-bag': this.openModal('bag'); break;
         case 'open-quests': this.openModal('quests'); break;
         case 'open-skills': this.openModal('skills'); break;
@@ -839,7 +868,9 @@ Object.assign(UI, {
         case 'battle-restart': Battle.restart(); break;
         case 'battle-again': this.hideResult(); Battle.restart(); break;
         case 'result-world': this.hideResult(); Battle.exit(); break;
-        case 'merchant-shop': $('#dialogue').classList.remove('on'); this.openModal('shop'); break;
+        /* SHOP-BEGIN */
+        case 'merchant-shop': $('#dialogue').classList.remove('on'); SaveManager.save(); location.href = 'Shop.html'; break;
+        /* SHOP-END */
         case 'close-dialogue': $('#dialogue').classList.remove('on'); break;
         case 'save-now': SaveManager.save(); this.toast('Đã lưu tiến trình!', 'green'); break;
         case 'reset-ask': this.openModal('reset'); break;

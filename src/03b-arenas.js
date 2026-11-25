@@ -368,3 +368,340 @@ Object.assign(Battle, {
     this.lanterns.push(lanternPost(g, -7.6, 6.4, 1), lanternPost(g, 7.6, 6.4, 1));
   }
 });
+
+/* ============================================================================
+   ARENA10-BEGIN — Battle Map 4..10: 7 builder 3D mới (tuyết, sa mạc, núi lửa,
+   đầm lầy, vân cung, hang quỷ, hồ sen). Tái dùng helper chung + ArenaTex,
+   không copy-paste builder cũ. Map 1..3 dùng lại buildBamboo/buildBuddha/buildCity.
+   ========================================================================== */
+
+/* Texture riêng cho 7 map mới (dùng chung ArenaTex.noise). */
+Object.assign(ArenaTex, {
+  snow() { return this._get('snow', () => { const t = this.noise('#e8f1f8', ['#ffffff', '#d3e5f2', '#c2d8ea', '#f4f8fc'], 256); t.repeat.set(8, 8); return t; }); },
+  sand() { return this._get('sand', () => { const t = this.noise('#d9b06a', ['#c89a52', '#e8c887', '#b98a44', '#f0d194'], 256); t.repeat.set(8, 8); return t; }); },
+  lavaRock() { return this._get('lavaRock', () => { const t = this.noise('#2b2320', ['#3d2f28', '#1c1714', '#4a2c1e', '#5c1f12'], 256); t.repeat.set(8, 8); return t; }); },
+  swamp() { return this._get('swamp', () => { const t = this.noise('#3d4a26', ['#2f3d1e', '#4c5a30', '#556b35', '#26331a'], 256); t.repeat.set(8, 8); return t; }); },
+  cloud() { return this._get('cloud', () => { const t = this.noise('#dfeefc', ['#ffffff', '#cfe4f8', '#eef6ff', '#bcd8f2'], 256); t.repeat.set(8, 8); return t; }); },
+  caveRock() { return this._get('caveRock', () => { const t = this.noise('#241f2e', ['#322a40', '#1a1522', '#3d3350', '#120e1a'], 256); t.repeat.set(8, 8); return t; }); },
+  lake() { return this._get('lake', () => { const t = this.noise('#1d6f8e', ['#2a8ab0', '#16607e', '#4db2d4', '#0f4f6b']); t.repeat.set(6, 6); return t; }); }
+});
+
+/* Helper chung cho các builder mới (tránh lặp code nền/đài/đá/phân tán). */
+function arenaBase(g, scene, bg, fogColor, fogDensity) {
+  scene.background = new THREE.Color(bg);
+  scene.fog = new THREE.FogExp2(fogColor, fogDensity);
+  this.lanterns = [];
+  this.fireflies = null;
+}
+function flatGround(g, material, size) {
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(size || 96, size || 96),
+    material);
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  g.add(ground);
+  return ground;
+}
+function daisDisc(g, r, mat, y) {
+  const dais = new THREE.Mesh(new THREE.CylinderGeometry(r, r + .5, .42, 48), mat);
+  dais.position.y = y == null ? .21 : y;
+  dais.receiveShadow = true;
+  g.add(dais);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(r + .12, .1, 8, 64),
+    new THREE.MeshStandardMaterial({ color: '#d9b45e', metalness: .55, roughness: .38 }));
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = (y == null ? .21 : y) + .23;
+  g.add(rim);
+  return dais;
+}
+function scatterRocks(g, n, rMin, rMax, mat, sMin, sMax) {
+  for (let i = 0; i < n; i++) {
+    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(.7 + Math.random() * .8, 0), mat);
+    const a = Math.random() * Math.PI * 2;
+    const r = rMin + Math.random() * (rMax - rMin);
+    rock.position.set(Math.cos(a) * r, .35, Math.sin(a) * r);
+    rock.scale.set(1.3, .7, 1.1);
+    rock.rotation.y = Math.random() * Math.PI;
+    rock.castShadow = true;
+    g.add(rock);
+  }
+}
+function driftParticles(g, n, color, size, spread, yMin, yMax, opacity) {
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, r = 3 + Math.random() * spread;
+    pos[i * 3] = Math.cos(a) * r;
+    pos[i * 3 + 1] = yMin + Math.random() * (yMax - yMin);
+    pos[i * 3 + 2] = Math.sin(a) * r;
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+    color, size, transparent: true, opacity: opacity == null ? .85 : opacity,
+    blending: THREE.AdditiveBlending, depthWrite: false
+  }));
+  g.add(pts);
+  return pts;
+}
+function glowCrystal(g, x, z, color, h, r) {
+  const m = new THREE.Mesh(new THREE.OctahedronGeometry(r || .7, 0),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: .9, roughness: .3 }));
+  m.position.set(x, (h || 1.4) / 2, z);
+  m.scale.y = (h || 1.4) / (r || .7) / 1.4 + .8;
+  m.castShadow = true;
+  g.add(m);
+  return m;
+}
+function coneTree(g, x, z, h, color) {
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: .85 });
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.18, .28, 1.2, 7),
+    new THREE.MeshStandardMaterial({ color: '#3f2a16', roughness: .9 }));
+  trunk.position.set(x, .6, z);
+  g.add(trunk);
+  for (let i = 0; i < 3; i++) {
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(1.6 - i * .42, 2.2, 8), mat);
+    cone.position.set(x, 1.4 + i * 1.5, z);
+    cone.castShadow = true;
+    g.add(cone);
+  }
+}
+
+Object.assign(Battle, {
+  /* Battle Map 4 — Tuyết Sơn Băng Phong */
+  buildSnow() {
+    const g = this.arenaGroup, scene = this.scene;
+    arenaBase.call(this, g, scene, 0x9db8c9, 0xbdd2e2, .011);
+    flatGround(g, new THREE.MeshStandardMaterial({ map: ArenaTex.snow(), roughness: .9 }));
+    const iceMat = new THREE.MeshStandardMaterial({ map: ArenaTex.snow(), color: '#cfe8f5', roughness: .35, metalness: .15 });
+    daisDisc(g, 11.6, iceMat);
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x8fa3b5, roughness: .9 });
+    scatterRocks(g, 12, 12, 20, rockMat);
+    for (let i = 0; i < 10; i++) {
+      const a = Math.random() * Math.PI * 2, dist = 13 + Math.random() * 7;
+      coneTree(g, Math.cos(a) * dist, Math.sin(a) * dist, 5, 0x1d4d33);
+    }
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      glowCrystal(g, Math.cos(a) * 15, Math.sin(a) * 15, 0x7dd3fc, 1.6 + Math.random(), .6);
+    }
+    const mtn = new THREE.Mesh(new THREE.ConeGeometry(9, 12, 4),
+      new THREE.MeshStandardMaterial({ map: ArenaTex.snow(), color: '#dbe9f5', roughness: .85 }));
+    mtn.position.set(0, 5, -24); mtn.rotation.y = Math.PI / 4; g.add(mtn);
+    this.fireflies = driftParticles(g, 110, 0xffffff, .13, 14, .5, 8, .8);
+    this.lanterns.push(lanternPost(g, -12.4, .4, 1), lanternPost(g, 12.4, .4, 1));
+  },
+
+  /* Battle Map 5 — Sa Mạc Hoàng Kim */
+  buildDesert() {
+    const g = this.arenaGroup, scene = this.scene;
+    arenaBase.call(this, g, scene, 0xc98f4e, 0xd9b06a, .01);
+    flatGround(g, new THREE.MeshStandardMaterial({ map: ArenaTex.sand(), roughness: .98 }));
+    const stoneMat = new THREE.MeshStandardMaterial({ map: ArenaTex.stone(), color: '#c9a86a', roughness: .85 });
+    daisDisc(g, 11.6, stoneMat);
+    const duneMat = new THREE.MeshStandardMaterial({ map: ArenaTex.sand(), color: '#e0bd7e', roughness: 1 });
+    for (let i = 0; i < 7; i++) {
+      const a = Math.random() * Math.PI * 2, dist = 14 + Math.random() * 8;
+      const dune = new THREE.Mesh(new THREE.SphereGeometry(4 + Math.random() * 3, 12, 8), duneMat);
+      dune.scale.set(1.4, .32, 1);
+      dune.position.set(Math.cos(a) * dist, -.2, Math.sin(a) * dist);
+      g.add(dune);
+    }
+    const pyramid = new THREE.Mesh(new THREE.ConeGeometry(10, 9, 4),
+      new THREE.MeshStandardMaterial({ map: ArenaTex.sand(), color: '#d4a95e', roughness: .9 }));
+    pyramid.position.set(0, 4.2, -24); pyramid.rotation.y = Math.PI / 4; pyramid.castShadow = true; g.add(pyramid);
+    const oasis = new THREE.Mesh(new THREE.PlaneGeometry(10, 7),
+      new THREE.MeshStandardMaterial({ map: ArenaTex.water(), color: '#48a6a3', roughness: .2, metalness: .3 }));
+    oasis.rotation.x = -Math.PI / 2; oasis.position.set(14, .05, 8); g.add(oasis);
+    const cactusMat = new THREE.MeshStandardMaterial({ color: 0x2f7a3a, roughness: .8 });
+    [[-14, 6], [13, -9], [-10, -12]].forEach(p => {
+      const c = new THREE.Mesh(new THREE.CylinderGeometry(.5, .6, 3.4, 8), cactusMat);
+      c.position.set(p[0], 1.7, p[1]); c.castShadow = true; g.add(c);
+      const arm = new THREE.Mesh(new THREE.CylinderGeometry(.3, .3, 1.4, 8), cactusMat);
+      arm.position.set(p[0] + .7, 2.2, p[1]); arm.rotation.z = Math.PI / 2; g.add(arm);
+    });
+    scatterRocks(g, 8, 13, 20, stoneMat);
+    this.fireflies = driftParticles(g, 70, 0xf0c98a, .16, 14, .5, 6, .6);
+  },
+
+  /* Battle Map 6 — Núi Lửa Thiên Hỏa */
+  buildVolcano() {
+    const g = this.arenaGroup, scene = this.scene;
+    arenaBase.call(this, g, scene, 0x2a1210, 0x3d1a12, .012);
+    flatGround(g, new THREE.MeshStandardMaterial({ map: ArenaTex.lavaRock(), roughness: .95 }));
+    const obsMat = new THREE.MeshStandardMaterial({ map: ArenaTex.lavaRock(), color: '#4a3430', roughness: .85 });
+    daisDisc(g, 11.6, obsMat);
+    const volcano = new THREE.Mesh(new THREE.ConeGeometry(12, 13, 8),
+      new THREE.MeshStandardMaterial({ map: ArenaTex.lavaRock(), color: '#3a2a24', roughness: .95 }));
+    volcano.position.set(0, 6, -24); volcano.castShadow = true; g.add(volcano);
+    const crater = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 2.6, 1, 12),
+      new THREE.MeshStandardMaterial({ color: 0xff6a00, emissive: 0xff4400, emissiveIntensity: 1.6 }));
+    crater.position.set(0, 12.4, -24); g.add(crater);
+    const lavaMat = new THREE.MeshStandardMaterial({ color: 0xff5500, emissive: 0xff3300, emissiveIntensity: 1.4, roughness: .4 });
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2 + .4;
+      const pool = new THREE.Mesh(new THREE.CircleGeometry(1.6 + Math.random(), 14), lavaMat);
+      pool.rotation.x = -Math.PI / 2;
+      pool.position.set(Math.cos(a) * 15, .06, Math.sin(a) * 15);
+      g.add(pool);
+    }
+    scatterRocks(g, 10, 13, 20, obsMat);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      glowCrystal(g, Math.cos(a) * 14, Math.sin(a) * 14, 0xff7a1a, 1.4, .55);
+    }
+    this.fireflies = driftParticles(g, 100, 0xffa040, .15, 14, .5, 9, .9);
+    this.lanterns.push(lanternPost(g, -12.4, .4, 1), lanternPost(g, 12.4, .4, 1));
+  },
+
+  /* Battle Map 7 — Đầm Lầy U Ám */
+  buildSwamp() {
+    const g = this.arenaGroup, scene = this.scene;
+    arenaBase.call(this, g, scene, 0x1c2a16, 0x2c3d22, .016);
+    flatGround(g, new THREE.MeshStandardMaterial({ map: ArenaTex.swamp(), roughness: .95 }));
+    const stoneMat = new THREE.MeshStandardMaterial({ map: ArenaTex.stone(), color: '#7d8478', roughness: .9 });
+    daisDisc(g, 11.6, stoneMat);
+    const murkMat = new THREE.MeshStandardMaterial({ map: ArenaTex.water(), color: '#4a6b2a', roughness: .35, metalness: .2 });
+    for (let i = 0; i < 6; i++) {
+      const a = Math.random() * Math.PI * 2, dist = 13 + Math.random() * 7;
+      const pond = new THREE.Mesh(new THREE.CircleGeometry(2 + Math.random() * 1.6, 14), murkMat);
+      pond.rotation.x = -Math.PI / 2;
+      pond.position.set(Math.cos(a) * dist, .05, Math.sin(a) * dist);
+      g.add(pond);
+    }
+    const deadMat = new THREE.MeshStandardMaterial({ color: 0x3f342a, roughness: .95 });
+    for (let i = 0; i < 9; i++) {
+      const a = Math.random() * Math.PI * 2, dist = 13 + Math.random() * 7;
+      const x = Math.cos(a) * dist, z = Math.sin(a) * dist;
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.22, .42, 5 + Math.random() * 2, 7), deadMat);
+      trunk.position.set(x, 2.5, z); trunk.rotation.z = rnd(-.15, .15); trunk.castShadow = true; g.add(trunk);
+      const br = new THREE.Mesh(new THREE.CylinderGeometry(.08, .14, 2.2, 6), deadMat);
+      br.position.set(x + .8, 4.6, z); br.rotation.z = .8; g.add(br);
+    }
+    const shroomMat = new THREE.MeshStandardMaterial({ color: 0xa3e635, emissive: 0x65a30d, emissiveIntensity: .9 });
+    for (let i = 0; i < 14; i++) {
+      const a = Math.random() * Math.PI * 2, dist = 8 + Math.random() * 10;
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(.32 + Math.random() * .25, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2), shroomMat);
+      cap.position.set(Math.cos(a) * dist, .1, Math.sin(a) * dist);
+      g.add(cap);
+    }
+    scatterRocks(g, 8, 13, 20, stoneMat);
+    this.fireflies = driftParticles(g, 120, 0xb6ff8a, .12, 12, .4, 5, .85);
+  },
+
+  /* Battle Map 8 — Vân Cung Thiên Đình */
+  buildSky() {
+    const g = this.arenaGroup, scene = this.scene;
+    arenaBase.call(this, g, scene, 0x7fb4dd, 0xa8cdea, .008);
+    flatGround(g, new THREE.MeshStandardMaterial({ map: ArenaTex.cloud(), roughness: .9 }));
+    const goldMat = new THREE.MeshStandardMaterial({ color: '#d4a359', metalness: .6, roughness: .35 });
+    const marbleMat = new THREE.MeshStandardMaterial({ map: ArenaTex.plaza(), color: '#e8e2d2', roughness: .7 });
+    daisDisc(g, 11.6, marbleMat);
+    const pillarMat = new THREE.MeshStandardMaterial({ color: '#f5efe0', roughness: .6 });
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(.45, .55, 7, 10), pillarMat);
+      p.position.set(Math.cos(a) * 15, 3.5, Math.sin(a) * 15);
+      p.castShadow = true; g.add(p);
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(1.4, .4, 1.4), goldMat);
+      cap.position.set(Math.cos(a) * 15, 7.2, Math.sin(a) * 15); g.add(cap);
+    }
+    const roofMat = new THREE.MeshStandardMaterial({ map: TextureGen.roof(), roughness: .72 });
+    const palace = new THREE.Mesh(new THREE.BoxGeometry(13, 3.6, 4.6),
+      new THREE.MeshStandardMaterial({ color: '#e5e0d0', roughness: .85 }));
+    palace.position.set(0, 2.1, -13); palace.castShadow = true; g.add(palace);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(9.6, 2.4, 4), roofMat);
+    roof.rotation.y = Math.PI / 4; roof.scale.set(1.15, 1, .62);
+    roof.position.set(0, 5.1, -13); roof.castShadow = true; g.add(roof);
+    const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, transparent: true, opacity: .92 });
+    for (let i = 0; i < 10; i++) {
+      const a = Math.random() * Math.PI * 2, dist = 16 + Math.random() * 8;
+      const puff = new THREE.Mesh(new THREE.SphereGeometry(2 + Math.random() * 1.6, 10, 8), cloudMat);
+      puff.scale.y = .45;
+      puff.position.set(Math.cos(a) * dist, .8 + Math.random() * 1.2, Math.sin(a) * dist);
+      g.add(puff);
+    }
+    this.fireflies = driftParticles(g, 80, 0xfff2b0, .14, 14, 1, 9, .8);
+    this.lanterns.push(lanternPost(g, -12.4, .4, 1), lanternPost(g, 12.4, .4, 1));
+  },
+
+  /* Battle Map 9 — Hang Quỷ Âm Phủ */
+  buildCave() {
+    const g = this.arenaGroup, scene = this.scene;
+    arenaBase.call(this, g, scene, 0x120e1a, 0x241a30, .014);
+    flatGround(g, new THREE.MeshStandardMaterial({ map: ArenaTex.caveRock(), roughness: .95 }));
+    const stoneMat = new THREE.MeshStandardMaterial({ map: ArenaTex.caveRock(), color: '#4a3f5e', roughness: .9 });
+    daisDisc(g, 11.6, stoneMat);
+    const stalMat = new THREE.MeshStandardMaterial({ map: ArenaTex.caveRock(), color: '#5b4a72', roughness: .9 });
+    for (let i = 0; i < 14; i++) {
+      const a = Math.random() * Math.PI * 2, dist = 12 + Math.random() * 8;
+      const stal = new THREE.Mesh(new THREE.ConeGeometry(.6 + Math.random() * .5, 3 + Math.random() * 3, 7), stalMat);
+      stal.position.set(Math.cos(a) * dist, 7.5, Math.sin(a) * dist);
+      stal.rotation.x = Math.PI;
+      g.add(stal);
+    }
+    const crystalColors = [0xa855f7, 0x22d3ee, 0x4ade80];
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2 + rnd(-.2, .2);
+      glowCrystal(g, Math.cos(a) * 14, Math.sin(a) * 14, crystalColors[i % 3], 1.8 + Math.random() * 1.4, .6);
+    }
+    const skullMat = new THREE.MeshStandardMaterial({ color: 0xe8e0d0, roughness: .8 });
+    for (let i = 0; i < 5; i++) {
+      const a = Math.random() * Math.PI * 2, dist = 13 + Math.random() * 5;
+      const skull = new THREE.Mesh(new THREE.SphereGeometry(.55, 10, 8), skullMat);
+      skull.scale.set(1, .85, 1.1);
+      skull.position.set(Math.cos(a) * dist, .45, Math.sin(a) * dist);
+      g.add(skull);
+    }
+    scatterRocks(g, 8, 13, 20, stoneMat);
+    this.fireflies = driftParticles(g, 90, 0xc084fc, .14, 12, .5, 7, .85);
+    [[-9.6, -4], [9.6, -4], [-9.6, 4.6], [9.6, 4.6]].forEach(p => stoneLantern(g, p[0], p[1]));
+  },
+
+  /* Battle Map 10 — Hồ Sen Biển Đông */
+  buildLake() {
+    const g = this.arenaGroup, scene = this.scene;
+    arenaBase.call(this, g, scene, 0x1d5a74, 0x2f7d9e, .01);
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(96, 96),
+      new THREE.MeshStandardMaterial({ map: ArenaTex.lake(), color: '#3aa3c2', roughness: .18, metalness: .4 }));
+    water.rotation.x = -Math.PI / 2;
+    water.position.y = -.55;
+    g.add(water);
+    const stoneMat = new THREE.MeshStandardMaterial({ map: ArenaTex.plaza(), roughness: .8, color: '#bdb8a8' });
+    const plaza = new THREE.Mesh(new THREE.BoxGeometry(27, .8, 23), stoneMat);
+    plaza.position.y = -.1;
+    plaza.receiveShadow = true;
+    g.add(plaza);
+    daisDisc(g, 8, new THREE.MeshStandardMaterial({ map: ArenaTex.stone(), color: '#aab2aa', roughness: .85 }), .45);
+    const padMat = new THREE.MeshStandardMaterial({ color: 0x3f8f4b, roughness: .8 });
+    const lotusMat = new THREE.MeshStandardMaterial({ color: 0xf472b6, emissive: 0xbe185d, emissiveIntensity: .35 });
+    for (let i = 0; i < 34; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const lx = side * (14 + Math.random() * 8);
+      const lz = (Math.random() - .5) * 26;
+      const pad = new THREE.Mesh(new THREE.CylinderGeometry(.7, .7, .06, 12), padMat);
+      pad.position.set(lx, -.5, lz); g.add(pad);
+      if (i % 3 === 0) {
+        const fl = new THREE.Mesh(new THREE.ConeGeometry(.32, .38, 6), lotusMat);
+        fl.position.set(lx, -.34, lz); g.add(fl);
+      }
+    }
+    const reedMat = new THREE.MeshStandardMaterial({ color: 0x4d7c2b, roughness: .8 });
+    for (let i = 0; i < 16; i++) {
+      const a = Math.random() * Math.PI * 2, dist = 14 + Math.random() * 5;
+      const reed = new THREE.Mesh(new THREE.CylinderGeometry(.06, .09, 2.4 + Math.random(), 5), reedMat);
+      reed.position.set(Math.cos(a) * dist, .7, Math.sin(a) * dist);
+      reed.rotation.z = rnd(-.2, .2);
+      g.add(reed);
+    }
+    const roofMat = new THREE.MeshStandardMaterial({ map: TextureGen.roof(), roughness: .72 });
+    const pav = new THREE.Mesh(new THREE.BoxGeometry(6, 2.6, 5),
+      new THREE.MeshStandardMaterial({ color: '#e5e0d0', roughness: .85 }));
+    pav.position.set(0, 1.6, -13); pav.castShadow = true; g.add(pav);
+    const proof = new THREE.Mesh(new THREE.ConeGeometry(4.6, 1.8, 4), roofMat);
+    proof.rotation.y = Math.PI / 4;
+    proof.position.set(0, 3.8, -13); proof.castShadow = true; g.add(proof);
+    [[-11.5, 5], [11.5, 5], [-11.5, -6], [11.5, -6]].forEach(p => stoneLantern(g, p[0], p[1]));
+    this.lanterns.push(lanternPost(g, -7.6, 6.4, 1), lanternPost(g, 7.6, 6.4, 1));
+    this.fireflies = driftParticles(g, 70, 0x9fe8ff, .13, 14, .5, 7, .8);
+  }
+});
+/* ARENA10-END */

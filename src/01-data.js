@@ -242,7 +242,96 @@ const RECRUIT_DEFS = [
       ['Ngọc Nữ Tâm Kinh', 'trang bị Ngọc Nữ Tố Tâm Kiếm được +28% Khí', true],
       ['Thần Điêu Hiệp Lữ', 'ra trận cùng Dương Quá được +30% Thủ', true]
     ]
+  },
+  /* HERO20-BEGIN — 7 đệ tử chiêu mộ mới (tổng 6 gốc + 14 chiêu mộ = 20).
+     Chỉ thêm defs mới vào RECRUIT_DEFS: 13 nhân vật cũ không đổi id/chỉ số.
+     Phân phẩm theo cân bằng hiện có (Bính Lv.120, Ất Lv.200, Giáp Lv.300);
+     tỉ lệ các gói gacha (RECRUIT_POOLS) giữ nguyên, tổng mỗi gói vẫn = 100. */
+  {
+    id: 'quoctinh', name: 'Quách Tĩnh', title: 'Bắc Hiệp', sect: 'Cái Bang', type: 'Giáp',
+    level: 300, ribbon: '#f59e0b', robe: '#78350f', hair: '#1e1b4b', mask: null,
+    weapon: 'Hàng Long Thần Chưởng', hat: 'Bắc Hiệp Kim Quan', armor: 'Cái Bang Hào Kiệt Bào', ring: 'Cửu Âm Chân Kinh',
+    hp: 2550000000, atk: 66000000, def: 47000000, qi: 58000000, crit: 55000,
+    bio: 'Bắc Hiệp Quách Tĩnh, tính tình trung hậu, Hàng Long Thập Bát Chưởng luyện đến lô hỏa thuần thanh, trấn giữ Tương Dương.',
+    innate: 'Hàng Long Thập Bát Chưởng',
+    fates: [
+      ['Bắc Hiệp Nam Đế', 'ra trận cùng Hoàng Dung được +30% Công', true],
+      ['Hàng Long Thập Bát', 'trang bị Hàng Long Thần Chưởng được +28% Khí', true]
+    ]
+  },
+  {
+    id: 'hoangdung', name: 'Hoàng Dung', title: 'Đào Hoa Đảo Chủ', sect: 'Đào Hoa Đảo', type: 'Ất',
+    level: 200, ribbon: '#f472b6', robe: '#be185d', hair: '#0f172a', mask: null,
+    weapon: 'Đả Cẩu Bổng', hat: 'Đào Hoa Ngọc Quan', armor: 'Đào Hoa Hồng Y', ring: 'Đào Hoa Ngọc Bội',
+    hp: 1650000000, atk: 42000000, def: 31000000, qi: 48000000, crit: 33000,
+    bio: 'Đảo chủ Đào Hoa đảo, thông minh tuyệt đỉnh, Đả Cẩu Bổng Pháp xuất thần nhập hóa, tinh thông kỳ môn độn giáp.',
+    innate: 'Đả Cẩu Bổng Pháp',
+    fates: [
+      ['Thần Điêu Hiệp Lữ', 'ra trận cùng Quách Tĩnh được +28% Khí', true],
+      ['Đào Hoa Lạc Anh', 'trang bị Đả Cẩu Bổng được +26% Công', true]
+    ]
+  },
+  {
+    id: 'hongthat', name: 'Hồng Thất Công', title: 'Cửu Chỉ Thần Cái', sect: 'Cái Bang', type: 'Giáp',
+    level: 300, ribbon: '#fbbf24', robe: '#92400e', hair: '#e2e8f0', mask: null,
+    weapon: 'Đả Cẩu Bổng', hat: 'Thần Cái Kim Quan', armor: 'Cái Bang Thần Bào', ring: 'Cửu Chỉ Ngọc Giới',
+    hp: 2450000000, atk: 64000000, def: 46000000, qi: 62000000, crit: 54000,
+    bio: 'Bang chủ Cái Bang đời thứ mười tám, Cửu Chỉ Thần Cái, Hàng Long Thập Bát Chưởng và Đả Cẩu Bổng Pháp đều đạt đỉnh cao.',
+    innate: 'Hàng Long Thập Bát Chưởng',
+    fates: [
+      ['Bắc Cái Tây Độc', 'ra trận cùng Quách Tĩnh được +28% Công', true],
+      ['Cửu Chỉ Thần Cái', 'trang bị Đả Cẩu Bổng được +30% Khí', true]
+    ]
+  },
+  {
+    id: 'chuba', name: 'Chu Bá Thông', title: 'Lão Ngoan Đồng', sect: 'Toàn Chân', type: 'Giáp',
+    level: 300, ribbon: '#34d399', robe: '#065f46', hair: '#f8fafc', mask: null,
+    weapon: 'Không Minh Thần Quyền', hat: 'Toàn Chân Đạo Quan', armor: 'Lão Ngoan Đồng Bào', ring: 'Song Thủ Ngọc Giới',
+    hp: 2350000000, atk: 61000000, def: 52000000, qi: 60000000, crit: 50000,
+    bio: 'Lão Ngoan Đồng Toàn Chân giáo, tính tình như trẻ thơ, Song Thủ Hỗ Bác và Không Minh Quyền thiên hạ vô song.',
+    innate: 'Song Thủ Hỗ Bác',
+    fates: [
+      ['Lão Ngoan Đồng', 'ra trận cùng Vương Trùng Dương được +28% Khí', true],
+      ['Không Minh Quyền', 'trang bị Không Minh Thần Quyền được +26% Công', true]
+    ]
+  },
+  {
+    id: 'vuongtrung', name: 'Vương Trùng Dương', title: 'Trung Thần Thông', sect: 'Toàn Chân', type: 'Giáp',
+    level: 300, ribbon: '#38bdf8', robe: '#1e3a8a', hair: '#e2e8f0', mask: null,
+    weapon: 'Toàn Chân Thần Kiếm', hat: 'Trung Thần Thông Quan', armor: 'Toàn Chân Tử Bào', ring: 'Tiên Thiên Ngọc Bội',
+    hp: 2500000000, atk: 65000000, def: 49000000, qi: 66000000, crit: 56000,
+    bio: 'Trung Thần Thông, tổ sư Toàn Chân giáo, Tiên Thiên Công và Nhất Dương Chỉ đều luyện đến cảnh giới tối cao, Hoa Sơn luận kiếm đệ nhất.',
+    innate: 'Tiên Thiên Công',
+    fates: [
+      ['Hoa Sơn Luận Kiếm', 'ra trận cùng Chu Bá Thông được +30% Khí', true],
+      ['Trung Thần Thông', 'trang bị Toàn Chân Thần Kiếm được +28% Công', true]
+    ]
+  },
+  {
+    id: 'lamtrieu', name: 'Lâm Triều Anh', title: 'Cổ Mộ Tổ Sư', sect: 'Cổ Mộ', type: 'Ất',
+    level: 200, ribbon: '#e879f9', robe: '#581c87', hair: '#0f172a', mask: null,
+    weapon: 'Ngọc Nữ Tố Tâm Kiếm', hat: 'Cổ Mộ Ngọc Quan', armor: 'Cổ Mộ Tử Y', ring: 'Ngọc Nữ Tâm Bội',
+    hp: 1700000000, atk: 43000000, def: 33000000, qi: 46000000, crit: 34000,
+    bio: 'Tổ sư Cổ Mộ phái, sáng tạo Ngọc Nữ Tâm Kinh, kiếm pháp khắc chế Toàn Chân, một đời tình duyên với Vương Trùng Dương.',
+    innate: 'Ngọc Nữ Tâm Kinh',
+    fates: [
+      ['Cổ Mộ Tình Duyên', 'ra trận cùng Vương Trùng Dương được +28% Khí', true],
+      ['Ngọc Nữ Tổ Sư', 'trang bị Ngọc Nữ Tố Tâm Kiếm được +26% Công', true]
+    ]
+  },
+  {
+    id: 'trieuman', name: 'Triệu Mẫn', title: 'Thiệu Mẫn Quận Chúa', sect: 'Mông Cổ', type: 'Bính',
+    level: 120, ribbon: '#fb7185', robe: '#881337', hair: '#0f172a', mask: null,
+    weapon: 'Ỷ Thiên Trường Kiếm', hat: 'Quận Chúa Phượng Quan', armor: 'Mông Cổ Hồng Bào', ring: 'Càn Khôn Ngọc Giới',
+    hp: 920000000, atk: 21000000, def: 19000000, qi: 24000000, crit: 16500,
+    bio: 'Quận chúa Mông Cổ, thông minh cơ trí, võ công học khắp thiên hạ, Càn Khôn Đại Na Di luyện đến tầng thứ bảy.',
+    innate: 'Càn Khôn Đại Na Di',
+    fates: [
+      ['Ỷ Thiên Đồ Long', 'ra trận cùng Dương Quá được +24% Công', true],
+      ['Thiệu Mẫn Quận Chúa', 'trang bị Ỷ Thiên Trường Kiếm được +22% Khí', true]
+    ]
   }
+  /* HERO20-END */
 ];
 
 const RECRUIT_POOLS = {
@@ -258,64 +347,336 @@ const SKILLS = [
   { id: 3, name: 'Mạn Thiên Hoa Vũ', icon: '❄️', cd: 9, mult: 3.1, aoe: true, color: 0x38bdf8, ring: 0xf472b6, desc: 'Bão kiếm khí băng giá trút xuống chiến trường, đóng băng cả không gian.' }
 ];
 
+/* HERO20-BEGIN — Bộ skill riêng từng nhân vật: 20 nhân vật × 4 skill
+   (3 skill thường + 1 tuyệt kỹ ult ở vị trí thứ 4, dùng cho nút skill 1–4).
+   Field mỗi skill: name, icon, desc, mult (hệ số sát thương theo công lực;
+   với kind 'heal' là hệ số hồi máu = 10% Mệnh tối đa × mult), cd (giây hồi
+   chiêu), cost (nội lực/nộ tốn khi tung chiêu, thang 0–100), aoe, color,
+   ring (màu hiệu ứng), ult (true chỉ ở tuyệt kỹ), kind ('dmg' | 'heal').
+   Tuyệt kỹ: mult 3.0–3.6, cd 11–13, cost 40–50. Skill thường: mult 1.7–2.6,
+   cd 6–9, cost 12–20. Không đụng SKILLS chung cũ (giữ làm fallback). */
+const HERO20_SKILLS = {
+  det: [
+    { name: 'Thiên Kiếp Đao Pháp', icon: '🔪', desc: 'Đao khí thiên kiếp chém thẳng một mục tiêu.', mult: 2.0, cd: 6, cost: 15, aoe: false, color: 0xff5500, ring: 0xffaa00, ult: false, kind: 'dmg' },
+    { name: 'Thánh Tâm Kiếm Khí', icon: '⚔️', desc: 'Kiếm khí thánh tâm xuyên thấu hàng trước.', mult: 2.3, cd: 7, cost: 18, aoe: false, color: 0xa855f7, ring: 0x4c1d95, ult: false, kind: 'dmg' },
+    { name: 'Tứ Kiếp Luân Hồi', icon: '🌀', desc: 'Bốn kiếp luân hồi giáng xuống toàn bộ kẻ địch.', mult: 2.5, cd: 8, cost: 20, aoe: true, color: 0x7c3aed, ring: 0xc084fc, ult: false, kind: 'dmg' },
+    { name: 'Thánh Tâm Tứ Kiếp', icon: '👑', desc: 'Tuyệt kỹ môn chủ Thiên Môn: bốn kiếp cùng giáng, hủy thiên diệt địa.', mult: 3.6, cd: 13, cost: 50, aoe: true, color: 0x991b1b, ring: 0xf59e0b, ult: true, kind: 'dmg' }
+  ],
+  tieu: [
+    { name: 'Tiêu Dao Kiếm Khí', icon: '🗡️', desc: 'Kiếm khí tiêu dao, nhanh như chớp giật.', mult: 2.0, cd: 6, cost: 15, aoe: false, color: 0x38bdf8, ring: 0x7dd3fc, ult: false, kind: 'dmg' },
+    { name: 'Túy Tiên Quyền', icon: '🍶', desc: 'Quyền pháp say rượu, hư hư thực thực khó lường.', mult: 2.2, cd: 7, cost: 18, aoe: false, color: 0xf59e0b, ring: 0xfde68a, ult: false, kind: 'dmg' },
+    { name: 'Đao Chữ Thần Thông', icon: '📜', desc: 'Chữ thần thông hóa đao, chém diện rộng.', mult: 2.5, cd: 8, cost: 20, aoe: true, color: 0x0ea5e9, ring: 0x38bdf8, ult: false, kind: 'dmg' },
+    { name: 'Tiêu Dao Thần Kiếm', icon: '🌊', desc: 'Tuyệt kỹ Tiêu Dao: một kiếm chém đứt trường giang.', mult: 3.4, cd: 12, cost: 45, aoe: true, color: 0x0284c7, ring: 0x7dd3fc, ult: true, kind: 'dmg' }
+  ],
+  kiem: [
+    { name: 'Vô Song Kiếm Khí', icon: '🗡️', desc: 'Kiếm khí Vô Song thành, sắc bén vô bì.', mult: 2.1, cd: 6, cost: 15, aoe: false, color: 0x60a5fa, ring: 0x93c5fd, ult: false, kind: 'dmg' },
+    { name: 'Kiếm Nhị Thập Nhị', icon: '⚡', desc: 'Hai mươi hai thức kiếm liên hoàn đoạt mệnh.', mult: 2.4, cd: 7, cost: 18, aoe: false, color: 0x3b82f6, ring: 0xbfdbfe, ult: false, kind: 'dmg' },
+    { name: 'Kiếm Khí Tung Hoành', icon: '🌪️', desc: 'Kiếm khí tung hoành khắp chiến trường.', mult: 2.5, cd: 8, cost: 20, aoe: true, color: 0x2563eb, ring: 0x60a5fa, ult: false, kind: 'dmg' },
+    { name: 'Kiếm Nhị Thập Tam', icon: '🐉', desc: 'Tuyệt kỹ truyền thuyết: kiếm ý diệt thần, vạn vật tĩnh lặng.', mult: 3.5, cd: 13, cost: 48, aoe: true, color: 0x1d4ed8, ring: 0xfacc15, ult: true, kind: 'dmg' }
+  ],
+  linh: [
+    { name: 'Thiên Xà Tiên Pháp', icon: '🐍', desc: 'Tiên pháp thiên xà quấn chặt một mục tiêu.', mult: 1.9, cd: 6, cost: 14, aoe: false, color: 0xe879f9, ring: 0xf0abfc, ult: false, kind: 'dmg' },
+    { name: 'Ngũ Hành Pháp Ấn', icon: '☯️', desc: 'Pháp ấn ngũ hành giáng xuống toàn bộ kẻ địch.', mult: 2.2, cd: 7, cost: 18, aoe: true, color: 0xa855f7, ring: 0xd8b4fe, ult: false, kind: 'dmg' },
+    { name: 'Nữ Oa Hồi Xuân', icon: '💗', desc: 'Hồi xuân thuật: hồi phục sinh lực cho toàn đội.', mult: 1.2, cd: 9, cost: 20, aoe: false, color: 0x34d399, ring: 0x6ee7b7, ult: false, kind: 'heal' },
+    { name: 'Ngũ Lôi Chú', icon: '⚡', desc: 'Tuyệt kỹ Nữ Oa: ngũ lôi cùng giáng, thiên địa biến sắc.', mult: 3.3, cd: 12, cost: 45, aoe: true, color: 0x7e22ce, ring: 0xfacc15, ult: true, kind: 'dmg' }
+  ],
+  niep: [
+    { name: 'Phong Thần Thối', icon: '💨', desc: 'Cước pháp nhanh như gió lốc, đá bay kẻ địch.', mult: 2.0, cd: 6, cost: 15, aoe: false, color: 0xf59e0b, ring: 0xfde68a, ult: false, kind: 'dmg' },
+    { name: 'Tuyết Ẩm Đao Pháp', icon: '❄️', desc: 'Đao pháp Tuyết Ẩm, lạnh thấu xương.', mult: 2.3, cd: 7, cost: 18, aoe: false, color: 0x38bdf8, ring: 0xbae6fd, ult: false, kind: 'dmg' },
+    { name: 'Cuồng Phong Loạn Vũ', icon: '🌪️', desc: 'Cuồng phong loạn vũ quét sạch chiến trường.', mult: 2.5, cd: 8, cost: 20, aoe: true, color: 0x0ea5e9, ring: 0x7dd3fc, ult: false, kind: 'dmg' },
+    { name: 'Phong Thần Nộ', icon: '🌩️', desc: 'Tuyệt kỹ Phong Thần: cơn giận của gió, vạn vật tan tác.', mult: 3.4, cd: 12, cost: 45, aoe: true, color: 0x1e40af, ring: 0x93c5fd, ult: true, kind: 'dmg' }
+  ],
+  bo: [
+    { name: 'Bài Vân Chưởng', icon: '🌊', desc: 'Chưởng pháp mây bay, nhu mà thắng cương.', mult: 2.0, cd: 6, cost: 15, aoe: false, color: 0xec4899, ring: 0xf9a8d4, ult: false, kind: 'dmg' },
+    { name: 'Tuyệt Thế Kiếm Pháp', icon: '🗡️', desc: 'Kiếm pháp Tuyệt Thế Hảo Kiếm, một kiếm đoạt mệnh.', mult: 2.3, cd: 7, cost: 18, aoe: false, color: 0x8b5cf6, ring: 0xc4b5fd, ult: false, kind: 'dmg' },
+    { name: 'Kinh Vân Phá', icon: '⛈️', desc: 'Kinh vân phá không, sấm sét giáng diện rộng.', mult: 2.5, cd: 8, cost: 20, aoe: true, color: 0x6d28d9, ring: 0xa78bfa, ult: false, kind: 'dmg' },
+    { name: 'Vân Hải Vô Nhai', icon: '🐉', desc: 'Tuyệt kỹ Bất Khốc Tử Thần: biển mây vô biên nhấn chìm kẻ địch.', mult: 3.4, cd: 12, cost: 45, aoe: true, color: 0x4c1d95, ring: 0xec4899, ult: true, kind: 'dmg' }
+  ],
+  lenhho: [
+    { name: 'Hoa Sơn Kiếm Pháp', icon: '🗡️', desc: 'Kiếm pháp Hoa Sơn, hiểm mà chính, nhanh mà chuẩn.', mult: 1.8, cd: 6, cost: 12, aoe: false, color: 0x34d399, ring: 0x6ee7b7, ult: false, kind: 'dmg' },
+    { name: 'Độc Cô Cửu Kiếm', icon: '⚔️', desc: 'Chín thức phá kiếm, phá hết thiên hạ kiếm pháp.', mult: 2.1, cd: 7, cost: 16, aoe: false, color: 0x10b981, ring: 0x6ee7b7, ult: false, kind: 'dmg' },
+    { name: 'Hấp Tinh Đại Pháp', icon: '🌀', desc: 'Hấp tinh đoạt khí, hút nội lực kẻ địch diện rộng.', mult: 2.3, cd: 8, cost: 18, aoe: true, color: 0x059669, ring: 0x34d399, ult: false, kind: 'dmg' },
+    { name: 'Tiếu Ngạo Giang Hồ', icon: '🍶', desc: 'Tuyệt kỹ Tiếu Ngạo: một khúc cầm, kiếm khí vang khắp giang hồ.', mult: 3.0, cd: 11, cost: 40, aoe: true, color: 0x065f46, ring: 0x34d399, ult: true, kind: 'dmg' }
+  ],
+  nghlam: [
+    { name: 'Hằng Sơn Kiếm Pháp', icon: '🗡️', desc: 'Kiếm pháp Hằng Sơn, thanh tịnh mà sắc bén.', mult: 1.7, cd: 6, cost: 12, aoe: false, color: 0x6ee7b7, ring: 0xa7f3d0, ult: false, kind: 'dmg' },
+    { name: 'Thanh Tâm Chú', icon: '💗', desc: 'Thanh tâm chú: hồi phục sinh lực cho toàn đội.', mult: 1.2, cd: 9, cost: 18, aoe: false, color: 0x34d399, ring: 0x6ee7b7, ult: false, kind: 'heal' },
+    { name: 'Phất Trần Vô Ảnh', icon: '🌿', desc: 'Phất trần vô ảnh, quét bay kẻ địch hàng trước.', mult: 2.0, cd: 7, cost: 15, aoe: false, color: 0x0d9488, ring: 0x5eead4, ult: false, kind: 'dmg' },
+    { name: 'Hằng Sơn Tâm Pháp', icon: '☸️', desc: 'Tuyệt kỹ Hằng Sơn: tâm pháp viên mãn, Phật quang phổ chiếu.', mult: 3.0, cd: 11, cost: 40, aoe: true, color: 0x0f766e, ring: 0x99f6e4, ult: true, kind: 'dmg' }
+  ],
+  doanh: [
+    { name: 'Nhật Nguyệt Thần Cầm', icon: '🎵', desc: 'Tiếng cầm nhật nguyệt, âm ba đoạt mệnh.', mult: 2.0, cd: 6, cost: 15, aoe: false, color: 0x38bdf8, ring: 0x7dd3fc, ult: false, kind: 'dmg' },
+    { name: 'Tiếu Ngạo Khúc', icon: '🎶', desc: 'Khúc Tiếu Ngạo vang lên, kiếm khí theo nhạc diện rộng.', mult: 2.2, cd: 7, cost: 17, aoe: true, color: 0x60a5fa, ring: 0xbfdbfe, ult: false, kind: 'dmg' },
+    { name: 'Thánh Cô Mê Hồn', icon: '🌸', desc: 'Mê hồn thuật thánh cô, hoa rơi đoạt mệnh một mục tiêu.', mult: 2.4, cd: 8, cost: 19, aoe: false, color: 0x818cf8, ring: 0xc7d2fe, ult: false, kind: 'dmg' },
+    { name: 'Nhật Nguyệt Đồng Huy', icon: '☀️', desc: 'Tuyệt kỹ Thánh Cô: nhật nguyệt cùng tỏa sáng, thiêu rụi kẻ địch.', mult: 3.2, cd: 12, cost: 42, aoe: true, color: 0x1e3a8a, ring: 0xfacc15, ult: true, kind: 'dmg' }
+  ],
+  duong: [
+    { name: 'Huyền Thiết Kiếm Pháp', icon: '🗡️', desc: 'Trọng kiếm vô phong, đại xảo bất công.', mult: 2.1, cd: 6, cost: 16, aoe: false, color: 0x60a5fa, ring: 0x93c5fd, ult: false, kind: 'dmg' },
+    { name: 'Ám Nhiên Chưởng', icon: '🌑', desc: 'Chưởng pháp ám nhiên, sầu bi hóa sát khí.', mult: 2.3, cd: 7, cost: 18, aoe: false, color: 0x6366f1, ring: 0xa5b4fc, ult: false, kind: 'dmg' },
+    { name: 'Thần Điêu Phi Vũ', icon: '🦅', desc: 'Thần điêu tung cánh, vuốt sắc quét diện rộng.', mult: 2.5, cd: 8, cost: 20, aoe: true, color: 0x4f46e5, ring: 0x818cf8, ult: false, kind: 'dmg' },
+    { name: 'Ám Nhiên Tiêu Hồn Chưởng', icon: '💔', desc: 'Tuyệt kỹ Thần Điêu Đại Hiệp: tiêu hồn đoạt phách, thiên hạ vô địch.', mult: 3.3, cd: 12, cost: 45, aoe: true, color: 0x312e81, ring: 0xc7d2fe, ult: true, kind: 'dmg' }
+  ],
+  dongph: [
+    { name: 'Quỳ Hoa Phi Châm', icon: '💉', desc: 'Phi châm Quỳ Hoa, nhanh đến mắt thường không theo kịp.', mult: 2.2, cd: 6, cost: 16, aoe: false, color: 0xa855f7, ring: 0xd8b4fe, ult: false, kind: 'dmg' },
+    { name: 'Tú Hoa Thần Tốc', icon: '🌸', desc: 'Thân pháp tú hoa, châm đi tới đâu hoa nở tới đó.', mult: 2.4, cd: 7, cost: 18, aoe: false, color: 0xc026d3, ring: 0xf0abfc, ult: false, kind: 'dmg' },
+    { name: 'Nhật Nguyệt Ma Công', icon: '🌙', desc: 'Ma công nhật nguyệt, hắc khí cuồn cuộn diện rộng.', mult: 2.6, cd: 8, cost: 20, aoe: true, color: 0x7e22ce, ring: 0xe879f9, ult: false, kind: 'dmg' },
+    { name: 'Quỳ Hoa Bảo Điển', icon: '👑', desc: 'Tuyệt kỹ giáo chủ: Quỳ Hoa xuất thế, thiên hạ đệ nhất tốc độ.', mult: 3.5, cd: 13, cost: 48, aoe: true, color: 0x86198f, ring: 0xf0abfc, ult: true, kind: 'dmg' }
+  ],
+  docco: [
+    { name: 'Độc Cô Kiếm Ý', icon: '🗡️', desc: 'Kiếm ý Độc Cô, vô chiêu thắng hữu chiêu.', mult: 2.2, cd: 6, cost: 16, aoe: false, color: 0xe879f9, ring: 0xf5d0fe, ult: false, kind: 'dmg' },
+    { name: 'Phá Kiếm Thức', icon: '⚔️', desc: 'Phá kiếm thức: phá mọi kiếm pháp thiên hạ.', mult: 2.4, cd: 7, cost: 18, aoe: false, color: 0xd946ef, ring: 0xf0abfc, ult: false, kind: 'dmg' },
+    { name: 'Phá Khí Thức', icon: '💨', desc: 'Phá khí thức: phá nội công, kiếm khí quét diện rộng.', mult: 2.5, cd: 8, cost: 20, aoe: true, color: 0xc026d3, ring: 0xe879f9, ult: false, kind: 'dmg' },
+    { name: 'Độc Cô Cửu Kiếm', icon: '🐉', desc: 'Tuyệt kỹ Kiếm Ma: chín thức hợp nhất, cầu bại mà không được.', mult: 3.6, cd: 13, cost: 48, aoe: true, color: 0x701a75, ring: 0xf0abfc, ult: true, kind: 'dmg' }
+  ],
+  longnu: [
+    { name: 'Ngọc Nữ Kiếm Pháp', icon: '🗡️', desc: 'Kiếm pháp Ngọc Nữ, thanh thoát như tiên nữ giáng trần.', mult: 2.1, cd: 6, cost: 15, aoe: false, color: 0xf472b6, ring: 0xfbcfe8, ult: false, kind: 'dmg' },
+    { name: 'Tố Tâm Kiếm Ý', icon: '💗', desc: 'Tố tâm kiếm ý, song kiếm hợp bích đoạt mệnh.', mult: 2.3, cd: 7, cost: 18, aoe: false, color: 0xec4899, ring: 0xf9a8d4, ult: false, kind: 'dmg' },
+    { name: 'Cổ Mộ Khinh Công', icon: '🦋', desc: 'Khinh công Cổ Mộ, thân pháp phiêu dật diện rộng.', mult: 2.4, cd: 8, cost: 19, aoe: true, color: 0xdb2777, ring: 0xf472b6, ult: false, kind: 'dmg' },
+    { name: 'Ngọc Nữ Tâm Kinh', icon: '🌙', desc: 'Tuyệt kỹ Ngọc Nữ: tâm kinh viên mãn, nguyệt quang trút xuống.', mult: 3.4, cd: 12, cost: 45, aoe: true, color: 0x9d174d, ring: 0xfbcfe8, ult: true, kind: 'dmg' }
+  ],
+  quoctinh: [
+    { name: 'Hàng Long Chưởng', icon: '🐉', desc: 'Chưởng pháp Hàng Long, cương mãnh vô song.', mult: 2.3, cd: 7, cost: 18, aoe: false, color: 0xf59e0b, ring: 0xfde68a, ult: false, kind: 'dmg' },
+    { name: 'Song Thủ Hỗ Bác', icon: '✋', desc: 'Hai tay đánh hai chiêu khác nhau cùng lúc.', mult: 2.1, cd: 6, cost: 16, aoe: false, color: 0xd97706, ring: 0xfcd34d, ult: false, kind: 'dmg' },
+    { name: 'Cửu Âm Chân Kinh', icon: '📜', desc: 'Chân kinh Cửu Âm, âm khí cuồn cuộn diện rộng.', mult: 2.5, cd: 8, cost: 20, aoe: true, color: 0x92400e, ring: 0xf59e0b, ult: false, kind: 'dmg' },
+    { name: 'Hàng Long Thập Bát Chưởng', icon: '🔥', desc: 'Tuyệt kỹ Bắc Hiệp: mười tám chưởng long ngâm, thiên hạ đệ nhất cương mãnh.', mult: 3.6, cd: 13, cost: 48, aoe: true, color: 0x78350f, ring: 0xfbbf24, ult: true, kind: 'dmg' }
+  ],
+  hoangdung: [
+    { name: 'Đả Cẩu Bổng Pháp', icon: '🎋', desc: 'Bổng pháp Đả Cẩu, biến hóa khôn lường.', mult: 2.0, cd: 6, cost: 15, aoe: false, color: 0xf472b6, ring: 0xfbcfe8, ult: false, kind: 'dmg' },
+    { name: 'Lạc Anh Thần Kiếm', icon: '🌸', desc: 'Thần kiếm lạc anh, hoa đào bay theo kiếm.', mult: 2.2, cd: 7, cost: 17, aoe: false, color: 0xec4899, ring: 0xf9a8d4, ult: false, kind: 'dmg' },
+    { name: 'Bích Hải Triều Sinh', icon: '🌊', desc: 'Triều sinh khúc: sóng biển dâng trào diện rộng.', mult: 2.4, cd: 8, cost: 19, aoe: true, color: 0x0ea5e9, ring: 0x7dd3fc, ult: false, kind: 'dmg' },
+    { name: 'Lạc Anh Thần Kiếm Chưởng', icon: '🌺', desc: 'Tuyệt kỹ Đào Hoa đảo chủ: hoa đào rụng, kiếm chưởng hợp nhất.', mult: 3.2, cd: 12, cost: 42, aoe: true, color: 0xbe185d, ring: 0xf9a8d4, ult: true, kind: 'dmg' }
+  ],
+  hongthat: [
+    { name: 'Hàng Long Chưởng Pháp', icon: '🐉', desc: 'Chưởng pháp Hàng Long của bang chủ Cái Bang.', mult: 2.3, cd: 7, cost: 18, aoe: false, color: 0xfbbf24, ring: 0xfde68a, ult: false, kind: 'dmg' },
+    { name: 'Đả Cẩu Bổng Pháp', icon: '🎋', desc: 'Bổng pháp trấn bang, cẩu tặc nghe danh khiếp vía.', mult: 2.2, cd: 6, cost: 17, aoe: false, color: 0xf59e0b, ring: 0xfcd34d, ult: false, kind: 'dmg' },
+    { name: 'Tiêu Dao Du', icon: '🍶', desc: 'Tiêu dao du: thân pháp phóng khoáng quét diện rộng.', mult: 2.5, cd: 8, cost: 20, aoe: true, color: 0xd97706, ring: 0xfbbf24, ult: false, kind: 'dmg' },
+    { name: 'Thần Long Bãi Vĩ', icon: '🔥', desc: 'Tuyệt kỹ Cửu Chỉ Thần Cái: thần long vẫy đuôi, quét sạch chiến trường.', mult: 3.5, cd: 13, cost: 48, aoe: true, color: 0x92400e, ring: 0xf59e0b, ult: true, kind: 'dmg' }
+  ],
+  chuba: [
+    { name: 'Không Minh Quyền', icon: '🥊', desc: 'Quyền pháp Không Minh, hư không mà đầy uy lực.', mult: 2.2, cd: 6, cost: 17, aoe: false, color: 0x34d399, ring: 0x6ee7b7, ult: false, kind: 'dmg' },
+    { name: 'Song Thủ Hỗ Bác', icon: '✋', desc: 'Hai tay hai chiêu, tả hữu cùng đánh.', mult: 2.4, cd: 7, cost: 18, aoe: false, color: 0x10b981, ring: 0x6ee7b7, ult: false, kind: 'dmg' },
+    { name: 'Lão Ngoan Đồng', icon: '🎭', desc: 'Chiêu thức trẻ thơ mà quỷ dị, quét diện rộng.', mult: 2.5, cd: 8, cost: 20, aoe: true, color: 0x059669, ring: 0x34d399, ult: false, kind: 'dmg' },
+    { name: 'Cửu Âm Chân Kinh', icon: '📜', desc: 'Tuyệt kỹ Lão Ngoan Đồng: Cửu Âm viên mãn, âm dương hợp nhất.', mult: 3.5, cd: 13, cost: 48, aoe: true, color: 0x065f46, ring: 0x6ee7b7, ult: true, kind: 'dmg' }
+  ],
+  vuongtrung: [
+    { name: 'Toàn Chân Kiếm Pháp', icon: '🗡️', desc: 'Kiếm pháp Toàn Chân, chính tông Huyền Môn.', mult: 2.3, cd: 7, cost: 18, aoe: false, color: 0x38bdf8, ring: 0x7dd3fc, ult: false, kind: 'dmg' },
+    { name: 'Tiên Thiên Công', icon: '☯️', desc: 'Tiên thiên chân khí, nội lực thâm hậu đoạt mệnh.', mult: 2.4, cd: 7, cost: 19, aoe: false, color: 0x0ea5e9, ring: 0x38bdf8, ult: false, kind: 'dmg' },
+    { name: 'Nhất Dương Chỉ', icon: '☀️', desc: 'Nhất dương chỉ lực, dương khí thuần khiết diện rộng.', mult: 2.5, cd: 8, cost: 20, aoe: true, color: 0x0284c7, ring: 0x7dd3fc, ult: false, kind: 'dmg' },
+    { name: 'Tiên Thiên Cương Khí', icon: '🐉', desc: 'Tuyệt kỹ Trung Thần Thông: cương khí tiên thiên bao phủ thiên địa.', mult: 3.6, cd: 13, cost: 48, aoe: true, color: 0x1e3a8a, ring: 0x38bdf8, ult: true, kind: 'dmg' }
+  ],
+  lamtrieu: [
+    { name: 'Ngọc Nữ Kiếm Pháp', icon: '🗡️', desc: 'Kiếm pháp Ngọc Nữ, khắc chế Toàn Chân kiếm pháp.', mult: 2.1, cd: 6, cost: 16, aoe: false, color: 0xe879f9, ring: 0xf5d0fe, ult: false, kind: 'dmg' },
+    { name: 'Cổ Mộ U Công', icon: '🌑', desc: 'U công Cổ Mộ, âm hàn thấu xương một mục tiêu.', mult: 2.3, cd: 7, cost: 18, aoe: false, color: 0xa855f7, ring: 0xd8b4fe, ult: false, kind: 'dmg' },
+    { name: 'Ngọc Nữ Hồi Xuân', icon: '💗', desc: 'Hồi xuân thuật Cổ Mộ: hồi phục sinh lực cho toàn đội.', mult: 1.2, cd: 9, cost: 18, aoe: false, color: 0x34d399, ring: 0x6ee7b7, ult: false, kind: 'heal' },
+    { name: 'Ngọc Nữ Song Kiếm Hợp Bích', icon: '⚔️', desc: 'Tuyệt kỹ Cổ Mộ tổ sư: song kiếm hợp bích, nguyệt quang trút xuống.', mult: 3.3, cd: 12, cost: 45, aoe: true, color: 0x581c87, ring: 0xe879f9, ult: true, kind: 'dmg' }
+  ],
+  trieuman: [
+    { name: 'Ỷ Thiên Kiếm Pháp', icon: '🗡️', desc: 'Kiếm pháp Ỷ Thiên, sắc bén vô song.', mult: 1.9, cd: 6, cost: 14, aoe: false, color: 0xfb7185, ring: 0xfecdd3, ult: false, kind: 'dmg' },
+    { name: 'Mông Cổ Loan Đao', icon: '🔪', desc: 'Loan đao thảo nguyên, chém nhanh như gió.', mult: 2.0, cd: 7, cost: 15, aoe: false, color: 0xf43f5e, ring: 0xfda4af, ult: false, kind: 'dmg' },
+    { name: 'Thập Hương Nhuyễn Cân Tán', icon: '🌫️', desc: 'Độc vụ thập hương, làm mềm gân cốt kẻ địch diện rộng.', mult: 2.2, cd: 8, cost: 18, aoe: true, color: 0x9f1239, ring: 0xfb7185, ult: false, kind: 'dmg' },
+    { name: 'Càn Khôn Đại Na Di', icon: '🌀', desc: 'Tuyệt kỹ quận chúa: Càn Khôn đảo chuyển, dời núi lấp biển.', mult: 3.0, cd: 11, cost: 40, aoe: true, color: 0x881337, ring: 0xfda4af, ult: true, kind: 'dmg' }
+  ]
+};
+
+/* Trả về bộ 4 skill của nhân vật (3 thường + 1 tuyệt kỹ). Ưu tiên def.skills
+   nếu def có, rồi HERO20_SKILLS, cuối cùng fallback 4 tuyệt kỹ chung SKILLS
+   (đổi shape cho đồng nhất) — nhân vật nào thiếu skill cũng không crash. */
+function heroSkills(id) {
+  const def = heroById(id);
+  if (def && Array.isArray(def.skills) && def.skills.length >= 4) return def.skills;
+  const set = HERO20_SKILLS[id];
+  if (Array.isArray(set) && set.length >= 4) return set;
+  return SKILLS.map((s, i) => ({
+    name: s.name, icon: s.icon, desc: s.desc, mult: s.mult, cd: s.cd,
+    cost: i === 3 ? 30 : 15, aoe: !!s.aoe, color: s.color, ring: s.ring,
+    ult: i === 0, kind: i === 3 ? 'heal' : 'dmg'
+  }));
+}
+function heroUltimate(id) {
+  const ss = heroSkills(id);
+  return ss.find(s => s.ult) || ss[0];
+}
+/* HERO20-END */
+
+/* ARENA10-BEGIN — Battle Map 1..10 (thay 8 map cũ; 8 id cũ giữ lại làm alias legacy) */
 const ARENAS = {
-  bamboo: {
-    key: 'bamboo', name: 'Rừng Trúc U Minh', short: 'Rừng Trúc', icon: '🌿', mul: 1,
+  bm1: {
+    key: 'bm1', num: 1, name: 'Battle Map 1 — Rừng Trúc U Minh', short: 'Rừng Trúc', icon: '🌿', mul: 1.0,
     exp: 150, silver: 2800, gold: 1, tip: 'Sương trúc u minh, ma giáo phục kích trong rừng.',
-    badge: 'Rừng Trúc U Minh', boss: 'Ma Giáo Cao Thủ (Lv.70)', recLvl: 'Cấp 65 - 70',
+    badge: 'Rừng Trúc U Minh', boss: 'Trúc Ma Lão Tổ (Lv.70)', bossSkill: 'Trúc Diệp Phi Đao — lá trúc hóa đao, chém diện rộng',
+    bossReward: 'Trúc Diệp Linh Đan', bossRewardIcon: '🎋', recLvl: 'Cấp 65 - 70',
     drops: 'Trúc Diệp Linh Đan, Mảnh Trúc Kiếm', desc: 'Rừng trúc sương mù dày đặc, ma giáo thường phục kích trong bóng trúc.',
+    enemies: ['Trúc Yêu', 'Ma Giáo Đồ', 'Sơn Tặc Trúc Lâm'],
     builder: 'bamboo', isBoss: false
   },
-  buddha: {
-    key: 'buddha', name: 'Đài Phật Anh Đào', short: 'Đài Phật', icon: '🌸', mul: 2.15,
-    exp: 340, silver: 7600, gold: 2, tip: 'Luận kiếm dưới tượng Phật, hoa anh đào bay khắp trời.',
-    badge: 'Thánh Địa Đài Phật', boss: 'Hộ Pháp Hắc Bạch (Lv.72)', recLvl: 'Cấp 68 - 73',
+  bm2: {
+    key: 'bm2', num: 2, name: 'Battle Map 2 — Đài Phật Anh Đào', short: 'Đài Phật', icon: '🌸', mul: 1.4,
+    exp: 210, silver: 3920, gold: 1, tip: 'Luận kiếm dưới tượng Phật, hoa anh đào bay khắp trời.',
+    badge: 'Thánh Địa Đài Phật', boss: 'Hộ Pháp Hắc Bạch (Lv.72)', bossSkill: 'Hắc Bạch Song Sát — song chưởng âm dương đoạt mệnh',
+    bossReward: 'Anh Đào Linh Hoa', bossRewardIcon: '🌸', recLvl: 'Cấp 68 - 73',
     drops: 'Anh Đào Linh Hoa, Phật Quang Xá Lợi', desc: 'Đài Phật linh thiêng, hoa anh đào bay khắp trời, nơi luận kiếm của cao thủ.',
+    enemies: ['Anh Đào Yêu', 'Hộ Pháp Áo Trắng', 'Tăng Nhân Sa Ngã'],
     builder: 'buddha', isBoss: false
   },
-  city: {
-    key: 'city', name: 'Biện Kinh Thành Cổ', short: 'Biện Kinh', icon: '🏯', mul: 3.5,
-    exp: 720, silver: 17000, gold: 3, tip: 'Hồ sen Biện Kinh, trận chiến cuối cùng của ma giáo.',
-    badge: 'Kinh Đô Võ Lâm', boss: 'Ma Giáo Giáo Chủ (Lv.75)', recLvl: 'Cấp 73 - 76',
+  bm3: {
+    key: 'bm3', num: 3, name: 'Battle Map 3 — Biện Kinh Thành Cổ', short: 'Biện Kinh', icon: '🏯', mul: 1.9,
+    exp: 285, silver: 5320, gold: 2, tip: 'Hồ sen Biện Kinh, trận chiến cuối cùng của ma giáo.',
+    badge: 'Kinh Đô Võ Lâm', boss: 'Ma Giáo Giáo Chủ (Lv.75)', bossSkill: 'Huyết Ma Đại Pháp — hút sinh lực toàn đội',
+    bossReward: 'Biện Kinh Lệnh Bài', bossRewardIcon: '🏯', recLvl: 'Cấp 73 - 76',
     drops: 'Biện Kinh Lệnh Bài, Long Văn Bảo Giáp', desc: 'Kinh đô phồn hoa bên hồ sen, nơi diễn ra trận chiến cuối cùng với ma giáo.',
+    enemies: ['Ma Giáo Cao Thủ', 'Tử Y Sát Thủ', 'Độc Long Sứ Giả'],
     builder: 'city', isBoss: false
   },
-  'van-mong-dam': {
-    key: 'van-mong-dam', name: 'Vân Mộng Đầm', short: 'Vân Mộng', icon: '💧', mul: 1.2,
-    exp: 190, silver: 3600, gold: 1, tip: 'Đầm nước tĩnh lặng phản chiếu bóng núi mờ sương.',
-    badge: 'Thủy Mặc U Cốc', boss: 'Thủy Nguyệt Tiên Tử (Lv.73)', recLvl: 'Cấp 70 - 75',
-    drops: 'Băng Tâm Ngọc Bội, Linh Khí Thủy Nguyên', desc: 'Đầm nước tĩnh lặng, nơi các bậc ẩn sĩ thường ngồi thuyền câu cá ngộ đạo.',
-    builder: 'city', isBoss: false
+  bm4: {
+    key: 'bm4', num: 4, name: 'Battle Map 4 — Tuyết Sơn Băng Phong', short: 'Tuyết Sơn', icon: '❄️', mul: 2.4,
+    exp: 360, silver: 6720, gold: 2, tip: 'Bão tuyết gào thét, băng phong vạn lý đóng băng cả kiếm khí.',
+    badge: 'Đỉnh Tuyết Ngàn Năm', boss: 'Băng Tuyết Nữ Vương (Lv.78)', bossSkill: 'Băng Phong Vạn Lý — đóng băng toàn đội 1 hiệp',
+    bossReward: 'Băng Tâm Ngọc Bội', bossRewardIcon: '❄️', recLvl: 'Cấp 76 - 79',
+    drops: 'Băng Tâm Ngọc Bội, Tuyết Liên Thiên Sơn', desc: 'Đỉnh tuyết ngàn năm không tan, gió lạnh cắt da, chỉ cao thủ nội công thâm hậu mới trụ được.',
+    enemies: ['Tuyết Yêu', 'Băng Lang', 'Tuyết Sơn Cự Nhân'],
+    builder: 'snow', isBoss: false
   },
-  'kiem-linh-coc': {
-    key: 'kiem-linh-coc', name: 'Kiếm Linh Cốc', short: 'Kiếm Linh', icon: '🗡️', mul: 1.6,
-    exp: 260, silver: 5400, gold: 1, tip: 'Hàng vạn thanh cổ kiếm cắm trên vách đá rít lên từng hồi.',
-    badge: 'Thánh Địa Kiếm Đạo', boss: 'Kiếm Linh Hộ Pháp (Lv.74)', recLvl: 'Cấp 72 - 76',
-    drops: 'Huyền Thiết Tinh Khoáng, Kiếm Ý Đan', desc: 'Thung lũng quanh năm mây mù bao phủ, hàng vạn thanh cổ kiếm cắm trên vách đá.',
-    builder: 'bamboo', isBoss: false
+  bm5: {
+    key: 'bm5', num: 5, name: 'Battle Map 5 — Sa Mạc Hoàng Kim', short: 'Sa Mạc', icon: '🏜️', mul: 2.9,
+    exp: 435, silver: 8120, gold: 3, tip: 'Cát vàng cuồn cuộn, kim tự tháp cổ chôn vùi kho báu.',
+    badge: 'Hoàng Kim Đại Mạc', boss: 'Sa Mạc Hoàng Đế (Lv.81)', bossSkill: 'Cát Bão Hoàng Kim — bão cát mù trời, sát thương diện rộng',
+    bossReward: 'Hoàng Kim Sa Lậu', bossRewardIcon: '⏳', recLvl: 'Cấp 79 - 82',
+    drops: 'Hoàng Kim Sa Lậu, Kim Tự Tháp Cổ Ngọc', desc: 'Đại mạc cát vàng mênh mông, ốc đảo là nơi duy nhất có nước — và có phục kích.',
+    enemies: ['Sa Tặc', 'Cát Yêu', 'Bọ Cạp Khổng Lồ'],
+    builder: 'desert', isBoss: false
   },
-  'xanh-tu-nam': {
-    key: 'xanh-tu-nam', name: 'Xanh Tử Nam', short: 'Xanh Tử', icon: '🌲', mul: 2.0,
-    exp: 320, silver: 7000, gold: 2, tip: 'Rừng tùng cổ tự, đạo nhân ngồi thiền dưới gốc tùng nghìn năm.',
-    badge: 'Rừng Tùng Cổ Tự', boss: 'Thanh Tùng Đạo Nhân (Lv.75)', recLvl: 'Cấp 74 - 77',
-    drops: 'Tùng Hạc Diên Niên Đan, Mảnh Áo Choàng', desc: 'Rừng tùng cổ tự ngàn năm, linh khí hội tụ.',
-    builder: 'bamboo', isBoss: false
+  bm6: {
+    key: 'bm6', num: 6, name: 'Battle Map 6 — Núi Lửa Thiên Hỏa', short: 'Thiên Hỏa', icon: '🌋', mul: 3.4,
+    exp: 510, silver: 9520, gold: 3, tip: 'Lửa thiêng bùng cháy, Hỏa Kỳ Lân trấn giữ đỉnh cao nhất.',
+    badge: 'Trọng Điểm Quyết Chiến', boss: 'Hỏa Kỳ Lân – Viêm Đế (Lv.84)', bossSkill: 'Thiên Hỏa Phần Thiên — lửa trời thiêu rụi chiến trường',
+    bossReward: 'Thần Binh Hỏa Lân', bossRewardIcon: '🔥', recLvl: 'Cấp 82 - 85',
+    drops: 'Thần Binh Hỏa Lân, Bí Kíp Cửu Dương', desc: 'Đỉnh núi lửa thiêng, dung nham cuộn trào, nơi quyết chiến với Hỏa Kỳ Lân.',
+    enemies: ['Hỏa Ma', 'Dung Nham Quái', 'Hỏa Diệm Sứ Giả'],
+    builder: 'volcano', isBoss: false
   },
-  'mon-quan': {
-    key: 'mon-quan', name: 'Môn Quan', short: 'Môn Quan', icon: '🏰', mul: 2.8,
-    exp: 520, silver: 12000, gold: 2, tip: 'Cửa ải yết hầu, trấn quan đại tướng trấn giữ ngày đêm.',
-    badge: 'Cửa Ải Yết Hầu', boss: 'Trấn Quan Đại Tướng (Lv.76)', recLvl: 'Cấp 75 - 78',
-    drops: 'Lệnh Bài Quân Công, Giáp Trụ Huyền Vũ', desc: 'Cửa ải yết hầu của võ lâm, ai qua được ải này mới xứng danh cao thủ.',
-    builder: 'city', isBoss: false
+  bm7: {
+    key: 'bm7', num: 7, name: 'Battle Map 7 — Đầm Lầy U Ám', short: 'Đầm Lầy', icon: '🐸', mul: 3.9,
+    exp: 585, silver: 10920, gold: 4, tip: 'Độc vụ mê hồn, bước sai một bước là chìm trong bùn độc.',
+    badge: 'U Ám Chiểu Trạch', boss: 'Đầm Lầy Ma Quân (Lv.87)', bossSkill: 'Độc Vụ Mê Hồn — độc vụ lan khắp trận, rút sinh lực mỗi hiệp',
+    bossReward: 'Độc Long Châu', bossRewardIcon: '☠️', recLvl: 'Cấp 85 - 88',
+    drops: 'Độc Long Châu, U Minh Độc Thảo', desc: 'Đầm lầy u ám quanh năm sương độc, cây khô trơ cành, nấm phát quang lập lòe trong đêm.',
+    enemies: ['Đầm Lầy Thủy Quái', 'Độc Oa', 'Cây Khô Ma'],
+    builder: 'swamp', isBoss: false
   },
-  'thien-hoa-dan-dinh': {
-    key: 'thien-hoa-dan-dinh', name: 'Thiên Hỏa Đỉnh', short: 'Thiên Hỏa', icon: '🔥', mul: 3.8,
-    exp: 820, silver: 19500, gold: 3, tip: 'Lửa thiêng bùng cháy, Hỏa Kỳ Lân trấn giữ đỉnh cao nhất.',
-    badge: 'Trọng Điểm Quyết Chiến', boss: 'Hỏa Kỳ Lân – Viêm Đế (Lv.78)', recLvl: 'Cấp 76+',
-    drops: 'Thần Binh Hỏa Lân, Bí Kíp Cửu Dương, 5000 Vàng', desc: 'Đỉnh núi lửa thiêng, nơi quyết chiến cuối cùng với Hỏa Kỳ Lân.',
-    builder: 'city', isBoss: true
-  }
+  bm8: {
+    key: 'bm8', num: 8, name: 'Battle Map 8 — Vân Cung Thiên Đình', short: 'Vân Cung', icon: '☁️', mul: 4.4,
+    exp: 660, silver: 12320, gold: 4, tip: 'Cung điện trên mây, thiên lôi giáng xuống kẻ dám khiêu chiến.',
+    badge: 'Thiên Đình Vân Cung', boss: 'Thiên Đình Chiến Thần (Lv.90)', bossSkill: 'Thiên Lôi Vạn Quân — vạn đạo thiên lôi giáng xuống',
+    bossReward: 'Thiên Lôi Lệnh', bossRewardIcon: '⚡', recLvl: 'Cấp 88 - 91',
+    drops: 'Thiên Lôi Lệnh, Vân Cung Tiên Y', desc: 'Cung điện vàng son lơ lửng giữa tầng mây, nơi thiên binh thiên tướng trấn giữ cổng trời.',
+    enemies: ['Thiên Binh', 'Vân Hạc Tiên', 'Kim Giáp Thần Tướng'],
+    builder: 'sky', isBoss: false
+  },
+  bm9: {
+    key: 'bm9', num: 9, name: 'Battle Map 9 — Hang Quỷ Âm Phủ', short: 'Hang Quỷ', icon: '👹', mul: 4.9,
+    exp: 735, silver: 13720, gold: 5, tip: 'Âm khí ngút trời, quỷ trảo từ bóng tối vươn ra không báo trước.',
+    badge: 'Âm Phủ Quỷ Quật', boss: 'Quỷ Vương Diêm La (Lv.93)', bossSkill: 'Âm Phủ Quỷ Trảo — quỷ trảo hút hồn, giảm mạnh phòng thủ',
+    bossReward: 'Diêm La Lệnh Bài', bossRewardIcon: '👹', recLvl: 'Cấp 91 - 94',
+    drops: 'Diêm La Lệnh Bài, Âm Hồn Châu', desc: 'Hang quỷ sâu hun hút, thạch nhũ sắc nhọn, tinh thể âm hồn phát sáng tím biếc trong bóng tối.',
+    enemies: ['Tiểu Quỷ', 'Âm Hồn', 'Quỷ Diện Tướng'],
+    builder: 'cave', isBoss: false
+  },
+  bm10: {
+    key: 'bm10', num: 10, name: 'Battle Map 10 — Hồ Sen Biển Đông', short: 'Hồ Sen', icon: '🌊', mul: 5.5,
+    exp: 825, silver: 15400, gold: 6, tip: 'Sóng biển cuộn trào, Long Vương nổi giận — trận chiến cuối cùng.',
+    badge: 'Biển Đông Long Cung', boss: 'Long Vương Biển Đông (Lv.96)', bossSkill: 'Hải Triều Long Ngâm — sóng thần long ngâm cuốn phăng tất cả',
+    bossReward: 'Long Châu Biển Đông', bossRewardIcon: '🐉', recLvl: 'Cấp 94+',
+    drops: 'Long Châu Biển Đông, 5000 Vàng, Bí Kíp Long Ngâm', desc: 'Hồ sen mênh mông nối ra biển Đông, Long Vương trấn giữ long châu — ai thắng được mới xứng danh thiên hạ đệ nhất.',
+    enemies: ['Thủy Quái', 'Giao Long Con', 'Biển Đông Thủy Binh'],
+    builder: 'lake', isBoss: true
+  },
+  /* Id map cũ (save v2 trước đây) — giữ lại để save cũ vẫn mở được trận,
+     resolveArenaKey() map chúng sang Battle Map mới tương ứng. Không hiện ở modal. */
+  bamboo: { key: 'bamboo', name: 'Rừng Trúc U Minh', short: 'Rừng Trúc', icon: '🌿', mul: 1, exp: 150, silver: 2800, gold: 1, builder: 'bamboo', legacy: true, aliasOf: 'bm1', boss: 'Trúc Ma Lão Tổ (Lv.70)', recLvl: 'Cấp 65 - 70', drops: 'Trúc Diệp Linh Đan', desc: 'Map cũ — đã gộp vào Battle Map 1.', badge: 'Rừng Trúc U Minh', tip: '', isBoss: false },
+  buddha: { key: 'buddha', name: 'Đài Phật Anh Đào', short: 'Đài Phật', icon: '🌸', mul: 2.15, exp: 340, silver: 7600, gold: 2, builder: 'buddha', legacy: true, aliasOf: 'bm2', boss: 'Hộ Pháp Hắc Bạch (Lv.72)', recLvl: 'Cấp 68 - 73', drops: 'Anh Đào Linh Hoa', desc: 'Map cũ — đã gộp vào Battle Map 2.', badge: 'Thánh Địa Đài Phật', tip: '', isBoss: false },
+  city: { key: 'city', name: 'Biện Kinh Thành Cổ', short: 'Biện Kinh', icon: '🏯', mul: 3.5, exp: 720, silver: 17000, gold: 3, builder: 'city', legacy: true, aliasOf: 'bm3', boss: 'Ma Giáo Giáo Chủ (Lv.75)', recLvl: 'Cấp 73 - 76', drops: 'Biện Kinh Lệnh Bài', desc: 'Map cũ — đã gộp vào Battle Map 3.', badge: 'Kinh Đô Võ Lâm', tip: '', isBoss: false },
+  'van-mong-dam': { key: 'van-mong-dam', name: 'Vân Mộng Đầm', short: 'Vân Mộng', icon: '💧', mul: 1.2, exp: 190, silver: 3600, gold: 1, builder: 'city', legacy: true, aliasOf: 'bm10', boss: 'Thủy Nguyệt Tiên Tử (Lv.73)', recLvl: 'Cấp 70 - 75', drops: 'Băng Tâm Ngọc Bội', desc: 'Map cũ — đã gộp vào Battle Map 10.', badge: 'Thủy Mặc U Cốc', tip: '', isBoss: false },
+  'kiem-linh-coc': { key: 'kiem-linh-coc', name: 'Kiếm Linh Cốc', short: 'Kiếm Linh', icon: '🗡️', mul: 1.6, exp: 260, silver: 5400, gold: 1, builder: 'bamboo', legacy: true, aliasOf: 'bm3', boss: 'Kiếm Linh Hộ Pháp (Lv.74)', recLvl: 'Cấp 72 - 76', drops: 'Kiếm Ý Đan', desc: 'Map cũ — đã gộp vào Battle Map 3.', badge: 'Thánh Địa Kiếm Đạo', tip: '', isBoss: false },
+  'xanh-tu-nam': { key: 'xanh-tu-nam', name: 'Xanh Tử Nam', short: 'Xanh Tử', icon: '🌲', mul: 2.0, exp: 320, silver: 7000, gold: 2, builder: 'bamboo', legacy: true, aliasOf: 'bm1', boss: 'Thanh Tùng Đạo Nhân (Lv.75)', recLvl: 'Cấp 74 - 77', drops: 'Tùng Hạc Diên Niên Đan', desc: 'Map cũ — đã gộp vào Battle Map 1.', badge: 'Rừng Tùng Cổ Tự', tip: '', isBoss: false },
+  'mon-quan': { key: 'mon-quan', name: 'Môn Quan', short: 'Môn Quan', icon: '🏰', mul: 2.8, exp: 520, silver: 12000, gold: 2, builder: 'city', legacy: true, aliasOf: 'bm3', boss: 'Trấn Quan Đại Tướng (Lv.76)', recLvl: 'Cấp 75 - 78', drops: 'Lệnh Bài Quân Công', desc: 'Map cũ — đã gộp vào Battle Map 3.', badge: 'Cửa Ải Yết Hầu', tip: '', isBoss: false },
+  'thien-hoa-dan-dinh': { key: 'thien-hoa-dan-dinh', name: 'Thiên Hỏa Đỉnh', short: 'Thiên Hỏa', icon: '🔥', mul: 3.8, exp: 820, silver: 19500, gold: 3, builder: 'city', legacy: true, aliasOf: 'bm6', boss: 'Hỏa Kỳ Lân – Viêm Đế (Lv.78)', recLvl: 'Cấp 76+', drops: 'Thần Binh Hỏa Lân', desc: 'Map cũ — đã gộp vào Battle Map 6.', badge: 'Trọng Điểm Quyết Chiến', tip: '', isBoss: true }
 };
+
+/* Map id arena (kể cả id cũ trong save) sang key Battle Map 1..10 hiện hành. */
+function resolveArenaKey(k) {
+  const a = ARENAS[k];
+  if (!a) return 'bm1';
+  return a.aliasOf || k;
+}
+
+/* Dàn quái thường theo từng Battle Map (dùng trong spawnWave, đợt 1–2). */
+const ARENA_ENEMIES = {
+  bm1: [
+    { name: 'Trúc Yêu', hp: 0.52, atk: 0.8, robe: 0x2f6b2a, hair: 0x1e3a1a, scale: 0.98 },
+    { name: 'Ma Giáo Đồ', hp: 0.55, atk: 0.85, robe: 0x111827, hair: 0x94a3b8, scale: 1.0 },
+    { name: 'Sơn Tặc Trúc Lâm', hp: 0.6, atk: 0.9, robe: 0x78350f, hair: 0x1e1b4b, scale: 1.02 }
+  ],
+  bm2: [
+    { name: 'Anh Đào Yêu', hp: 0.55, atk: 0.85, robe: 0xbe185d, hair: 0xf9a8d4, scale: 0.98 },
+    { name: 'Hộ Pháp Áo Trắng', hp: 0.58, atk: 0.72, robe: 0x312e81, hair: 0xf1f5f9, scale: 1.0 },
+    { name: 'Tăng Nhân Sa Ngã', hp: 0.62, atk: 0.88, robe: 0x92400e, hair: 0x1e1b4b, scale: 1.02 }
+  ],
+  bm3: [
+    { name: 'Ma Giáo Cao Thủ', hp: 0.58, atk: 0.9, robe: 0x111827, hair: 0x94a3b8, scale: 1.0 },
+    { name: 'Tử Y Sát Thủ', hp: 0.52, atk: 0.88, robe: 0x581c87, hair: 0x1e1b4b, scale: 0.98 },
+    { name: 'Độc Long Sứ Giả', hp: 0.6, atk: 0.78, robe: 0x065f46, hair: 0xd1d5db, scale: 1.02 }
+  ],
+  bm4: [
+    { name: 'Tuyết Yêu', hp: 0.6, atk: 0.9, robe: 0xe0f2fe, hair: 0xbae6fd, scale: 0.98 },
+    { name: 'Băng Lang', hp: 0.62, atk: 0.95, robe: 0x64748b, hair: 0xf1f5f9, scale: 1.05 },
+    { name: 'Tuyết Sơn Cự Nhân', hp: 0.75, atk: 0.85, robe: 0x334155, hair: 0xe2e8f0, scale: 1.15 }
+  ],
+  bm5: [
+    { name: 'Sa Tặc', hp: 0.62, atk: 0.92, robe: 0x92400e, hair: 0x451a03, scale: 1.0 },
+    { name: 'Cát Yêu', hp: 0.6, atk: 0.9, robe: 0xd97706, hair: 0xfde68a, scale: 0.98 },
+    { name: 'Bọ Cạp Khổng Lồ', hp: 0.7, atk: 0.95, robe: 0x78350f, hair: 0x1c1917, scale: 1.1 }
+  ],
+  bm6: [
+    { name: 'Hỏa Ma', hp: 0.65, atk: 0.95, robe: 0x991b1b, hair: 0xf97316, scale: 1.0 },
+    { name: 'Dung Nham Quái', hp: 0.72, atk: 0.9, robe: 0x7f1d1d, hair: 0xfb923c, scale: 1.08 },
+    { name: 'Hỏa Diệm Sứ Giả', hp: 0.62, atk: 1.0, robe: 0xea580c, hair: 0xfef3c7, scale: 1.0 }
+  ],
+  bm7: [
+    { name: 'Đầm Lầy Thủy Quái', hp: 0.68, atk: 0.92, robe: 0x14532d, hair: 0x4d7c0f, scale: 1.05 },
+    { name: 'Độc Oa', hp: 0.6, atk: 0.95, robe: 0x3f6212, hair: 0xa3e635, scale: 0.95 },
+    { name: 'Cây Khô Ma', hp: 0.78, atk: 0.85, robe: 0x44403c, hair: 0x292524, scale: 1.12 }
+  ],
+  bm8: [
+    { name: 'Thiên Binh', hp: 0.68, atk: 0.95, robe: 0xca8a04, hair: 0x1e1b4b, scale: 1.0 },
+    { name: 'Vân Hạc Tiên', hp: 0.62, atk: 0.9, robe: 0xf8fafc, hair: 0xe2e8f0, scale: 0.98 },
+    { name: 'Kim Giáp Thần Tướng', hp: 0.8, atk: 0.95, robe: 0xa16207, hair: 0xfef08a, scale: 1.12 }
+  ],
+  bm9: [
+    { name: 'Tiểu Quỷ', hp: 0.65, atk: 0.95, robe: 0x4c1d95, hair: 0x111827, scale: 0.95 },
+    { name: 'Âm Hồn', hp: 0.62, atk: 1.0, robe: 0x1e1b4b, hair: 0xddd6fe, scale: 1.0 },
+    { name: 'Quỷ Diện Tướng', hp: 0.82, atk: 0.95, robe: 0x7e22ce, hair: 0x0f172a, scale: 1.12 }
+  ],
+  bm10: [
+    { name: 'Thủy Quái', hp: 0.7, atk: 0.95, robe: 0x155e75, hair: 0x164e63, scale: 1.05 },
+    { name: 'Giao Long Con', hp: 0.75, atk: 1.0, robe: 0x0e7490, hair: 0x67e8f9, scale: 1.1 },
+    { name: 'Biển Đông Thủy Binh', hp: 0.68, atk: 0.92, robe: 0x1d4ed8, hair: 0xbfdbfe, scale: 1.0 }
+  ]
+};
+
+/* Boss riêng từng Battle Map — xuất hiện ở đợt 3 (kỹ năng ghi trong arena.bossSkill). */
+const ARENA_BOSSES = {
+  bm1: { name: 'Trúc Ma Lão Tổ', boss: true, hp: 2.0, atk: 1.4, robe: 0x14532d, hair: 0xd9f99d, scale: 1.3 },
+  bm2: { name: 'Hộ Pháp Hắc Bạch', boss: true, hp: 2.1, atk: 1.45, robe: 0x312e81, hair: 0xf1f5f9, scale: 1.3 },
+  bm3: { name: 'Ma Giáo Giáo Chủ', boss: true, hp: 2.2, atk: 1.5, robe: 0x7f1d1d, hair: 0x111827, scale: 1.35 },
+  bm4: { name: 'Băng Tuyết Nữ Vương', boss: true, hp: 2.3, atk: 1.55, robe: 0xe0f2fe, hair: 0xf0f9ff, scale: 1.32 },
+  bm5: { name: 'Sa Mạc Hoàng Đế', boss: true, hp: 2.4, atk: 1.6, robe: 0xb45309, hair: 0xfde68a, scale: 1.35 },
+  bm6: { name: 'Hỏa Kỳ Lân – Viêm Đế', boss: true, hp: 2.5, atk: 1.65, robe: 0x991b1b, hair: 0xfdba74, scale: 1.38 },
+  bm7: { name: 'Đầm Lầy Ma Quân', boss: true, hp: 2.6, atk: 1.7, robe: 0x14532d, hair: 0x365314, scale: 1.35 },
+  bm8: { name: 'Thiên Đình Chiến Thần', boss: true, hp: 2.7, atk: 1.75, robe: 0xca8a04, hair: 0xfef9c3, scale: 1.38 },
+  bm9: { name: 'Quỷ Vương Diêm La', boss: true, hp: 2.8, atk: 1.8, robe: 0x4c1d95, hair: 0x0f172a, scale: 1.4 },
+  bm10: { name: 'Long Vương Biển Đông', boss: true, hp: 3.0, atk: 1.9, robe: 0x0e7490, hair: 0x22d3ee, scale: 1.45 }
+};
+/* ARENA10-END */
 
 const ENEMY_DEFS = [
   { name: 'Ma Giáo Cao Thủ', boss: true, hp: 1.0, atk: 1.0, robe: 0x111827, hair: 0x94a3b8, scale: 1.22 },
