@@ -13,6 +13,7 @@ ED.Core = (function () {
   var _idCounter = 0;
   var _project = null;
   var _selectedId = null;
+  var _selectedIds = []; // đợt 6: multi-select (tương thích: _selectedId = phần tử đầu)
   var _undoStack = []; // snapshot JSON string, snapshot TRƯỚC thay đổi
   var _redoStack = [];
   var _dirty = false;
@@ -53,6 +54,7 @@ ED.Core = (function () {
       characters: []
     };
     _selectedId = null;
+    _selectedIds = [];
     _undoStack = [];
     _redoStack = [];
     _dirty = false;
@@ -78,6 +80,7 @@ ED.Core = (function () {
     if (!Array.isArray(_project.quests)) _project.quests = [];
     if (!Array.isArray(_project.characters)) _project.characters = [];
     _selectedId = null;
+    _selectedIds = [];
     _undoStack = [];
     _redoStack = [];
     _dirty = false;
@@ -129,7 +132,9 @@ ED.Core = (function () {
     for (var j = 0; j < _project.objects.length; j++) {
       if (_project.objects[j].parent === id) _project.objects[j].parent = null;
     }
-    if (_selectedId === id) _selectedId = null;
+    var si = _selectedIds.indexOf(id);
+    if (si >= 0) _selectedIds.splice(si, 1);
+    if (_selectedId === id) _selectedId = _selectedIds.length ? _selectedIds[0] : null;
     markDirty();
     _notify();
     return true;
@@ -150,6 +155,7 @@ ED.Core = (function () {
   function select(id) {
     if (id !== null && id !== undefined && !getObject(id)) return false;
     _selectedId = id || null;
+    _selectedIds = _selectedId ? [_selectedId] : [];
     _notify();
     return true;
   }
@@ -158,6 +164,50 @@ ED.Core = (function () {
 
   function selectedObject() {
     return _selectedId ? getObject(_selectedId) : null;
+  }
+
+  /* ---- Đợt 6: multi-select. selectedId() = phần tử đầu của selection
+     (tương thích cũ). Mọi hàm đổi selection đều gọi _notify() như select. ---- */
+  function selectMany(ids) {
+    var out = [];
+    ids = ids || [];
+    for (var i = 0; i < ids.length; i++) {
+      var id = ids[i];
+      if (id != null && getObject(id) && out.indexOf(id) < 0) out.push(id);
+    }
+    _selectedIds = out;
+    _selectedId = out.length ? out[0] : null;
+    _notify();
+    return _selectedIds.slice();
+  }
+  function addToSelection(id) {
+    if (id == null || !getObject(id)) return false;
+    if (_selectedIds.indexOf(id) < 0) _selectedIds.push(id);
+    if (!_selectedId) _selectedId = id;
+    _notify();
+    return true;
+  }
+  function removeFromSelection(id) {
+    var i = _selectedIds.indexOf(id);
+    if (i < 0) return false;
+    _selectedIds.splice(i, 1);
+    if (_selectedId === id) _selectedId = _selectedIds.length ? _selectedIds[0] : null;
+    _notify();
+    return true;
+  }
+  function clearSelection() {
+    _selectedIds = [];
+    _selectedId = null;
+    _notify();
+  }
+  function getSelectedIds() { return _selectedIds.slice(); }
+  function getSelectedObjects() {
+    var out = [];
+    for (var i = 0; i < _selectedIds.length; i++) {
+      var o = getObject(_selectedIds[i]);
+      if (o) out.push(o);
+    }
+    return out;
   }
 
   // Nhóm hiển thị trong hierarchy theo type (khi object chưa có category riêng).
@@ -214,6 +264,7 @@ ED.Core = (function () {
     var sel = _selectedId;
     _project = parsed;
     _selectedId = getObject(sel) ? sel : null;
+    _selectedIds = getObject(sel) ? [sel] : []; // đợt 6: khôi phục multi-select
     _resyncCounter();
     _dirty = true;
     _notify();
@@ -229,6 +280,7 @@ ED.Core = (function () {
     var sel = _selectedId;
     _project = parsed;
     _selectedId = getObject(sel) ? sel : null;
+    _selectedIds = getObject(sel) ? [sel] : []; // đợt 6: khôi phục multi-select
     _resyncCounter();
     _dirty = true;
     _notify();
@@ -356,6 +408,9 @@ ED.Core = (function () {
     addObject: addObject, removeObject: removeObject,
     getObject: getObject, listObjects: listObjects,
     select: select, selectedId: selectedId, selectedObject: selectedObject,
+    selectMany: selectMany, addToSelection: addToSelection,
+    removeFromSelection: removeFromSelection, clearSelection: clearSelection,
+    getSelectedIds: getSelectedIds, getSelectedObjects: getSelectedObjects,
     categoryForType: categoryForType, syncNpcObject: syncNpcObject,
     pushHistory: pushHistory, undo: undo, redo: redo,
     canUndo: canUndo, canRedo: canRedo,

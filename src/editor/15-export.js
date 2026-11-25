@@ -1609,6 +1609,45 @@ ED.Export = (function () {
     } catch (e) { return false; }
   }
 
+  /* Đợt 6 — SFX sấm (chỉ thêm hàm này, không sửa logic khác):
+     noise burst ~1.5s qua lowpass quét 400Hz -> 80Hz + gain envelope
+     (lên nhanh 0.03s rồi tắt dần tới 1.6s), KHÔNG cần file âm thanh.
+     Tạo AudioContext lười qua _ensureAudioCtx, guard khi không có
+     WebAudio (trả false). Gọi: ED.Export.playThunder() — nhóm Môi
+     trường gọi qua guard typeof khi chớp sấm (weather 'thunder'). */
+  function playThunder() {
+    var ctx = _ensureAudioCtx();
+    if (!ctx) return false;
+    try {
+      if (ctx.state === 'suspended' && typeof ctx.resume === 'function') ctx.resume();
+    } catch (e) {}
+    try {
+      var buf = _getNoiseBuffer(ctx);
+      if (!buf) return false;
+      var t0 = (typeof ctx.currentTime === 'number') ? ctx.currentTime : 0;
+      var src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      var flt = ctx.createBiquadFilter();
+      flt.type = 'lowpass';
+      _paramRamp(flt.frequency, 400, 80, t0, 1.5);
+      var g = ctx.createGain();
+      try {
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.linearRampToValueAtTime(0.7, t0 + 0.03);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.6);
+      } catch (e) {
+        try { g.gain.value = 0.7; } catch (e2) {}
+      }
+      src.connect(flt);
+      flt.connect(g);
+      g.connect(_sfxGain || ctx.destination);
+      src.start(t0);
+      try { src.stop(t0 + 1.7); } catch (e) {}
+      return true;
+    } catch (e) { return false; }
+  }
+
   /* ---- Đợt 4 — SFX theo vị trí 3D + nhạc theo ngữ cảnh. ---- */
   function _nowMs() {
     try { return Date.now(); } catch (e) { return 0; }
@@ -2211,6 +2250,8 @@ ED.Export = (function () {
     play: audioPlay,
     /* Đợt 4 — SFX vị trí 3D + nhạc theo ngữ cảnh. */
     playPositional: playPositionalSfx,
+    /* Đợt 6 — SFX sấm (bão sấm sét). */
+    playThunder: playThunder,
     setCombatMode: setCombatMode,
     getMusicMode: getMusicMode,
     setContextMusic: setContextMusic,
@@ -2565,6 +2606,8 @@ ED.Export = (function () {
     /* Đợt 4 — project ZIP + SFX 3D + nhạc theo ngữ cảnh. */
     isZipReady: isZipReady, exportProjectZip: exportProjectZip,
     playPositionalSfx: playPositionalSfx,
+    /* Đợt 6 — SFX sấm (bão sấm sét). */
+    playThunder: playThunder,
     getCameraState: _cameraStateFromViewport,
     setCombatMode: setCombatMode, getMusicMode: getMusicMode,
     setContextMusic: setContextMusic, isContextMusic: isContextMusic,

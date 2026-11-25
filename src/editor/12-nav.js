@@ -395,7 +395,14 @@ ED.Nav = (function () {
       if (typeof ED.Terrain.getHeights === 'function') { try { heights = ED.Terrain.getHeights(); } catch (e) {} }
       if (typeof ED.Terrain.getPaints === 'function') { try { paints = ED.Terrain.getPaints(); } catch (e) {} }
       if (typeof ED.Terrain.SEGMENTS === 'number') segments = ED.Terrain.SEGMENTS;
-      if (typeof ED.Terrain.SIZE === 'number') size = ED.Terrain.SIZE;
+      /* Đợt 6 — map 96/128/192: ưu tiên ED.Terrain.getSize() (live),
+         fallback ED.Terrain.SIZE rồi 96 (ED_NAV_SIZE). */
+      if (typeof ED.Terrain.getSize === 'function') {
+        try {
+          var s = ED.Terrain.getSize();
+          if (typeof s === 'number' && isFinite(s) && s > 0) size = s;
+        } catch (e) { /* giữ size cũ */ }
+      } else if (typeof ED.Terrain.SIZE === 'number') size = ED.Terrain.SIZE;
     }
     if ((!heights || !paints) && ED.Core && typeof ED.Core.getProject === 'function') {
       var p = null;

@@ -241,3 +241,48 @@
   ED.Terrain.updateLod(cameraPos {x,y,z}) + getLodInfo() {levels:[n0,n1,n2],
   total:16}; ED.Physics.crateStep(crate, dt, boxes, crates, opts) với
   opts {dir, pushPoint/offset, heights, size, segments, gravity}.
+
+## Đợt 6 — ownership bổ sung (coordinator tích hợp)
+- Terrain+Core: 04-terrain.js (map size 96/128/192, regions, spline
+  road/river/fence, scatter brush InstancedMesh) + 00-core.js (multi-select:
+  selectMany/addToSelection/removeFromSelection/clearSelection/
+  getSelectedIds/getSelectedObjects; select(id)/selectedId() giữ tương
+  thích: selectedId = phần tử đầu) + 12-nav.js (chỉ _readTerrain đọc
+  ED.Terrain.getSize() khi có, fallback 96).
+- Viewport: 01-viewport.js (post-processing + camera) + vendor 6 file lib
+  r128 (CopyShader, LuminosityHighPassShader, EffectComposer, RenderPass,
+  ShaderPass, UnrealBloomPass) — composer RenderPass -> UnrealBloomPass ->
+  ShaderPass vignette -> ShaderPass CopyShader; bloom/vignette lưu prefs;
+  walk mode FPS/TPS (V, Esc thoát, joystick ảo); bookmarks + camera path
+  Catmull-Rom thuần edCameraPathPoint; hook render loop ED.Terrain.tick(dt).
+- Sky+Weather: 05-environment.js (skybox procedural, weather thunder/
+  sandstorm, flash overlay) + 06-fx.js (fxType foam) + 03-assets.js
+  (asset waterfall) + 15-export.js (chỉ thêm playThunder()).
+- Minimap+Select: 19-minimap.js (mới, chỉ 1 file) + 01-viewport.js
+  (nối spline/scatter vào syncObject, box select, gizmo nhóm, thước đo)
+  + 02-ui.js (chỉ Inspector chọn nhiều).
+- Tích hợp (coordinator, không worker nào được sửa): tools/build-editor.mjs
+  (thêm 19-minimap.js vào ORDERED sau 18-itch.js + 6 placeholder post-proc
+  __COPYSHADER__ __LUMINOSITYHIGHPASS__ __EFFECTCOMPOSER__ __RENDERPASS__
+  __SHADERPASS__ __UNREALBLOOMPASS__ + libChecks), editor.template.html
+  (6 khối script sau __RECTAREALIGHT__), 99-boot.js (_callInit('Minimap')
+  sau Itch), editor.css (append CSS 4 nhóm), DESIGN.md, README.md (mục
+  đợt 6), tools/test-mapeditor6.cjs (harness đợt 6).
+- Quy tắc đợt 6: KHÔNG sửa src/original/, KHÔNG sửa mongvolam.html hay
+  index.html hay tools/build.mjs — game giữ nguyên (hash mongvolam.html vẫn
+  8792425df06eca92538eba790eaf4dec798a0c8c, commit 14014ff5).
+  Project JSON v1 mở rộng field (project cũ vẫn mở được):
+  terrain.size (96|128|192, mặc định 96; SEGMENTS giữ 64, chỉ đổi tỉ lệ ô),
+  terrain.regions [{id,name,x0,z0,x1,z1,preset}] (preset 1 trong 5 preset
+  môi trường), objects type 'spline' extra {splineKind:'road'|'river'|
+  'fence', points:[[x,z]...], width} + type 'scatter' extra {kind:'tree'|
+  'rock'|'grass', count, seed, radius, center:[x,z]},
+  cameras {bookmarks:[{id,name,pos:[x,y,z],target:[x,y,z]}],
+  paths:[{id,name,keys:[{t,pos,target}]}]},
+  env.skybox (mặc định true), env.thunderRate (mặc định 1),
+  env.weather thêm 'thunder'|'sandstorm'.
+  prefs localStorage mongvolam_editor_prefs_v1 thêm bloom:{...} và
+  minimap:{visible,size}. ED.Terrain.buildSplineGroup/buildScatterGroup
+  (trả THREE.Group hoặc null khi không có THREE); ED.Viewport.syncObject
+  nối 2 type này; ED.Terrain.tick(dt) cập nhật flow sông (viewport gọi
+  qua guard trong render loop).

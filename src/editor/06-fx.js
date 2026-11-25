@@ -3,7 +3,8 @@
    ED.Fx — particle FX thật bằng THREE.Points (+ Line cho sét):
    fire (cam/đỏ bay lên), smoke (xám bay lên chậm), lightning (tia sét
    zigzag nhấp nháy + chớp sáng), aura (vòng điểm xoay quanh chân),
-   heal (xanh lá bay lên). Mỗi FX là object type 'fx' với
+   heal (xanh lá bay lên). Đợt 6 — foam (bọt trắng bay lên rồi rơi,
+   gắn sẵn ở chân thác 'waterfall' trong 03-assets.js). Mỗi FX là object type 'fx' với
    extra {fxType, count, speed, color}; inspector đổi count/speed/color
    rồi gọi ED.Fx.updateFx(obj). Viewport render loop gọi ED.Fx.tick(dt).
    Xem trước ngay trong viewport khi đặt (buildFx tạo Points thật).
@@ -21,7 +22,10 @@ ED.Fx = (function () {
     smoke: { name: 'Khói', color: '#9aa0a6', count: 40, speed: 0.5, size: 0.5, desc: 'Khói xám bay lên chậm' },
     lightning: { name: 'Sét', color: '#bfe3ff', count: 1, speed: 1, size: 0.2, desc: 'Tia sét zigzag + chớp sáng' },
     aura: { name: 'Hào quang', color: '#38bdf8', count: 48, speed: 1, size: 0.22, desc: 'Vòng điểm xoay quanh chân' },
-    heal: { name: 'Hồi máu', color: '#4ade80', count: 36, speed: 0.8, size: 0.24, desc: 'Điểm xanh lá bay lên' }
+    heal: { name: 'Hồi máu', color: '#4ade80', count: 36, speed: 0.8, size: 0.24, desc: 'Điểm xanh lá bay lên' },
+    /* Đợt 6 — bọt nước ở chân thác (03-assets.js 'waterfall' gắn sẵn):
+       hạt trắng bay lên rồi rơi theo parabol, mặc định 40 hạt. */
+    foam: { name: 'Bọt nước', color: '#ffffff', count: 40, speed: 1, size: 0.3, desc: 'Bọt trắng bay lên rồi rơi' }
   };
 
   /* Registry các FX đang chạy trong viewport: id -> {group, type, ...}. */
@@ -130,6 +134,12 @@ ED.Fx = (function () {
         var a = t * 1.6 * speed + i * (Math.PI * 2 / n);
         var r = 0.85 + 0.12 * Math.sin(t * 2 + i);
         x = Math.cos(a) * r; y = 0.15 + 0.1 * Math.sin(t * 3 + i * 0.9); z = Math.sin(a) * r;
+      } else if (st.type === 'foam') {
+        /* Đợt 6 — bọt nước: bay lên rồi rơi theo parabol y = 4k(1-k)*1.4,
+           x/z xoè dần theo vòng đời, bay lệch theo seed. */
+        x = (s0 - 0.5) * 1.1 * (0.5 + k) + Math.sin(t * 2 + i * 1.3) * 0.12 * k;
+        y = 0.1 + 4 * k * (1 - k) * 1.4;
+        z = (s1 - 0.5) * 1.1 * (0.5 + k) + Math.cos(t * 1.8 + i) * 0.12 * k;
       } else { // heal
         x = (s0 - 0.5) * 1.1 + Math.sin(t * 1.5 + i) * 0.15;
         y = 0.1 + k * 2.0;

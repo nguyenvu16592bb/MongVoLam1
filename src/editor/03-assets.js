@@ -46,6 +46,9 @@ ED.Assets = (function () {
     { type: 'bamboo', name: 'Cây trúc', category: 'Environment', desc: 'Thân xanh nhiều đốt + lá' },
     { type: 'rock', name: 'Đá', category: 'Environment', desc: 'Khối đá xám' },
     { type: 'water', name: 'Hồ nước', category: 'Environment', desc: 'Mặt phẳng nước xanh trong' },
+    /* Đợt 6 — thác nước: mặt nước đứng + bọt trắng ở chân (FX 'foam'
+       gắn sẵn thành con của group, xem BUILDERS['waterfall']). */
+    { type: 'waterfall', name: 'Thác nước', category: 'Environment', desc: 'Mặt nước đứng + bọt trắng ở chân thác' },
     { type: 'grass', name: 'Bụi cỏ', category: 'Environment', desc: 'Cụm cỏ 5 lá' },
     { type: 'flower', name: 'Hoa sen', category: 'Environment', desc: 'Lá sen + hoa hồng' },
     { type: 'lantern', name: 'Lồng đèn', category: 'Props', desc: 'Cột gỗ + đèn lồng đỏ' },
@@ -404,6 +407,42 @@ ED.Assets = (function () {
       rim.rotation.x = Math.PI / 2; rim.position.y = -0.5; g.add(rim);
       return g;
     },
+    /* Đợt 6 — thác nước: mặt nước đứng (plane dọc, xanh trong,
+       transparent 0.75, cao theo scale.y) + vách đá 2 bên + bọt trắng
+       ở chân thác. Bọt là FX 'foam' của 06-fx.js, gắn thành CON của
+       group thác (đi cùng thác khi di chuyển/xoá, không phải object
+       riêng) — khớp cách 'lantern' gắn PointLight con trong group.
+       buildMesh đăng ký foam vào ED.Fx.tick qua key id + ':foam'
+       (tick bỏ qua group không còn parent nên không rò rỉ instance);
+       chưa có ED.Fx (vm test chỉ load 03) thì vẫn trả group thác. */
+    'waterfall': function (o) {
+      var g = new THREE.Group();
+      var waterM = mat(o.color || '#7fd4d8', { roughness: 0.2, metalness: 0.1, transparent: true, opacity: 0.75 });
+      var fall = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 3.2), waterM);
+      fall.position.set(0, 1.6, 0); fall.receiveShadow = false; g.add(fall);
+      var crest = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 0.5), waterM);
+      crest.rotation.x = -Math.PI / 2; crest.position.set(0, 3.25, -0.1); g.add(crest);
+      var stone = mat(PALETTE.stone, { roughness: 0.95 });
+      g.add(box(0.5, 3.4, 0.8, stone, -1.35, 1.7, -0.1));                    // vách đá 2 bên
+      g.add(box(0.5, 3.4, 0.8, stone, 1.35, 1.7, -0.1));
+      g.add(box(3.2, 0.5, 0.9, stone, 0, 3.45, -0.1));                       // đỉnh thác
+      var pool = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 2.2),
+        mat(PALETTE.water, { roughness: 0.25, metalness: 0.1, transparent: true, opacity: 0.8 }));
+      pool.rotation.x = -Math.PI / 2; pool.position.set(0, -0.5, 0.9); g.add(pool);
+      g.userData.foam = true;
+      if (ED.Fx && typeof ED.Fx.buildFx === 'function') {
+        try {
+          var foam = ED.Fx.buildFx('foam', { count: 40, speed: 1, color: '#ffffff' });
+          foam.position.set(0, 0, 0.9);
+          g.add(foam);
+          g.userData.foamGroup = foam;
+          if (o && o.id && typeof ED.Fx.register === 'function') {
+            ED.Fx.register(o.id + ':foam', foam);
+          }
+        } catch (e) {}
+      }
+      return g;
+    },
     'grass': function (o) {
       var g = new THREE.Group();
       var m = mat(o.color || PALETTE.grass, { roughness: 0.9 });
@@ -531,6 +570,7 @@ ED.Assets = (function () {
     var obj = { type: type, category: def.category, name: def.name,
       pos: [x, yy, z], rot: [0, 0, 0], scale: [1, 1, 1] };
     if (type === 'fx-marker') { obj.type = 'fx'; obj.extra = { fxType: 'fire', count: 60, speed: 1, color: '#ff8c1a' }; }
+    if (type === 'waterfall') { obj.extra = { foam: true }; }
     if (ED.Core && typeof ED.Core.addObject === 'function') {
       obj = ED.Core.addObject(obj) || obj;
     } else if (ED.Core && typeof ED.Core.markDirty === 'function') {

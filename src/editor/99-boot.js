@@ -69,6 +69,7 @@ ED.Boot = (function () {
     _callInit('Material');
     _callInit('Export');
     _callInit('Itch');
+    _callInit('Minimap');
 
     // 5. Project mẫu nếu chưa có project nào.
     if (!ED.Core.getProject()) _sampleProject();

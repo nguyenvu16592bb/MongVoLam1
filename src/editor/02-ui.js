@@ -477,6 +477,14 @@ ED.UI = (function () {
     if (!_els.inspectorBody || !ED.Core) return;
     var body = _els.inspectorBody;
     body.innerHTML = '';
+    /* Đợt 6 — chọn >1 object: hiện panel chọn nhiều (không hiện
+       Transform/Material của 1 object nữa). Chỉ 1 object thì như cũ. */
+    var selIds = (typeof ED.Core.getSelectedIds === 'function')
+      ? ED.Core.getSelectedIds() : [];
+    if (selIds.length > 1) {
+      body.appendChild(_multiSelectFields(selIds));
+      return;
+    }
     var obj = ED.Core.selectedObject();
     if (!obj) {
       body.innerHTML = '<div class="empty-note">Chưa chọn object nào.<br>Click vào object trong viewport hoặc cây Hierarchy.</div>';
@@ -505,6 +513,104 @@ ED.UI = (function () {
       note.textContent = 'Field sâu (dialogue, AI, animation) do nhóm C điền thêm (07-character.js / 08-npc-ai.js).';
       body.appendChild(_section('Character / NPC', note));
     }
+  }
+
+  /* Đợt 6 — Inspector khi chọn nhiều object: "Đã chọn N vật" + danh
+     sách tên (bấm tên thì chọn 1 mình nó) + nút chung: Xoá tất cả,
+     Nhân bản tất cả, Ẩn/Hiện tất cả. */
+  function _multiSelectFields(ids) {
+    var wrap = document.createElement('div');
+    var objs = ids.map(function (id) { return ED.Core.getObject(id); })
+      .filter(function (o) { return !!o; });
+
+    var title = document.createElement('div');
+    title.className = 'insp-title';
+    title.textContent = 'Đã chọn ' + objs.length + ' vật';
+    wrap.appendChild(title);
+
+    var list = document.createElement('div');
+    list.className = 'ed-insp-multi-list';
+    objs.forEach(function (o) {
+      var row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'ed-insp-multi-row';
+      row.textContent = o.name + ' · ' + o.type;
+      row.title = 'Bấm để chỉ chọn vật này (' + o.id + ')';
+      row.addEventListener('click', function () {
+        if (ED.Core) ED.Core.select(o.id);
+        if (ED.Viewport && typeof ED.Viewport.resyncAll === 'function') ED.Viewport.resyncAll();
+        refreshHierarchy();
+        refreshInspector();
+      });
+      list.appendChild(row);
+    });
+    wrap.appendChild(list);
+
+    var btnRow = function (label, titleText, fn) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ed-insp-multi-btn';
+      b.textContent = label;
+      b.title = titleText;
+      b.addEventListener('click', fn);
+      wrap.appendChild(b);
+      return b;
+    };
+
+    btnRow('🗑 Xoá tất cả đã chọn', 'Xoá mọi vật đang chọn (bỏ qua vật đã khoá)', function () {
+      if (!ED.Core) return;
+      ED.Core.pushHistory('xoa nhieu');
+      var removed = 0;
+      objs.slice().forEach(function (o) {
+        if (o.locked) return;
+        if (ED.Core.removeObject(o.id)) {
+          if (ED.Viewport) ED.Viewport.removeMesh(o.id);
+          removed++;
+        }
+      });
+      ED.Core.select(null);
+      refreshHierarchy();
+      refreshInspector();
+      toast(removed ? ('Đã xoá ' + removed + ' vật') : 'Không xoá được vật nào (đã khoá?)');
+      log('Đã xoá ' + removed + ' vật (chọn nhiều).');
+    });
+
+    btnRow('⧉ Nhân bản tất cả', 'Nhân bản mọi vật đang chọn, lệch +1 theo X/Z', function () {
+      if (!ED.Core || !ED.Viewport) return;
+      ED.Core.pushHistory('nhan ban nhieu');
+      var newIds = [];
+      objs.forEach(function (src) {
+        var copy = JSON.parse(JSON.stringify(src));
+        delete copy.id;
+        copy.name = src.name + ' copy';
+        copy.pos = [src.pos[0] + 1, src.pos[1], src.pos[2] + 1];
+        var obj = ED.Core.addObject(copy);
+        ED.Viewport.syncObject(obj);
+        newIds.push(obj.id);
+      });
+      if (typeof ED.Core.selectMany === 'function') ED.Core.selectMany(newIds);
+      else ED.Core.select(newIds.length ? newIds[0] : null);
+      if (typeof ED.Viewport.resyncAll === 'function') ED.Viewport.resyncAll();
+      refreshHierarchy();
+      refreshInspector();
+      toast('Đã nhân bản ' + newIds.length + ' vật');
+    });
+
+    btnRow('👁 Ẩn/Hiện tất cả', 'Đang hiện hết thì ẩn tất cả, ngược lại hiện tất cả', function () {
+      if (!ED.Core) return;
+      var allVisible = objs.every(function (o) { return o.visible !== false; });
+      ED.Core.pushHistory('an/hien nhieu');
+      objs.forEach(function (o) {
+        o.visible = !allVisible;
+        if (ED.Core) ED.Core.markDirty();
+        if (ED.Viewport) ED.Viewport.syncObject(o);
+      });
+      refreshHierarchy();
+      refreshInspector();
+      toast(allVisible ? 'Đã ẩn tất cả vật đã chọn' : 'Đã hiện tất cả vật đã chọn');
+    });
+
+    return wrap;
   }
 
   function _section(title, contentEl) {

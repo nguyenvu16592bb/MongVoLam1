@@ -23,7 +23,7 @@ const ORDERED = [
   '00-core.js', '01-viewport.js', '02-ui.js',
   '03-assets.js', '14-building.js', '04-terrain.js', '05-environment.js', '06-fx.js',
   '07-character.js', '11-animation.js', '08-npc-ai.js', '16-nodes.js', '17-physics.js', '09-play.js', '10-game-link.js',
-  '12-nav.js', '13-material.js', '15-export.js', '18-itch.js',
+  '12-nav.js', '13-material.js', '15-export.js', '18-itch.js', '19-minimap.js',
   '99-boot.js'
 ];
 const REQUIRED = ['00-core.js', '01-viewport.js', '02-ui.js', '99-boot.js'];
@@ -75,6 +75,26 @@ if (!jszip) console.warn('WARN: lib/jszip.min.js chua co — nut Xuat project .Z
 const rectAreaPath = path.join(lib, 'RectAreaLightUniformsLib.js');
 const rectArea = existsSync(rectAreaPath) ? readText(rectAreaPath) : '';
 if (!rectArea) console.warn('WARN: lib/RectAreaLightUniformsLib.js chua co — den dien tich tam tat.');
+// Post-processing (đợt 6): vendor từ three@0.128.0 examples/js — bloom/vignette
+// trong 01-viewport.js. Thứ tự load: CopyShader -> LuminosityHighPassShader ->
+// EffectComposer -> RenderPass -> ShaderPass -> UnrealBloomPass (EffectComposer
+// tạo copyPass bằng THREE.CopyShader ngay trong constructor; UnrealBloomPass
+// cần THREE.LuminosityHighPassShader). Thiếu file nào thì placeholder rỗng +
+// cảnh báo (viewport vẫn chạy thường, chỉ không có bloom).
+const ppFiles = [
+  ['CopyShader.js', '__COPYSHADER__'],
+  ['LuminosityHighPassShader.js', '__LUMINOSITYHIGHPASS__'],
+  ['EffectComposer.js', '__EFFECTCOMPOSER__'],
+  ['RenderPass.js', '__RENDERPASS__'],
+  ['ShaderPass.js', '__SHADERPASS__'],
+  ['UnrealBloomPass.js', '__UNREALBLOOMPASS__']
+];
+const ppTexts = {};
+for (const [name] of ppFiles) {
+  const p = path.join(lib, name);
+  ppTexts[name] = existsSync(p) ? readText(p) : '';
+  if (!ppTexts[name]) console.warn(`WARN: lib/${name} chua co — post-processing tam tat.`);
+}
 const tpl = readText(path.join(editorDir, 'editor.template.html'));
 
 // Kiểm tra giống tools/build.mjs: lib/CSS không được chứa '</script'.
@@ -94,6 +114,9 @@ if (gltfExporter) libChecks.push(['GLTFExporter.js', gltfExporter]);
 if (reflector) libChecks.push(['Reflector.js', reflector]);
 if (jszip) libChecks.push(['jszip.min.js', jszip]);
 if (rectArea) libChecks.push(['RectAreaLightUniformsLib.js', rectArea]);
+for (const [name] of ppFiles) {
+  if (ppTexts[name]) libChecks.push([name, ppTexts[name]]);
+}
 for (const [name, text] of libChecks) {
   if (text.includes('</script')) throw new Error(name + ' chua </script');
 }
@@ -106,7 +129,7 @@ for (const f of parts) {
 }
 js = js.replaceAll('</script', () => '<\\/script');
 
-for (const ph of ['__EDITOR_STYLE__', '__THREE__', '__FFLATE__', '__FBXLOADER__', '__GLTFLOADER__', '__OBJLOADER__', '__GLTFEXPORTER__', '__REFLECTOR__', '__JSZIP__', '__RECTAREALIGHT__', '__EDITOR_JS__']) {
+for (const ph of ['__EDITOR_STYLE__', '__THREE__', '__FFLATE__', '__FBXLOADER__', '__GLTFLOADER__', '__OBJLOADER__', '__GLTFEXPORTER__', '__REFLECTOR__', '__JSZIP__', '__RECTAREALIGHT__', '__COPYSHADER__', '__LUMINOSITYHIGHPASS__', '__EFFECTCOMPOSER__', '__RENDERPASS__', '__SHADERPASS__', '__UNREALBLOOMPASS__', '__EDITOR_JS__']) {
   if (!tpl.includes(ph)) throw new Error('src/editor/editor.template.html thieu placeholder ' + ph);
 }
 
@@ -123,6 +146,12 @@ const out = tpl
   .replaceAll('__REFLECTOR__', () => reflector)
   .replaceAll('__JSZIP__', () => jszip)
   .replaceAll('__RECTAREALIGHT__', () => rectArea)
+  .replaceAll('__COPYSHADER__', () => ppTexts['CopyShader.js'])
+  .replaceAll('__LUMINOSITYHIGHPASS__', () => ppTexts['LuminosityHighPassShader.js'])
+  .replaceAll('__EFFECTCOMPOSER__', () => ppTexts['EffectComposer.js'])
+  .replaceAll('__RENDERPASS__', () => ppTexts['RenderPass.js'])
+  .replaceAll('__SHADERPASS__', () => ppTexts['ShaderPass.js'])
+  .replaceAll('__UNREALBLOOMPASS__', () => ppTexts['UnrealBloomPass.js'])
   .replaceAll('__EDITOR_JS__', () => js);
 
 const dest = path.join(root, 'mapeditor.html');

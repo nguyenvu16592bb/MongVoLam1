@@ -17,6 +17,12 @@
    bằng canvas, trôi theo gió ở tầm thấp — GHI RÕ không phải volumetric
    fog thật). Cả hai lưu vào project.env.areaLight / project.env.fogLayers
    (mặc định tắt, project cũ không có field vẫn mở được).
+   Đợt 6 — skybox procedural (vòm trời gradient theo giờ + mặt trời/mặt
+   trăng + sao đêm + mây bay theo gió, toggle "Bật skybox") và thời tiết
+   mới 'thunder' (mưa to + chớp sáng + SFX sấm qua ED.Export.playThunder)
+   và 'sandstorm' (hạt cát vàng + fog vàng, dọn sạch khi đổi weather).
+   Lưu vào project.env.skybox / project.env.thunderRate / env.weather
+   (project cũ không có field vẫn mở được, weather cũ vẫn đọc được).
    Lưu tất cả vào project.env; đổi là markDirty + pushHistory GỘP
    (chỉ push khi thả slider/change, không push mỗi tick input).
    Logic thuần (computeSun, preset, sway, shadow/fog/water normalize)
@@ -42,6 +48,14 @@ ED.Environment = (function () {
   var _fogGroup = null; // THREE.Group chứa các mặt phẳng sương bay
   var _fogTexture = null; // CanvasTexture mây mờ, tạo 1 lần
   var _fogTime = 0; // thời gian tích luỹ cho lớp sương trôi theo gió
+  /* Đợt 6 — skybox procedural + chớp sấm. */
+  var _skyGroup = null; // THREE.Group: vòm trời + mặt trời/mặt trăng + sao + mây
+  var _skyDome = null, _skySun = null, _skyMoon = null, _skyStars = null;
+  var _skyClouds = []; // mesh mây, vị trí cập nhật trong tick()
+  var _cloudTime = 0; // thời gian tích luỹ cho mây bay theo gió
+  var _flashEl = null; // div overlay trắng mờ toàn viewport, chớp sấm
+  var _thunder = null; // {rng, nextIn, flashLeft, flashLight, baseIntensity}
+  var _sandFogSaved = false; // true khi fog đang bị sandstorm ghi đè
 
   var PRESETS = {
     'thanh-co': { name: 'Thành cổ', timeOfDay: 10, fog: 0.008, weather: 'none', wind: 0.3, skyColor: '#87b5d6',
@@ -57,7 +71,13 @@ ED.Environment = (function () {
     'vo-dai': { name: 'Võ đài', timeOfDay: 13, fog: 0.005, weather: 'none', wind: 0.4, skyColor: '#8ec3e8',
       assets: [{ type: 'tower', dx: 0, dz: -8 }, { type: 'table', dx: -4, dz: 2 }, { type: 'chair', dx: -4, dz: 4 }, { type: 'lantern', dx: 5, dz: 2 }, { type: 'lantern', dx: 5, dz: -2 }] }
   };
-  var WEATHER_COUNTS = { rain: 800, snow: 500 };
+  var WEATHER_COUNTS = { rain: 800, snow: 500, thunder: 2000, sandstorm: 600 };
+  /* Đợt 6 — weather hợp lệ (mở rộng từ 'rain'|'snow'|'none'). */
+  var WEATHER_TYPES = ['none', 'rain', 'snow', 'thunder', 'sandstorm'];
+  /* Weather lạ -> 'none' (project cũ chỉ có none/rain/snow vẫn đọc được). Thuần. */
+  function normalizeWeather(w) {
+    return WEATHER_TYPES.indexOf(w) >= 0 ? w : 'none';
+  }
 
   /* ---- Toán thuần: lerp màu hex, vị trí mặt trời. ---- */
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -156,7 +176,8 @@ ED.Environment = (function () {
     prop: { cast: true, receive: true },
     character: { cast: true, receive: false }, npc: { cast: true, receive: false },
     monster: { cast: true, receive: false }, imported: { cast: true, receive: false },
-    water: { cast: false, receive: false }, grass: { cast: false, receive: false },
+    water: { cast: false, receive: false }, waterfall: { cast: false, receive: false },
+    grass: { cast: false, receive: false },
     flower: { cast: false, receive: false }, fx: { cast: false, receive: false },
     light: { cast: false, receive: false }, collider: { cast: false, receive: false },
     waypoint: { cast: false, receive: false }, group: { cast: false, receive: false }
@@ -318,6 +339,91 @@ ED.Environment = (function () {
     return out;
   }
 
+  /* ---- Đợt 6 — logic thuần: skybox + mây bay + lịch chớp sấm. ---- */
+  /* PRNG xác định mulberry32: cùng seed -> cùng dãy số [0,1). Thuần. */
+  function edEnvMulberry32(seed) {
+    var a = (Number(seed) || 0) >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  /* Màu vòm trời theo giờ (thuần, test được bằng vm): nội suy tuyến tính
+     giữa các mốc giờ. 0h đêm tối sao nhiều, 6h bình minh cam, 12h trưa
+     xanh sáng, 18h hoàng hôn cam đỏ, 24h = 0h. Trả top/bottom [r,g,b]
+     0..1, sunColor hex, starOpacity 0..1, cloudColor hex. */
+  var SKY_KEYS = [
+    { h: 0,  top: [0.02, 0.03, 0.10], bottom: [0.05, 0.08, 0.18], sun: '#b9c8e8', stars: 1.0, cloud: '#2a3450' },
+    { h: 5,  top: [0.03, 0.05, 0.14], bottom: [0.10, 0.13, 0.26], sun: '#b9c8e8', stars: 0.9, cloud: '#3a4460' },
+    { h: 6,  top: [0.25, 0.32, 0.55], bottom: [0.98, 0.55, 0.30], sun: '#ffb066', stars: 0.15, cloud: '#e8a06a' },
+    { h: 8,  top: [0.35, 0.58, 0.85], bottom: [0.75, 0.82, 0.90], sun: '#ffd9a0', stars: 0, cloud: '#ffffff' },
+    { h: 12, top: [0.20, 0.50, 0.90], bottom: [0.65, 0.82, 0.95], sun: '#fff3d6', stars: 0, cloud: '#ffffff' },
+    { h: 17, top: [0.30, 0.55, 0.85], bottom: [0.85, 0.85, 0.80], sun: '#ffe0a0', stars: 0, cloud: '#ffffff' },
+    { h: 18, top: [0.30, 0.30, 0.55], bottom: [1.00, 0.50, 0.25], sun: '#ff9a4d', stars: 0.15, cloud: '#f2a56b' },
+    { h: 20, top: [0.05, 0.07, 0.20], bottom: [0.12, 0.15, 0.32], sun: '#b9c8e8', stars: 0.9, cloud: '#3a4460' },
+    { h: 24, top: [0.02, 0.03, 0.10], bottom: [0.05, 0.08, 0.18], sun: '#b9c8e8', stars: 1.0, cloud: '#2a3450' }
+  ];
+  function skyColorsForHour(hour) {
+    hour = ((Number(hour) || 0) % 24 + 24) % 24;
+    var a = SKY_KEYS[0], b = SKY_KEYS[SKY_KEYS.length - 1];
+    for (var i = 0; i < SKY_KEYS.length - 1; i++) {
+      if (hour >= SKY_KEYS[i].h && hour <= SKY_KEYS[i + 1].h) { a = SKY_KEYS[i]; b = SKY_KEYS[i + 1]; break; }
+    }
+    var span = (b.h - a.h) || 1;
+    var t = clamp((hour - a.h) / span, 0, 1);
+    function mix3(u, v) {
+      return [+((u[0] + (v[0] - u[0]) * t).toFixed(3)),
+        +((u[1] + (v[1] - u[1]) * t).toFixed(3)),
+        +((u[2] + (v[2] - u[2]) * t).toFixed(3))];
+    }
+    return {
+      top: mix3(a.top, b.top),
+      bottom: mix3(a.bottom, b.bottom),
+      sunColor: t < 0.5 ? a.sun : b.sun,
+      starOpacity: +((a.stars + (b.stars - a.stars) * t).toFixed(3)),
+      cloudColor: t < 0.5 ? a.cloud : b.cloud
+    };
+  }
+  /* Vị trí các đám mây tại thời điểm t (thuần, test được bằng vm):
+     cùng pattern với edEnvFogLayerPositions đợt 5 — vị trí gốc xác định
+     theo index + trôi theo vector gió * t (cuộn biên ±48), y cao 20..28m
+     (trên đầu cảnh, khác lớp sương bay tầm thấp). Trả đúng `count`
+     phần tử {x, y, z}; count 0 -> []. */
+  function edEnvCloudPositions(count, t, windDir) {
+    count = Math.floor(clamp(Number(count) || 0, 0, 12));
+    t = Number(t) || 0;
+    var w = _windVec(windDir);
+    var out = [];
+    for (var i = 0; i < count; i++) {
+      var bx = (_hash01(i, 11) * 2 - 1) * 44;
+      var bz = (_hash01(i, 12) * 2 - 1) * 44;
+      out.push({
+        x: +_wrap48(bx + w[0] * t).toFixed(3),
+        y: +(20 + _hash01(i, 13) * 8).toFixed(3),
+        z: +_wrap48(bz + w[1] * t).toFixed(3)
+      });
+    }
+    return out;
+  }
+  /* Lịch chớp sấm xác định (thuần, test được bằng vm): cùng seed ->
+     cùng danh sách thời điểm (giây). Chớp đầu sau 2–6s, các chớp sau
+     cách nhau 4–12s (chia cho rate: rate càng cao chớp càng dày).
+     durationSec <= 0 -> []. */
+  function thunderFlashSchedule(seed, durationSec, rate) {
+    var rng = edEnvMulberry32(seed);
+    rate = clamp(Number(rate) || 1, 0.5, 2);
+    var dur = Math.max(0, Number(durationSec) || 0);
+    var out = [];
+    var t = 2 + rng() * 4;
+    while (t <= dur) {
+      out.push(+t.toFixed(3));
+      t += (4 + rng() * 8) / rate;
+    }
+    return out;
+  }
+
   /* ---- State + đồng bộ project.env ---- */
   function getEnv() {
     return { timeOfDay: _env.timeOfDay, fog: _env.fog, weather: _env.weather, wind: _env.wind,
@@ -328,7 +434,8 @@ ED.Environment = (function () {
         intensity: _env.areaLight.intensity, width: _env.areaLight.width,
         height: _env.areaLight.height, preset: _env.areaLight.preset },
       fogLayers: { enabled: _env.fogLayers.enabled, count: _env.fogLayers.count,
-        height: _env.fogLayers.height, opacity: _env.fogLayers.opacity } };
+        height: _env.fogLayers.height, opacity: _env.fogLayers.opacity },
+      skybox: _env.skybox, thunderRate: _env.thunderRate };
   }
   function getWind() { return _env.wind; }
   function getShadow() { return { enabled: _env.shadow.enabled, mapSize: _env.shadow.mapSize, bias: _env.shadow.bias }; }
@@ -347,7 +454,9 @@ ED.Environment = (function () {
     if (!partial) return getEnv();
     if (partial.timeOfDay != null) _env.timeOfDay = clamp(Number(partial.timeOfDay) || 0, 0, 24);
     if (partial.fog != null) _env.fog = clamp(Number(partial.fog) || 0, 0, 0.08);
-    if (partial.weather) _env.weather = (partial.weather === 'rain' || partial.weather === 'snow') ? partial.weather : 'none';
+    if (partial.weather) _env.weather = normalizeWeather(partial.weather);
+    if (partial.skybox != null) _env.skybox = !!partial.skybox;
+    if (partial.thunderRate != null) _env.thunderRate = clamp(Number(partial.thunderRate) || 1, 0.5, 2);
     if (partial.wind != null) _env.wind = clamp(Number(partial.wind) || 0, 0, 1);
     if (partial.preset) _env.preset = partial.preset;
     if (partial.skyColor) _env.skyColor = partial.skyColor;
@@ -386,7 +495,8 @@ ED.Environment = (function () {
   function defaultEnv() {
     return { timeOfDay: 10, fog: 0.01, weather: 'none', wind: 0.5, preset: 'thanh-co', skyColor: '#87b5d6',
       fogColor: '', fogHeight: 0.5, shadow: defaultShadow(), water: defaultWater(),
-      areaLight: defaultAreaLight(), fogLayers: defaultFogLayers() };
+      areaLight: defaultAreaLight(), fogLayers: defaultFogLayers(),
+      skybox: true, thunderRate: 1 };
   }
 
   /* ---- Áp dụng env lên scene thật (cần THREE + viewport). ----
@@ -429,7 +539,9 @@ ED.Environment = (function () {
     _moon.intensity = sun.isDay ? 0 : 0.18;
     _hemi.intensity = sun.hemiIntensity;
     var sky = _env.skyColor || sun.skyColor;
-    scene.background = new THREE.Color(sky);
+    /* Đợt 6 — skybox bật thì vòm trời che hết nền (background = null),
+       tắt thì về màu nền renderer cũ như trước. */
+    updateSky(sun, sky);
     var camY = 10;
     try {
       var _cam = ED.Viewport && typeof ED.Viewport.getCamera === 'function' ? ED.Viewport.getCamera() : null;
@@ -682,44 +794,257 @@ ED.Environment = (function () {
     }
   }
 
-  /* ---- Weather: Points rơi. tick(dt) do viewport render loop gọi. ---- */
-  function setWeather(w) {
-    _env.weather = (w === 'rain' || w === 'snow') ? w : 'none';
+  /* ---- Đợt 6 — skybox procedural + chớp sấm + fog bão cát. ---- */
+  /* Vận tốc mây bay theo gió (m/s): hướng +x chủ đạo, tốc độ tăng theo
+     env.wind (1..5 m/s), lệch nhẹ +z. */
+  function _cloudWindVec() {
+    var speed = 1 + _env.wind * 4;
+    return [speed, speed * 0.12];
+  }
+  /* Tạo 1 lần + cập nhật vòm trời theo giờ (gọi từ applyToScene):
+     - vòm: SphereGeometry r=220 BackSide, ShaderMaterial gradient theo y
+       (tự viết, KHÔNG texture ngoài), màu từ skyColorsForHour;
+     - mặt trời (tròn, ban ngày) + mặt trăng (tròn, ban đêm) đặt theo
+       computeSun(hour) / computeSun(hour+12), luôn quay mặt về tâm cảnh;
+     - sao đêm: THREE.Points ~300 điểm trên vòm, opacity = starOpacity;
+     - mây: 10 mặt phẳng texture mây (tái dùng buildFogTexture), vị trí
+       theo edEnvCloudPositions, tick() cập nhật sau.
+     Skybox tắt: ẩn cả nhóm + trả scene.background về màu trời cũ.
+     Sandstorm: đáy trời trộn dần về vàng cát. Trả false khi chưa có
+     scene/THREE. */
+  function updateSky(sun, sky) {
     if (typeof THREE === 'undefined') return false;
     var scene = _scene || findScene();
     if (!scene) return false;
+    sun = sun || computeSun(_env.timeOfDay);
+    sky = sky || _env.skyColor || sun.skyColor;
+    if (!_env.skybox) {
+      if (_skyGroup) _skyGroup.visible = false;
+      scene.background = new THREE.Color(sky);
+      return true;
+    }
+    var cols = skyColorsForHour(_env.timeOfDay);
+    var top = cols.top.slice(), bottom = cols.bottom.slice();
+    if (_env.weather === 'sandstorm') {
+      /* Đáy trời hơi vàng cát: trộn 45% về #d8c27a. */
+      var sand = [0.847, 0.761, 0.478];
+      for (var si = 0; si < 3; si++) bottom[si] = +(bottom[si] + (sand[si] - bottom[si]) * 0.45).toFixed(3);
+    }
+    scene.background = null;
+    if (!_skyGroup) {
+      _skyGroup = new THREE.Group();
+      _skyGroup.name = 'ed-skybox';
+      var domeGeo = new THREE.SphereGeometry(220, 20, 14);
+      var domeMat = new THREE.ShaderMaterial({
+        side: THREE.BackSide, depthWrite: false, fog: false,
+        uniforms: {
+          topColor: { value: new THREE.Color(top[0], top[1], top[2]) },
+          bottomColor: { value: new THREE.Color(bottom[0], bottom[1], bottom[2]) }
+        },
+        vertexShader: 'varying vec3 vPos; void main() { vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+        fragmentShader: 'uniform vec3 topColor; uniform vec3 bottomColor; varying vec3 vPos; void main() { float h = normalize(vPos).y * 0.5 + 0.5; gl_FragColor = vec4(mix(bottomColor, topColor, smoothstep(0.0, 0.6, h)), 1.0); }'
+      });
+      _skyDome = new THREE.Mesh(domeGeo, domeMat);
+      _skyDome.frustumCulled = false;
+      _skyGroup.add(_skyDome);
+      _skySun = new THREE.Mesh(new THREE.CircleGeometry(7, 24),
+        new THREE.MeshBasicMaterial({ color: 0xfff3d6, fog: false, transparent: true, opacity: 0.95 }));
+      _skyGroup.add(_skySun);
+      _skyMoon = new THREE.Mesh(new THREE.CircleGeometry(5, 24),
+        new THREE.MeshBasicMaterial({ color: 0xe8eefc, fog: false, transparent: true, opacity: 0.95 }));
+      _skyGroup.add(_skyMoon);
+      var starCount = 300, starPos = new Float32Array(starCount * 3);
+      for (var i = 0; i < starCount; i++) {
+        var th = _hash01(i, 21) * Math.PI * 2;
+        var ph = Math.acos(1 - _hash01(i, 22) * 0.95); // thiên đỉnh -> gần chân trời
+        var r = 200;
+        starPos[i * 3] = r * Math.sin(ph) * Math.cos(th);
+        starPos[i * 3 + 1] = r * Math.cos(ph) + 5;
+        starPos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
+      }
+      var starGeo = new THREE.BufferGeometry();
+      starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+      _skyStars = new THREE.Points(starGeo, new THREE.PointsMaterial({
+        color: 0xffffff, size: 1.6, sizeAttenuation: false,
+        transparent: true, opacity: 0, depthWrite: false, fog: false
+      }));
+      _skyStars.frustumCulled = false;
+      _skyGroup.add(_skyStars);
+      var cloudTex = buildFogTexture();
+      var cpos = edEnvCloudPositions(10, _cloudTime, _cloudWindVec());
+      _skyClouds = [];
+      for (var ci = 0; ci < cpos.length; ci++) {
+        var cw = 14 + _hash01(ci, 23) * 10, ch = 6 + _hash01(ci, 24) * 4;
+        var cgeo = new THREE.PlaneGeometry(cw, ch);
+        var cmat = new THREE.MeshBasicMaterial({ map: cloudTex || null, transparent: true,
+          opacity: 0.7, depthWrite: false, side: THREE.DoubleSide, fog: false });
+        var cm = new THREE.Mesh(cgeo, cmat);
+        cm.position.set(cpos[ci].x, cpos[ci].y, cpos[ci].z);
+        cm.renderOrder = 4;
+        _skyGroup.add(cm);
+        _skyClouds.push(cm);
+      }
+      scene.add(_skyGroup);
+    }
+    _skyGroup.visible = true;
+    if (_skyDome && _skyDome.material && _skyDome.material.uniforms) {
+      _skyDome.material.uniforms.topColor.value.setRGB(top[0], top[1], top[2]);
+      _skyDome.material.uniforms.bottomColor.value.setRGB(bottom[0], bottom[1], bottom[2]);
+    }
+    var sd = sun.sunDir;
+    _skySun.position.set(sd[0] * 190, Math.max(6, sd[1] * 190), sd[2] * 190);
+    _skySun.lookAt(0, 0, 0);
+    _skySun.material.color.set(cols.sunColor);
+    _skySun.visible = sun.isDay;
+    var moonSun = computeSun((_env.timeOfDay + 12) % 24);
+    var md = moonSun.sunDir;
+    _skyMoon.position.set(md[0] * 190, Math.max(6, md[1] * 190), md[2] * 190);
+    _skyMoon.lookAt(0, 0, 0);
+    _skyMoon.visible = !sun.isDay;
+    if (_skyStars) _skyStars.material.opacity = cols.starOpacity;
+    var cloudCols = hexToRgb(cols.cloudColor);
+    for (var k = 0; k < _skyClouds.length; k++) {
+      _skyClouds[k].material.color.setRGB(cloudCols[0], cloudCols[1], cloudCols[2]);
+    }
+    return true;
+  }
+  /* Trả fog về đúng setting env (dùng khi rời sandstorm): fog về màu +
+     tầm xa theo computeFog, fog = 0 thì gỡ fog. */
+  function _restoreFog(scene) {
+    if (!scene) return;
+    _sandFogSaved = false;
+    if (_env.fog <= 0) { scene.fog = null; return; }
+    var sky = _env.skyColor || computeSun(_env.timeOfDay).skyColor;
+    var f = computeFog(_env.fog, _env.fogColor, sky, (_fogLastY == null ? 10 : _fogLastY), _env.fogHeight);
+    if (!f.enabled) { scene.fog = null; return; }
+    scene.fog = new THREE.Fog(new THREE.Color(f.color), f.near, f.far);
+  }
+  /* Fog bão cát: mật độ gấp 2 (tối thiểu 0.02 để có hiệu ứng ngay cả khi
+     env.fog = 0), màu vàng cát #d8c27a. */
+  function _applySandFog(scene) {
+    if (!scene) return;
+    var dens = Math.max(_env.fog * 2, 0.02);
+    var f = computeFog(dens, '#d8c27a', '#d8c27a', 10, 0);
+    if (!f.enabled) return;
+    scene.fog = new THREE.Fog(new THREE.Color(0xd8c27a), f.near, f.far);
+    _sandFogSaved = true;
+  }
+  /* Dọn trạng thái sấm: tắt overlay chớp, trả cường độ đèn về gốc. */
+  function _clearThunder() {
+    if (_thunder && _thunder.flashLight && _thunder.baseIntensity != null) {
+      try { _thunder.flashLight.intensity = _thunder.baseIntensity; } catch (e) {}
+    }
+    _thunder = null;
+    if (_flashEl) { try { _flashEl.style.opacity = '0'; } catch (e) {} }
+  }
+  /* Một lần chớp: overlay trắng mờ 0.55 rồi mờ dần trong 300ms (tick lo),
+     đèn đang sáng (mặt trời ban ngày / mặt trăng ban đêm) tăng vọt rồi
+     trở lại, SFX sấm qua ED.Export.playThunder (guard typeof). */
+  function _doFlash() {
+    if (!_thunder) return;
+    var light = (_sun && _sun.visible) ? _sun : _moon;
+    _thunder.flashLight = light || null;
+    _thunder.baseIntensity = light ? light.intensity : null;
+    _thunder.flashLeft = 0.3;
+    if (_flashEl) { try { _flashEl.style.opacity = '0.55'; } catch (e) {} }
+    try {
+      if (typeof ED !== 'undefined' && ED.Export && typeof ED.Export.playThunder === 'function') {
+        ED.Export.playThunder();
+      }
+    } catch (e) {}
+  }
+
+  /* ---- Weather: Points rơi. tick(dt) do viewport render loop gọi. ---- */
+  /* Đợt 6 — weather mở rộng: 'thunder' = mưa to gấp 2.5 lần rain thường
+     (2000 hạt, dùng lại hệ hạt mưa) + chớp sấm theo lịch RNG có seed;
+     'sandstorm' = hạt cát vàng 600 bay ngang theo gió + xoáy nhẹ, fog
+     vàng dày gấp 2. Đổi weather khác: gỡ hạt cũ + trả fog về setting
+     env (không rò rỉ state). Weather lạ -> 'none'. */
+  function setWeather(w) {
+    _env.weather = normalizeWeather(w);
+    _clearThunder();
+    if (typeof THREE === 'undefined') return false;
+    var scene = _scene || findScene();
+    if (!scene) return false;
+    var wasSand = _weather && _weather.type === 'sandstorm';
     if (_weather && _weather.points) {
       if (scene.remove) scene.remove(_weather.points);
       if (_weather.points.geometry) _weather.points.geometry.dispose();
+      if (_weather.points.material) _weather.points.material.dispose();
       _weather = null;
     }
+    if (wasSand) _restoreFog(scene);
     if (_env.weather === 'none') return true;
     var count = WEATHER_COUNTS[_env.weather];
     var pos = new Float32Array(count * 3);
     var vel = new Float32Array(count);
+    var isRain = (_env.weather === 'rain' || _env.weather === 'thunder');
+    var isSand = (_env.weather === 'sandstorm');
     for (var i = 0; i < count; i++) {
       pos[i * 3] = (Math.random() * 2 - 1) * 48;
-      pos[i * 3 + 1] = Math.random() * 30;
+      pos[i * 3 + 1] = isSand ? 0.5 + Math.random() * 12 : Math.random() * 30;
       pos[i * 3 + 2] = (Math.random() * 2 - 1) * 48;
-      vel[i] = _env.weather === 'rain' ? 14 + Math.random() * 8 : 1.5 + Math.random() * 2;
+      if (isRain) vel[i] = 14 + Math.random() * 8;
+      else if (isSand) vel[i] = 2 + Math.random() * 4; // tốc độ bay ngang
+      else vel[i] = 1.5 + Math.random() * 2; // tuyết rơi chậm
     }
     var geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     var m = new THREE.PointsMaterial({
-      color: _env.weather === 'rain' ? 0x9fc4e8 : 0xffffff,
-      size: _env.weather === 'rain' ? 0.12 : 0.35,
-      transparent: true, opacity: 0.8, sizeAttenuation: true
+      color: isRain ? 0x9fc4e8 : (isSand ? 0xd8c27a : 0xffffff),
+      size: isRain ? 0.12 : (isSand ? 0.5 : 0.35),
+      transparent: true, opacity: isSand ? 0.85 : 0.8, sizeAttenuation: true
     });
     var points = new THREE.Points(geo, m);
     points.frustumCulled = false;
     scene.add(points);
     _weather = { type: _env.weather, points: points, velocities: vel, count: count };
+    if (_env.weather === 'thunder') {
+      var seed = 1;
+      try { seed = (Date.now() % 2147483647) || 1; } catch (e) {}
+      _thunder = { rng: edEnvMulberry32(seed), nextIn: 2 + edEnvMulberry32(seed)() * 4,
+        flashLeft: 0, flashLight: null, baseIntensity: null };
+    }
+    if (isSand) _applySandFog(scene);
     return true;
   }
   function tick(dt) {
-    /* Fog theo chiều cao camera: kiểm tra định kỳ, không tính mỗi frame. */
+    /* Fog theo chiều cao camera: kiểm tra định kỳ, không tính mỗi frame.
+       Đợt 6: bão cát đang ghi đè fog thì bỏ qua (không trả fog về cũ). */
     _fogTick += Math.min(Number(dt) || 0, 0.1);
-    if (_fogTick >= 0.3) { _fogTick = 0; try { updateHeightFog(); } catch (e) {} }
+    if (_fogTick >= 0.3) { _fogTick = 0; if (_env.weather !== 'sandstorm') { try { updateHeightFog(); } catch (e) {} } }
+    /* Đợt 6 — mây bay theo gió (chỉ đổi vị trí mesh theo hàm thuần
+       edEnvCloudPositions, không dựng lại mesh mỗi frame) + chớp sấm. */
+    _cloudTime += Math.min(Number(dt) || 0, 0.1);
+    if (_skyGroup && _skyGroup.visible && _skyClouds.length) {
+      var cp = edEnvCloudPositions(_skyClouds.length, _cloudTime, _cloudWindVec());
+      for (var ci = 0; ci < _skyClouds.length && ci < cp.length; ci++) {
+        _skyClouds[ci].position.set(cp[ci].x, cp[ci].y, cp[ci].z);
+      }
+    }
+    if (_thunder && _env.weather === 'thunder') {
+      var tdt = Math.min(Number(dt) || 0, 0.1);
+      _thunder.nextIn -= tdt;
+      if (_thunder.nextIn <= 0) {
+        _doFlash();
+        _thunder.nextIn = (4 + _thunder.rng() * 8) / Math.max(0.5, _env.thunderRate || 1);
+      }
+      if (_thunder.flashLeft > 0) {
+        _thunder.flashLeft -= tdt;
+        var fk = Math.max(0, _thunder.flashLeft / 0.3);
+        if (_flashEl) { try { _flashEl.style.opacity = String((0.55 * fk).toFixed(3)); } catch (e) {} }
+        if (_thunder.flashLight) {
+          try { _thunder.flashLight.intensity = (_thunder.baseIntensity || 1) * (1 + 2.5 * fk); } catch (e) {}
+        }
+        if (_thunder.flashLeft <= 0) {
+          if (_flashEl) { try { _flashEl.style.opacity = '0'; } catch (e) {} }
+          if (_thunder.flashLight && _thunder.baseIntensity != null) {
+            try { _thunder.flashLight.intensity = _thunder.baseIntensity; } catch (e) {}
+          }
+          _thunder.flashLight = null;
+        }
+      }
+    }
     /* Đợt 5 — lớp sương bay trôi theo gió: chỉ đổi vị trí các plane theo
        hàm thuần edEnvFogLayerPositions, không dựng lại mesh mỗi frame. */
     _fogTime += Math.min(Number(dt) || 0, 0.1);
@@ -734,6 +1059,25 @@ ED.Environment = (function () {
     var attr = _weather.points.geometry.attributes.position;
     var arr = attr.array;
     var windX = _env.wind * 1.5;
+    /* Đợt 6 — bão cát: hạt bay ngang theo gió + xoáy nhẹ, không rơi. */
+    if (_weather.type === 'sandstorm') {
+      var sandSpeed = 2 + _env.wind * 5;
+      for (var si = 0; si < _weather.count; si++) {
+        arr[si * 3] += (_weather.velocities[si] + sandSpeed) * dt;
+        arr[si * 3 + 1] += Math.sin(_weatherTick * 2 + si) * 0.6 * dt;
+        arr[si * 3 + 2] += Math.cos(_weatherTick * 1.7 + si) * 0.4 * dt;
+        if (arr[si * 3] > 48) {
+          arr[si * 3] = -48;
+          arr[si * 3 + 1] = 0.5 + Math.random() * 12;
+          arr[si * 3 + 2] = (Math.random() * 2 - 1) * 48;
+        }
+        if (arr[si * 3 + 1] < 0.3) arr[si * 3 + 1] = 0.3;
+        if (arr[si * 3 + 1] > 14) arr[si * 3 + 1] = 14;
+      }
+      _weatherTick += dt;
+      attr.needsUpdate = true;
+      return;
+    }
     for (var i = 0; i < _weather.count; i++) {
       arr[i * 3 + 1] -= _weather.velocities[i] * dt;
       arr[i * 3] += windX * dt * (_weather.type === 'snow' ? 1 : 0.3);
@@ -756,8 +1100,9 @@ ED.Environment = (function () {
     var p = PRESETS[name];
     if (!p) return null;
     var before = getEnv();
-    _env.timeOfDay = p.timeOfDay; _env.fog = p.fog; _env.weather = p.weather;
+    _env.timeOfDay = p.timeOfDay; _env.fog = p.fog; _env.weather = normalizeWeather(p.weather);
     _env.wind = p.wind; _env.preset = name; _env.skyColor = p.skyColor;
+    _env.skybox = true; _env.thunderRate = 1;
     _env.fogColor = p.fogColor || '';
     _env.fogHeight = (p.fogHeight != null) ? p.fogHeight : 0.5;
     _env.shadow = defaultShadow();
@@ -808,6 +1153,23 @@ ED.Environment = (function () {
       document.body.appendChild(panel);
     }
     _panel = panel;
+    /* Đợt 6 — overlay chớp sấm: div trắng mờ toàn viewport, opacity do
+       tick() điều khiển (mờ dần trong 300ms sau mỗi lần chớp). Tạo 1 lần. */
+    if (!_flashEl) {
+      var _vpHost = document.getElementById('viewport') || document.getElementById('editor-viewport') ||
+        (ED.Viewport && ED.Viewport.renderer && ED.Viewport.renderer.domElement && ED.Viewport.renderer.domElement.parentNode) ||
+        document.body;
+      _flashEl = document.createElement('div');
+      _flashEl.id = 'ed-env-flash';
+      _flashEl.style.position = 'absolute';
+      _flashEl.style.top = '0'; _flashEl.style.left = '0';
+      _flashEl.style.right = '0'; _flashEl.style.bottom = '0';
+      _flashEl.style.background = '#ffffff';
+      _flashEl.style.opacity = '0';
+      _flashEl.style.pointerEvents = 'none';
+      _flashEl.style.zIndex = '30';
+      try { _vpHost.appendChild(_flashEl); } catch (e) { _flashEl = null; }
+    }
     var opts = listPresets().map(function (p) {
       return '<option value="' + p.id + '"' + (p.id === _env.preset ? ' selected' : '') + '>' + p.name + '</option>';
     }).join('');
@@ -830,7 +1192,15 @@ ED.Environment = (function () {
       '<option value="none"' + (_env.weather === 'none' ? ' selected' : '') + '>Không</option>' +
       '<option value="rain"' + (_env.weather === 'rain' ? ' selected' : '') + '>🌧 Mưa</option>' +
       '<option value="snow"' + (_env.weather === 'snow' ? ' selected' : '') + '>❄ Tuyết</option>' +
+      '<option value="thunder"' + (_env.weather === 'thunder' ? ' selected' : '') + '>⛈ Bão sấm sét</option>' +
+      '<option value="sandstorm"' + (_env.weather === 'sandstorm' ? ' selected' : '') + '>🌪 Bão cát</option>' +
       '</select></div>' +
+      '<div class="ed-row"><label>Tần suất sấm <span id="ed-env-thunder-v">' + _env.thunderRate.toFixed(1) + '×</span></label>' +
+      '<input id="ed-env-thunder-rate" type="range" min="0.5" max="2" step="0.1" value="' + _env.thunderRate + '" style="min-height:40px"></div>' +
+      '<div class="ed-hint">Bão sấm sét: mưa to + chớp sáng (mỗi 4–12s, chia cho tần suất sấm) + tiếng sấm. Bão cát: hạt cát vàng bay ngang, sương mù vàng dày gấp 2.</div>' +
+      '<div class="ed-row"><label>Bật skybox</label>' +
+      '<input id="ed-env-skybox-on" type="checkbox"' + (_env.skybox ? ' checked' : '') + ' style="min-height:40px;min-width:40px"></div>' +
+      '<div class="ed-hint">Skybox: vòm trời gradient theo giờ + mặt trời/mặt trăng + sao đêm + mây bay theo gió. Tắt thì về màu nền cũ.</div>' +
       '<div class="ed-panel-title">🌑 Bóng đổ</div>' +
       '<div class="ed-row"><label>Bật bóng đổ</label>' +
       '<input id="ed-env-shadow-on" type="checkbox"' + (_env.shadow.enabled ? ' checked' : '') + ' style="min-height:40px;min-width:40px"></div>' +
@@ -898,6 +1268,13 @@ ED.Environment = (function () {
     var w = panel.querySelector('#ed-env-weather');
     w.addEventListener('change', function () {
       setEnv({ weather: w.value }, { history: 'Môi trường: thời tiết ' + w.value });
+    });
+    /* Đợt 6 — tần suất sấm + toggle skybox. */
+    bindSlider('#ed-env-thunder-rate', '#ed-env-thunder-v', 'thunderRate', function (v) { return v.toFixed(1) + '×'; }, 'Môi trường: tần suất sấm');
+    var skyboxOn = panel.querySelector('#ed-env-skybox-on');
+    if (skyboxOn) skyboxOn.addEventListener('change', function () {
+      setEnv({ skybox: skyboxOn.checked },
+        { history: 'Môi trường: skybox ' + (skyboxOn.checked ? 'bật' : 'tắt') });
     });
     /* ---- Đợt 3: bóng đổ / fog nâng cao / mặt nước ---- */
     function refreshWater() {
@@ -1024,7 +1401,13 @@ ED.Environment = (function () {
     ensureRectAreaLib: ensureRectAreaLib, applyAreaLight: applyAreaLight,
     defaultFogLayers: defaultFogLayers, normalizeFogLayers: normalizeFogLayers,
     edEnvFogLayerPositions: edEnvFogLayerPositions, getFogLayers: getFogLayers,
-    applyFogLayers: applyFogLayers, buildFogTexture: buildFogTexture
+    applyFogLayers: applyFogLayers, buildFogTexture: buildFogTexture,
+    /* Đợt 6 — skybox + thời tiết mới (hàm thuần test được bằng vm). */
+    WEATHER_TYPES: WEATHER_TYPES, normalizeWeather: normalizeWeather,
+    skyColorsForHour: skyColorsForHour, edEnvCloudPositions: edEnvCloudPositions,
+    edEnvMulberry32: edEnvMulberry32, thunderFlashSchedule: thunderFlashSchedule,
+    updateSky: updateSky, getSkybox: function () { return _env.skybox; },
+    getThunderRate: function () { return _env.thunderRate; }
   };
 })();
 

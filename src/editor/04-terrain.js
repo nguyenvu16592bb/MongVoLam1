@@ -18,6 +18,17 @@
    lũy (edTerrainFlowMap D8 + edTerrainErodeFlow thuần, deterministic,
    chạy từng lượt không khoá UI, có Hủy). Mức LOD chỉ sống trong phiên,
    không lưu vào project JSON.
+   Đợt 6: map 96/128/192 (SEGMENTS giữ 64, mảng heights/paints vẫn
+   65×65=4225, chỉ đổi tỉ lệ ô = size/64), regions + preset theo vùng
+   (badge tên vùng + tự đổi preset), spline đường/sông/hàng rào
+   (splineFlatten/roadCells thuần, buildSplineGroup, tick() cho sông
+   chảy), cọ rải scatter (scatterPositions deterministic, 1 InstancedMesh
+   mỗi object). UI đợt 6 tự tạo trong init, không sửa 02-ui.js.
+   Project JSON v1 mở rộng (project cũ vẫn mở được): terrain.size
+   96|128|192, terrain.regions [{id,name,x0,z0,x1,z1,preset}];
+   objects[] thêm type 'spline' (extra {splineKind, points, width,
+   riverSnapped?}) và type 'scatter' (extra {kind, count, seed, radius,
+   center}).
    Quy tắc DESIGN.md: KHÔNG truy cập document/window/THREE ở top-level.
    ========================================================================== */
 var ED = (typeof ED !== 'undefined') ? ED : {};
@@ -79,6 +90,37 @@ ED.Terrain = (function () {
   }
   function gridToWorld(gx, gz) {
     return { x: gx / SEGMENTS * SIZE - SIZE / 2, z: gz / SEGMENTS * SIZE - SIZE / 2 };
+  }
+
+  /* ---- Đợt 6: kích thước map 96/128/192. ----
+     SEGMENTS giữ nguyên 64 nên mảng heights/paints vẫn 65×65=4225;
+     chỉ đổi tỉ lệ ô = SIZE/64 (1.5 / 2 / 3 đơn vị/đỉnh). Mọi chỗ
+     trong file đã dùng biến SIZE (worldToGrid/gridToWorld/chunk/LOD/
+     erosion) nên đổi SIZE là đủ — đã rà soát, không còn hằng 96 cứng
+     nào cho kích thước map (96 còn lại chỉ là giá trị mặc định và
+     lựa chọn lưới file .raw, không phải kích thước map). */
+  var MAP_SIZES = [96, 128, 192];
+  function validMapSize(n) {
+    n = Math.round(Number(n) || 0);
+    for (var i = 0; i < MAP_SIZES.length; i++) if (MAP_SIZES[i] === n) return n;
+    return 0;
+  }
+  function getSize() { return SIZE; }
+  /* Đổi kích thước map: pushHistory TRƯỚC khi đổi (snapshot trước thay
+     đổi, đúng pattern erode()/importHeightmap), rồi đồng bộ project,
+     dựng lại mesh + báo viewport. Giá trị lạ hoặc bằng hiện tại -> giữ
+     nguyên, không push history. Trả về SIZE hiện tại. */
+  function setSize(n) {
+    var v = validMapSize(n);
+    if (!v || v === SIZE) return SIZE;
+    if (ED.Core && typeof ED.Core.pushHistory === 'function') ED.Core.pushHistory('Terrain: đổi kích thước map ' + v);
+    SIZE = v;
+    syncToProject();
+    markDirtyPush();
+    rebuildMesh();
+    refreshViewportTerrain();
+    updateMapSizeLine();
+    return SIZE;
   }
 
   /* ---- Logic thuần: brush trên mảng heights. ----
@@ -630,6 +672,235 @@ ED.Terrain = (function () {
     return out;
   }
 
+  /* ---- Logic thuần đợt 6: regions / spline / scatter. ----
+     Mọi hàm ở đây đều thuần (không DOM/THREE) để test Node bằng vm. */
+
+  /* 5 preset môi trường có sẵn (khớp 05-environment.js PRESETS). */
+  var REGION_PRESETS = ['thanh-co', 'rung-truc', 'nui-tuyet', 'chua', 'vo-dai'];
+  var PRESET_NAMES = { 'thanh-co': 'Thành cổ', 'rung-truc': 'Rừng trúc', 'nui-tuyet': 'Núi tuyết', 'chua': 'Chùa', 'vo-dai': 'Võ đài' };
+  var SPLINE_KINDS = ['road', 'river', 'fence'];
+  var SPLINE_NAMES = { road: 'Đường đi', river: 'Sông', fence: 'Hàng rào' };
+  var SCATTER_KINDS = ['tree', 'rock', 'grass'];
+  var SCATTER_NAMES = { tree: 'Cây', rock: 'Đá', grass: 'Cỏ' };
+
+  /* regionAt(regions, x, z): vùng chứa điểm (x, z), hoặc null.
+     Ô nào trùng nhiều vùng thì lấy vùng thêm SAU CÙNG (duyệt hết,
+     vùng sau ghi đè vùng trước). Bounds không cần xếp sẵn (tự min/max). */
+  function regionAt(regions, x, z) {
+    if (!regions || !regions.length) return null;
+    x = Number(x); z = Number(z);
+    if (!isFinite(x) || !isFinite(z)) return null;
+    var found = null;
+    for (var i = 0; i < regions.length; i++) {
+      var r = regions[i];
+      if (!r) continue;
+      var x0 = Number(r.x0), x1 = Number(r.x1), z0 = Number(r.z0), z1 = Number(r.z1);
+      if (!isFinite(x0) || !isFinite(x1) || !isFinite(z0) || !isFinite(z1)) continue;
+      var loX = Math.min(x0, x1), hiX = Math.max(x0, x1);
+      var loZ = Math.min(z0, z1), hiZ = Math.max(z0, z1);
+      if (x >= loX && x <= hiX && z >= loZ && z <= hiZ) found = r;
+    }
+    return found;
+  }
+
+  /* Đổi lưới <-> thế giới với size/segments tường minh (bản thuần của
+     worldToGrid/gridToWorld, để hàm thuần đợt 6 không phụ thuộc SIZE
+     nội bộ — test được với mọi size). */
+  function worldToGridSize(x, z, segments, size) {
+    return { gx: (x + size / 2) / size * segments, gz: (z + size / 2) / size * segments };
+  }
+  function gridToWorldSize(gx, gz, segments, size) {
+    return { x: gx / segments * size - size / 2, z: gz / segments * size - size / 2 };
+  }
+  /* Nội suy song tuyến trên mảng heights với size/segments tường minh
+     (bản thuần của heightAtArray). heights sai độ dài -> 0. */
+  function bilinearHeightSize(heights, segments, size, x, z) {
+    var side = segments + 1;
+    if (!heights || heights.length !== side * side) return 0;
+    var g = worldToGridSize(clamp(x, -size / 2, size / 2), clamp(z, -size / 2, size / 2), segments, size);
+    var x0 = clamp(Math.floor(g.gx), 0, segments - 1), z0 = clamp(Math.floor(g.gz), 0, segments - 1);
+    var fx = g.gx - x0, fz = g.gz - z0;
+    var h00 = heights[z0 * side + x0], h10 = heights[z0 * side + x0 + 1];
+    var h01 = heights[(z0 + 1) * side + x0], h11 = heights[(z0 + 1) * side + x0 + 1];
+    return (h00 * (1 - fx) + h10 * fx) * (1 - fz) + (h01 * (1 - fx) + h11 * fx) * fz;
+  }
+
+  /* splineNearestPoint(points, x, z): điểm gần nhất trên đường gấp khúc
+     points [[x,z],...] tới (x, z). Trả {dist, px, pz} hoặc null khi
+     points < 2 điểm. Thuần. */
+  function splineNearestPoint(points, x, z) {
+    if (!points || points.length < 2) return null;
+    var best = null, bestD2 = Infinity;
+    for (var i = 0; i < points.length - 1; i++) {
+      var ax = Number(points[i][0]) || 0, az = Number(points[i][1]) || 0;
+      var bx = Number(points[i + 1][0]) || 0, bz = Number(points[i + 1][1]) || 0;
+      var abx = bx - ax, abz = bz - az;
+      var len2 = abx * abx + abz * abz;
+      var t = 0;
+      if (len2 > 0) t = clamp(((x - ax) * abx + (z - az) * abz) / len2, 0, 1);
+      var px = ax + abx * t, pz = az + abz * t;
+      var dx = x - px, dz = z - pz, d2 = dx * dx + dz * dz;
+      if (d2 < bestD2) { bestD2 = d2; best = { dist: Math.sqrt(d2), px: px, pz: pz }; }
+    }
+    return best;
+  }
+
+  /* splineFlatten(heights, size, points, width): làm phẳng địa hình dọc
+     spline — trả về mảng heights MỚI, KHÔNG sửa mảng gốc.
+     - size: kích thước map theo đơn vị thế giới (96/128/192); số
+       segment suy từ độ dài heights ((side-1), thường 64).
+     - Mỗi đỉnh lưới gần spline (trong width/2 + vùng chuyển tiếp) được
+       nội suy chiều cao về cao độ tại điểm spline gần nhất (lấy bằng
+       nội suy song tuyến trên heights gốc): trong width/2 thì phẳng
+       hẳn (f=1), ngoài đó f giảm mượt (smoothstep) về 0 ở
+       width/2 + max(1, width/2).
+     - points < 2 hoặc heights sai độ dài -> trả bản sao heights. */
+  function splineFlatten(heights, size, points, width) {
+    size = (size == null ? SIZE : Number(size));
+    if (!isFinite(size) || size <= 0) size = SIZE;
+    if (!heights || !heights.length) return [];
+    var side = Math.round(Math.sqrt(heights.length));
+    if (side * side !== heights.length || side < 2) return heights.slice();
+    var segments = side - 1;
+    var out = heights.slice();
+    if (!points || points.length < 2) return out;
+    width = clamp(Number(width) || 2, 0.5, 20);
+    var half = width / 2, fall = Math.max(1, half);
+    for (var iz = 0; iz < side; iz++) {
+      for (var ix = 0; ix < side; ix++) {
+        var w = gridToWorldSize(ix, iz, segments, size);
+        var near = splineNearestPoint(points, w.x, w.z);
+        if (!near || near.dist > half + fall) continue;
+        var target = bilinearHeightSize(heights, segments, size, near.px, near.pz);
+        var f = (near.dist <= half) ? 1 : 1 - smoothstep((near.dist - half) / fall);
+        var k = iz * side + ix;
+        out[k] = out[k] + (target - out[k]) * f;
+      }
+    }
+    return out;
+  }
+
+  /* roadCells(points, width, size): các ô lưới [gx, gz] dọc spline
+     (lưới SEGMENTS×SEGMENTS, gx/gz 0..64) — để tô paint đường + để
+     harness test. Ô được tính khi tâm ô nằm trong width/2 của 1 điểm
+     mẫu trên spline (mẫu dày cell/2 nên dải phủ kín, không thủng lỗ).
+     Trả danh sách không trùng, theo thứ tự dọc spline. */
+  function roadCells(points, width, size) {
+    var out = [], seen = {};
+    if (!points || points.length < 2) return out;
+    size = (size == null ? SIZE : Number(size));
+    if (!isFinite(size) || size <= 0) size = SIZE;
+    width = clamp(Number(width) || 2, 0.5, 20);
+    var half = width / 2;
+    var cell = size / SEGMENTS; // đơn vị thế giới / ô lưới
+    var stepLen = cell / 2;
+    function mark(x, z) {
+      var g = worldToGridSize(x, z, SEGMENTS, size);
+      var cgx = Math.round(g.gx), cgz = Math.round(g.gz);
+      var r = Math.ceil(half / cell) + 1;
+      for (var dz = -r; dz <= r; dz++) {
+        for (var dx = -r; dx <= r; dx++) {
+          var gx = cgx + dx, gz = cgz + dz;
+          if (gx < 0 || gx > SEGMENTS || gz < 0 || gz > SEGMENTS) continue;
+          var w = gridToWorldSize(gx, gz, SEGMENTS, size);
+          var ddx = w.x - x, ddz = w.z - z;
+          if (Math.sqrt(ddx * ddx + ddz * ddz) <= half + 0.001) {
+            var key = gx + ',' + gz;
+            if (!seen[key]) { seen[key] = true; out.push([gx, gz]); }
+          }
+        }
+      }
+    }
+    for (var i = 0; i < points.length - 1; i++) {
+      var ax = Number(points[i][0]) || 0, az = Number(points[i][1]) || 0;
+      var bx = Number(points[i + 1][0]) || 0, bz = Number(points[i + 1][1]) || 0;
+      var len = Math.sqrt((bx - ax) * (bx - ax) + (bz - az) * (bz - az));
+      var n = Math.max(1, Math.ceil(len / stepLen));
+      for (var k = 0; k <= n; k++) mark(ax + (bx - ax) * k / n, az + (bz - az) * k / n);
+    }
+    return out;
+  }
+
+  /* extendRiverToWater(paints, points, size): sông tự nối tới ô nước.
+     Xét 2 đầu mút: đầu nào có ô paint nước (4) gần nhất trong 3 ô
+     lưới thì nối dài tới tâm ô nước đó (chèn vào đầu/cuối). Không sửa
+     points gốc. Trả {points, snapped, ends:['start'|'end'...]}. */
+  function extendRiverToWater(paints, points, size) {
+    var empty = { points: points ? points.slice() : [], snapped: false, ends: [] };
+    if (!paints || !points || points.length < 2) return empty;
+    size = (size == null ? SIZE : Number(size));
+    if (!isFinite(size) || size <= 0) size = SIZE;
+    function nearestWater(x, z, maxCells) {
+      var g = worldToGridSize(x, z, SEGMENTS, size);
+      var cgx = Math.round(g.gx), cgz = Math.round(g.gz);
+      var best = null, bestD2 = Infinity;
+      for (var dz = -maxCells; dz <= maxCells; dz++) {
+        for (var dx = -maxCells; dx <= maxCells; dx++) {
+          var gx = cgx + dx, gz = cgz + dz;
+          if (gx < 0 || gx > SEGMENTS || gz < 0 || gz > SEGMENTS) continue;
+          if (paints[gz * (SEGMENTS + 1) + gx] !== 4) continue;
+          var d2 = dx * dx + dz * dz;
+          if (d2 < bestD2) { bestD2 = d2; best = { gx: gx, gz: gz }; }
+        }
+      }
+      if (!best) return null;
+      var w = gridToWorldSize(best.gx, best.gz, SEGMENTS, size);
+      return [w.x, w.z];
+    }
+    var pts = points.map(function (p) { return [Number(p[0]) || 0, Number(p[1]) || 0]; });
+    var snapped = false, ends = [];
+    var s0 = nearestWater(pts[0][0], pts[0][1], 3);
+    if (s0) { pts.unshift(s0); snapped = true; ends.push('start'); }
+    var s1 = nearestWater(pts[pts.length - 1][0], pts[pts.length - 1][1], 3);
+    if (s1) { pts.push(s1); snapped = true; ends.push('end'); }
+    return { points: pts, snapped: snapped, ends: ends };
+  }
+
+  /* resamplePolyline(points, maxStep): chèn điểm dọc đường gấp khúc sao
+     cho mỗi đoạn <= maxStep (mặc định 1.5) — để ribbon/cọc bám sát địa
+     hình. Thuần, không sửa points gốc. */
+  function resamplePolyline(points, maxStep) {
+    var out = [];
+    if (!points || !points.length) return out;
+    maxStep = Math.max(0.5, Number(maxStep) || 1.5);
+    out.push([Number(points[0][0]) || 0, Number(points[0][1]) || 0]);
+    for (var i = 0; i < points.length - 1; i++) {
+      var ax = Number(points[i][0]) || 0, az = Number(points[i][1]) || 0;
+      var bx = Number(points[i + 1][0]) || 0, bz = Number(points[i + 1][1]) || 0;
+      var dx = bx - ax, dz = bz - az;
+      var len = Math.sqrt(dx * dx + dz * dz);
+      var n = Math.max(1, Math.ceil(len / maxStep));
+      for (var k = 1; k <= n; k++) out.push([ax + dx * k / n, az + dz * k / n]);
+    }
+    return out;
+  }
+
+  /* scatterPositions(seed, count, cx, cz, radius): vị trí rải deterministic
+     (mulberry32 đã có trong file; cùng seed+tham số -> y hệt vị trí).
+     Phân bố đều trong đĩa (r = radius*sqrt(rand)). */
+  function scatterPositions(seed, count, cx, cz, radius) {
+    count = clamp(Math.round(Number(count) || 0), 0, 1000);
+    radius = Math.max(0, Number(radius) || 0);
+    cx = Number(cx) || 0; cz = Number(cz) || 0;
+    var rng = mulberry32(seed);
+    var out = [];
+    for (var i = 0; i < count; i++) {
+      var a = rng() * Math.PI * 2;
+      var r = radius * Math.sqrt(rng());
+      out.push([cx + Math.cos(a) * r, cz + Math.sin(a) * r]);
+    }
+    return out;
+  }
+
+  /* scatterStrokeCount(density, radius): số object 1 nhát cọ rải.
+     density (slider 1–50) hiểu là số cây/10 m²: count =
+     round(density × π r² / 10), kẹp 1..200/nhát. Thuần. */
+  function scatterStrokeCount(density, radius) {
+    density = clamp(Number(density) || 1, 1, 50);
+    radius = Math.max(0.5, Number(radius) || 4);
+    return clamp(Math.round(density * Math.PI * radius * radius / 10), 1, 200);
+  }
+
   /* ---- Logic thuần đợt 2: heightmap import + erosion. ----
      edTerrainHeightsFromPixels(pixels, w, h, segments, maxHeight):
      pixels là mảng grayscale 0–255 (độ dài w*h) hoặc RGBA (độ dài
@@ -779,6 +1050,22 @@ ED.Terrain = (function () {
   var _lodThresholds = { near: LOD_DEFAULT_NEAR, far: LOD_DEFAULT_FAR };
   var _flowJob = null;            // job xói mòn dòng chảy đang chạy
   var _flowSettings = { passes: 5, strength: 1 }; // slider xói mòn dòng chảy
+  /* ---- Đợt 6: state regions / spline / scatter. regions lưu trong
+     project.terrain.regions; còn lại chỉ sống trong phiên. ---- */
+  var _regions = [];              // [{id,name,x0,z0,x1,z1,preset}]
+  var _regionCounter = 0;
+  var _autoSwitchRegion = false;  // tự đổi preset khi camera vào vùng
+  var _lastAutoRegionId = null;
+  var _riverMeshes = [];          // [{id, mesh, flowOffset}] cho tick()
+  var _groundMode = null;         // {kind:'region'|'spline'|'scatter'} | null
+  var _regionPick = { step: 0, corner1: null, corner2: null };
+  var _splineDraft = null;        // {kind, points:[[x,z]..], width}
+  var _splineSettings = { kind: 'road', width: 2 };
+  var _scatterSettings = { kind: 'tree', radius: 4, density: 10, seed: 1 };
+  var _lastSplineClick = 0;
+  var _badge = null;              // badge tên vùng góc viewport
+  var _badgeTimer = null;
+  var _keyBound = false;
   function getHeightmapMax() { return _maxHeight; }
   function setHeightmapMax(v) { v = Number(v); _maxHeight = clamp(isFinite(v) ? v : 8, 1, 20); return _maxHeight; }
   function getErodeIterations() { return _erodeIterations; }
@@ -939,6 +1226,594 @@ ED.Terrain = (function () {
     return true;
   }
   function isErodingFlow() { return !!_flowJob; }
+
+  /* ---- Đợt 6: Regions (lưu trong project.terrain.regions). ---- */
+  function _resyncRegionCounter() {
+    var max = 0;
+    for (var i = 0; i < _regions.length; i++) {
+      var m = /^region-(\d+)$/.exec(_regions[i].id || '');
+      if (m && +m[1] > max) max = +m[1];
+    }
+    if (max > _regionCounter) _regionCounter = max;
+  }
+  /* Chuẩn hoá 1 region: kẹp vào map, xếp min/max, preset lạ -> 'thanh-co',
+     tên rỗng -> 'Vùng'. 2 góc trùng nhau (diện tích 0) -> null. */
+  function normalizeRegion(r) {
+    if (!r || typeof r !== 'object') return null;
+    var x0 = Number(r.x0), z0 = Number(r.z0), x1 = Number(r.x1), z1 = Number(r.z1);
+    if (!isFinite(x0) || !isFinite(z0) || !isFinite(x1) || !isFinite(z1)) return null;
+    var half = SIZE / 2;
+    x0 = clamp(x0, -half, half); x1 = clamp(x1, -half, half);
+    z0 = clamp(z0, -half, half); z1 = clamp(z1, -half, half);
+    if (x0 === x1 || z0 === z1) return null;
+    var preset = (REGION_PRESETS.indexOf(r.preset) >= 0) ? r.preset : 'thanh-co';
+    var name = String(r.name == null ? '' : r.name).trim() || 'Vùng';
+    return { id: (typeof r.id === 'string' && r.id) ? r.id : null, name: name,
+      x0: Math.min(x0, x1), z0: Math.min(z0, z1), x1: Math.max(x0, x1), z1: Math.max(z0, z1), preset: preset };
+  }
+  function getRegions() {
+    var out = [];
+    for (var i = 0; i < _regions.length; i++) {
+      var r = _regions[i];
+      out.push({ id: r.id, name: r.name, x0: r.x0, z0: r.z0, x1: r.x1, z1: r.z1, preset: r.preset });
+    }
+    return out;
+  }
+  function getRegion(id) {
+    for (var i = 0; i < _regions.length; i++) {
+      if (_regions[i].id === id) {
+        var r = _regions[i];
+        return { id: r.id, name: r.name, x0: r.x0, z0: r.z0, x1: r.x1, z1: r.z1, preset: r.preset };
+      }
+    }
+    return null;
+  }
+  function addRegion(name, x0, z0, x1, z1, preset) {
+    var r = normalizeRegion({ id: null, name: name, x0: x0, z0: z0, x1: x1, z1: z1, preset: preset });
+    if (!r) return null;
+    r.id = 'region-' + (++_regionCounter);
+    if (ED.Core && typeof ED.Core.pushHistory === 'function') ED.Core.pushHistory('Terrain: thêm vùng ' + r.name);
+    _regions.push(r);
+    syncToProject(); markDirtyPush();
+    renderRegionList();
+    return { id: r.id, name: r.name, x0: r.x0, z0: r.z0, x1: r.x1, z1: r.z1, preset: r.preset };
+  }
+  function removeRegion(id) {
+    var ix = -1;
+    for (var i = 0; i < _regions.length; i++) if (_regions[i].id === id) { ix = i; break; }
+    if (ix < 0) return false;
+    if (ED.Core && typeof ED.Core.pushHistory === 'function') ED.Core.pushHistory('Terrain: xoá vùng ' + _regions[ix].name);
+    _regions.splice(ix, 1);
+    syncToProject(); markDirtyPush();
+    renderRegionList();
+    return true;
+  }
+  /* Áp preset của 1 vùng qua ED.Environment.setEnv (guard typeof, không
+     crash khi Environment chưa load). Trả false khi không áp được. */
+  function applyRegionPreset(regionOrId) {
+    var r = (typeof regionOrId === 'string') ? getRegion(regionOrId) : regionOrId;
+    if (!r || !r.preset) return false;
+    if (ED.Environment && typeof ED.Environment.setEnv === 'function') {
+      try { ED.Environment.setEnv({ preset: r.preset }); return true; } catch (e) { return false; }
+    }
+    return false;
+  }
+  function setAutoSwitchRegion(v) { _autoSwitchRegion = !!v; return _autoSwitchRegion; }
+  function getAutoSwitchRegion() { return _autoSwitchRegion; }
+
+  /* ---- Đợt 6: Spline (Core object type 'spline'). ---- */
+  /* Tạo object spline qua ED.Core.addObject (pushHistory trước để undo
+     khôi phục cả object lẫn địa hình). kind 'road' thì làm phẳng địa
+     hình dọc spline + tô paint đất (1) rồi rebuildMesh. kind 'river'
+     thì đầu mút gần ô nước (<=3 ô) tự nối dài tới ô nước đó
+     (ghi extra.riverSnapped để UI báo). Trả obj hoặc null. */
+  function addSpline(kind, points, opts) {
+    opts = opts || {};
+    if (SPLINE_KINDS.indexOf(kind) < 0) return null;
+    if (!points || points.length < 2) return null;
+    var pts = points.map(function (p) { return [Number(p[0]) || 0, Number(p[1]) || 0]; });
+    var width = clamp(Number(opts.width) || (kind === 'river' ? 4 : 2), 0.5, 20);
+    var snapped = false;
+    if (kind === 'river') {
+      var ext = extendRiverToWater(_paints, pts, SIZE);
+      pts = ext.points;
+      snapped = ext.snapped;
+    }
+    if (!ED.Core || typeof ED.Core.addObject !== 'function') return null;
+    if (typeof ED.Core.pushHistory === 'function') ED.Core.pushHistory('Terrain: thêm ' + (SPLINE_NAMES[kind] || kind));
+    var cx = 0, cz = 0;
+    for (var i = 0; i < pts.length; i++) { cx += pts[i][0]; cz += pts[i][1]; }
+    cx /= pts.length; cz /= pts.length;
+    var extra = { splineKind: kind, points: pts, width: width };
+    if (kind === 'river') extra.riverSnapped = snapped;
+    var obj = ED.Core.addObject({
+      type: 'spline', category: 'Environment',
+      name: opts.name || ((SPLINE_NAMES[kind] || kind) + ' ' + pts.length + ' điểm'),
+      pos: [cx, heightAt(cx, cz), cz], rot: [0, 0, 0], scale: [1, 1, 1], extra: extra
+    });
+    if (kind === 'road') {
+      _heights = splineFlatten(_heights, SIZE, pts, width);
+      var cells = roadCells(pts, width, SIZE);
+      for (var c = 0; c < cells.length; c++) _paints[idx(cells[c][0], cells[c][1])] = 1; // 1 = đất
+      _groundTextureDirty = true;
+    }
+    syncToProject(); markDirtyPush(); rebuildMesh(); refreshViewportTerrain();
+    if (ED.Viewport && typeof ED.Viewport.syncObject === 'function') {
+      try { ED.Viewport.syncObject(obj); } catch (e) { /* viewport chưa biết vẽ spline: nhóm viewport nối buildSplineGroup */ }
+    }
+    return obj;
+  }
+  /* Dải ribbon ôm địa hình: mỗi điểm mẫu có 2 đỉnh trái/phải (vuông góc
+     hướng spline, rộng width), y = heightAt + 0.06 (đường) / 0.12 (sông).
+     UV u = quãng đường/4 để texture sông lặp theo chiều dài. */
+  function buildRibbonGeometry(pts, width, yLift) {
+    var n = pts.length;
+    var posArr = new Float32Array(n * 2 * 3);
+    var uvArr = new Float32Array(n * 2 * 2);
+    var dist = 0;
+    for (var i = 0; i < n; i++) {
+      var x = pts[i][0], z = pts[i][1];
+      var px, pz;
+      if (i === 0) { px = pts[1][0] - x; pz = pts[1][1] - z; }
+      else if (i === n - 1) { px = x - pts[i - 1][0]; pz = z - pts[i - 1][1]; }
+      else { px = pts[i + 1][0] - pts[i - 1][0]; pz = pts[i + 1][1] - pts[i - 1][1]; }
+      var l = Math.sqrt(px * px + pz * pz) || 1; px /= l; pz /= l;
+      var ox = -pz * width / 2, oz = px * width / 2;
+      var y = heightAt(x, z) + yLift;
+      if (i > 0) dist += Math.sqrt((x - pts[i - 1][0]) * (x - pts[i - 1][0]) + (z - pts[i - 1][1]) * (z - pts[i - 1][1]));
+      posArr[i * 6] = x + ox; posArr[i * 6 + 1] = y; posArr[i * 6 + 2] = z + oz;
+      posArr[i * 6 + 3] = x - ox; posArr[i * 6 + 4] = y; posArr[i * 6 + 5] = z - oz;
+      uvArr[i * 4] = dist / 4; uvArr[i * 4 + 1] = 0; uvArr[i * 4 + 2] = dist / 4; uvArr[i * 4 + 3] = 1;
+    }
+    var idxArr = [];
+    for (var j = 0; j < n - 1; j++) {
+      var a = j * 2, b = j * 2 + 1, cc = j * 2 + 2, d = j * 2 + 3;
+      idxArr.push(a, b, cc, b, d, cc);
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uvArr, 2));
+    geo.setIndex(idxArr);
+    geo.computeVertexNormals();
+    return geo;
+  }
+  /* Texture sông: sọc ngang trắng mờ trên nền nước (chỉ browser, có
+     canvas). Không có document/THREE.CanvasTexture -> null (sông vẫn
+     vẽ bằng màu + opacity, tick vẫn cập nhật flowOffset số). */
+  function makeRiverTexture() {
+    if (typeof document === 'undefined' || typeof THREE === 'undefined' || !THREE.CanvasTexture) return null;
+    try {
+      var cv = document.createElement('canvas');
+      cv.width = 64; cv.height = 64;
+      var ctx = cv.getContext('2d');
+      if (!ctx) return null;
+      ctx.fillStyle = '#3a8b8c'; ctx.fillRect(0, 0, 64, 64);
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 2;
+      for (var y = 8; y < 64; y += 16) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(64, y); ctx.stroke(); }
+      var tex = new THREE.CanvasTexture(cv);
+      tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    } catch (e) { return null; }
+  }
+  function _registerRiverMesh(id, mesh) {
+    for (var i = 0; i < _riverMeshes.length; i++) {
+      if (_riverMeshes[i].id === id) { _riverMeshes[i].mesh = mesh; _riverMeshes[i].flowOffset = 0; return; }
+    }
+    _riverMeshes.push({ id: id, mesh: mesh, flowOffset: 0 });
+  }
+  /* buildSplineGroup(obj) -> THREE.Group (viewport gọi qua guard typeof).
+     'road': ribbon đất ôm địa hình. 'river': ribbon nước (transparent,
+     opacity 0.8) + userData.flowOffset để tick() làm chảy. 'fence': cọc
+     + thanh ngang mỗi ~2 đơn vị (cọc dùng InstancedMesh khi có).
+     Không có THREE -> null an toàn; obj lạ -> null. */
+  function buildSplineGroup(obj) {
+    if (typeof THREE === 'undefined') return null;
+    if (!obj || !obj.extra) return null;
+    var kind = obj.extra.splineKind;
+    var points = obj.extra.points;
+    var width = clamp(Number(obj.extra.width) || 2, 0.5, 20);
+    if (!points || points.length < 2) return null;
+    if (kind !== 'road' && kind !== 'river' && kind !== 'fence') return null;
+    var group = new THREE.Group();
+    group.userData.objectId = obj.id;
+    group.userData.splineKind = kind;
+    if (kind === 'road' || kind === 'river') {
+      var pts = resamplePolyline(points, 1.5);
+      var geo = buildRibbonGeometry(pts, width, kind === 'river' ? 0.12 : 0.06);
+      if (!geo) return group;
+      var mat;
+      if (kind === 'river') {
+        mat = new THREE.MeshStandardMaterial({ color: 0x3a8b8c, transparent: true, opacity: 0.8, roughness: 0.3, metalness: 0.1 });
+        var tex = makeRiverTexture();
+        if (tex) mat.map = tex;
+      } else {
+        mat = new THREE.MeshStandardMaterial({ color: 0x8a6a42, roughness: 1, metalness: 0 });
+      }
+      var mesh = new THREE.Mesh(geo, mat);
+      mesh.userData.objectId = obj.id;
+      mesh.userData.splineKind = kind;
+      if (kind === 'river') {
+        mesh.userData.flowOffset = 0;
+        group.userData.flowOffset = 0;
+        _registerRiverMesh(obj.id, mesh);
+      } else {
+        mesh.receiveShadow = true;
+      }
+      group.add(mesh);
+      return group;
+    }
+    /* fence: cọc mỗi ~2 đơn vị + 1 thanh ngang giữa 2 cọc kề. */
+    var fpts = resamplePolyline(points, 2);
+    var postGeo = new THREE.BoxGeometry(0.15, 1.2, 0.15);
+    var postMat = new THREE.MeshStandardMaterial({ color: 0x7a5238, roughness: 0.9 });
+    var railMat = new THREE.MeshStandardMaterial({ color: 0x8a6a42, roughness: 0.9 });
+    if (typeof THREE.InstancedMesh === 'function' && fpts.length > 1) {
+      var im = new THREE.InstancedMesh(postGeo, postMat, fpts.length);
+      for (var i = 0; i < fpts.length; i++) {
+        var m4 = new THREE.Matrix4();
+        m4.makeTranslation(fpts[i][0], heightAt(fpts[i][0], fpts[i][1]) + 0.6, fpts[i][1]);
+        im.setMatrixAt(i, m4);
+      }
+      if (im.instanceMatrix) im.instanceMatrix.needsUpdate = true;
+      group.add(im);
+    } else {
+      for (var j = 0; j < fpts.length; j++) {
+        var pm = new THREE.Mesh(postGeo, postMat);
+        pm.position.set(fpts[j][0], heightAt(fpts[j][0], fpts[j][1]) + 0.6, fpts[j][1]);
+        group.add(pm);
+      }
+    }
+    for (var k = 0; k < fpts.length - 1; k++) {
+      var ax = fpts[k][0], az = fpts[k][1], bx = fpts[k + 1][0], bz = fpts[k + 1][1];
+      var dx = bx - ax, dz = bz - az;
+      var len = Math.sqrt(dx * dx + dz * dz);
+      if (len < 0.01) continue;
+      var rail = new THREE.Mesh(new THREE.BoxGeometry(len, 0.08, 0.08), railMat);
+      var mx = (ax + bx) / 2, mz = (az + bz) / 2;
+      rail.position.set(mx, heightAt(mx, mz) + 0.9, mz);
+      rail.rotation.y = -Math.atan2(dz, dx);
+      group.add(rail);
+    }
+    return group;
+  }
+  /* tick(dt): sông chảy — tăng flowOffset cho các river mesh đã build
+     (đổi offset texture khi có map). Viewport gọi qua render loop
+     (nhóm khác nối). Trả số river mesh đang theo dõi. */
+  function tick(dt) {
+    dt = clamp(Number(dt) || 0, 0, 1);
+    for (var i = _riverMeshes.length - 1; i >= 0; i--) {
+      var e = _riverMeshes[i];
+      if (!e || !e.mesh) { _riverMeshes.splice(i, 1); continue; }
+      e.flowOffset = (e.flowOffset || 0) + dt * 0.05;
+      e.mesh.userData.flowOffset = e.flowOffset;
+      try {
+        var m = e.mesh.material;
+        if (m && m.map) m.map.offset.x = e.flowOffset % 1;
+      } catch (err) { /* mesh lạ, bỏ qua */ }
+    }
+    return _riverMeshes.length;
+  }
+
+  /* ---- Đợt 6: Scatter (Core object type 'scatter'). ---- */
+  /* 1 nhát cọ = 1 object scatter mới (hiện trong Hierarchy như object
+     thường, xoá được). count = scatterStrokeCount(mật độ, bán kính). */
+  function addScatter(kind, cx, cz, opts) {
+    opts = opts || {};
+    if (SCATTER_KINDS.indexOf(kind) < 0) return null;
+    cx = Number(cx) || 0; cz = Number(cz) || 0;
+    var radius = clamp(Number(opts.radius) || 4, 1, 10);
+    var density = clamp(Math.round(Number(opts.density)) || 10, 1, 50);
+    var seed = (opts.seed == null ? 1 : (Math.floor(Number(opts.seed)) >>> 0));
+    var count = (opts.count != null) ? clamp(Math.round(Number(opts.count)) || 1, 1, 200) : scatterStrokeCount(density, radius);
+    if (!ED.Core || typeof ED.Core.addObject !== 'function') return null;
+    if (typeof ED.Core.pushHistory === 'function') ED.Core.pushHistory('Terrain: rải ' + SCATTER_NAMES[kind] + ' ×' + count);
+    var obj = ED.Core.addObject({
+      type: 'scatter', category: 'Environment', name: SCATTER_NAMES[kind] + ' ×' + count,
+      pos: [cx, heightAt(cx, cz), cz], rot: [0, 0, 0], scale: [1, 1, 1],
+      extra: { kind: kind, count: count, seed: seed, radius: radius, center: [cx, cz] }
+    });
+    if (ED.Viewport && typeof ED.Viewport.syncObject === 'function') {
+      try { ED.Viewport.syncObject(obj); } catch (e) { /* viewport chưa biết vẽ scatter: nhóm viewport nối buildScatterGroup */ }
+    }
+    return obj;
+  }
+  /* buildScatterGroup(obj) -> THREE.Group chứa 1 InstancedMesh cho kind
+     đó (geometry/material lấy từ ED.Assets.buildMesh(kind); nếu Assets
+     chưa load thì trả Group rỗng + log, không crash). Không có THREE
+     -> null an toàn. Vị trí + xoay + tỉ lệ deterministic theo seed. */
+  function buildScatterGroup(obj) {
+    if (typeof THREE === 'undefined') return null;
+    var g = new THREE.Group();
+    g.userData.objectId = obj && obj.id;
+    if (!obj || !obj.extra) return g;
+    var kind = obj.extra.kind;
+    var count = clamp(Math.round(Number(obj.extra.count)) || 0, 0, 1000);
+    var seed = (obj.extra.seed == null ? 1 : (Math.floor(Number(obj.extra.seed)) >>> 0));
+    var radius = Math.max(0, Number(obj.extra.radius) || 0);
+    var center = obj.extra.center || [0, 0];
+    var positions = scatterPositions(seed, count, Number(center[0]) || 0, Number(center[1]) || 0, radius);
+    g.userData.scatterKind = kind;
+    g.userData.count = positions.length;
+    if (!positions.length) return g;
+    var base = null;
+    if (ED.Assets && typeof ED.Assets.buildMesh === 'function') {
+      try { base = ED.Assets.buildMesh(kind, {}); } catch (e) { base = null; }
+    }
+    if (!base) {
+      try { if (ED.UI && typeof ED.UI.log === 'function') ED.UI.log('Scatter: chưa có Assets.buildMesh cho "' + kind + '" (Assets chưa load?) — trả Group rỗng.'); } catch (e) {}
+      return g;
+    }
+    var geo = null, mat = null;
+    try {
+      base.traverse(function (c) {
+        if (!geo && c.isMesh && c.geometry) { geo = c.geometry; mat = c.material; }
+      });
+    } catch (e) { /* base lạ, giữ Group rỗng */ }
+    if (!geo) return g;
+    var rng = mulberry32((seed + 7) >>> 0);
+    if (typeof THREE.InstancedMesh === 'function') {
+      var im = new THREE.InstancedMesh(geo, mat, positions.length);
+      for (var i = 0; i < positions.length; i++) {
+        var px = positions[i][0], pz = positions[i][1];
+        var py = heightAt(px, pz);
+        var s = 0.7 + rng() * 0.6;
+        var rot = rng() * Math.PI * 2;
+        var m4 = new THREE.Matrix4();
+        if (typeof m4.makeRotationY === 'function') m4.makeRotationY(rot);
+        if (typeof m4.scale === 'function' && typeof THREE.Vector3 === 'function') {
+          try { m4.scale(new THREE.Vector3(s, s * (0.8 + rng() * 0.4), s)); } catch (e2) { /* stub thiếu Vector3: giữ tỉ lệ 1 */ }
+        }
+        if (typeof m4.setPosition === 'function') m4.setPosition(px, py, pz);
+        im.setMatrixAt(i, m4);
+      }
+      if (im.instanceMatrix) im.instanceMatrix.needsUpdate = true;
+      g.add(im);
+    } else {
+      for (var j = 0; j < positions.length; j++) {
+        var single = new THREE.Mesh(geo, mat);
+        single.position.set(positions[j][0], heightAt(positions[j][0], positions[j][1]), positions[j][1]);
+        g.add(single);
+      }
+    }
+    return g;
+  }
+  function getSplineDraft() {
+    if (!_splineDraft) return null;
+    return { kind: _splineDraft.kind, width: _splineDraft.width, points: _splineDraft.points.map(function (p) { return [p[0], p[1]]; }) };
+  }
+  function getScatterSettings() {
+    return { kind: _scatterSettings.kind, radius: _scatterSettings.radius, density: _scatterSettings.density, seed: _scatterSettings.seed };
+  }
+
+  /* ---- Đợt 6: click xuống đất (1 handler chung, dispatch theo chế độ).
+     Viewport chỉ có 1 slot setGroundClickHandler (NPC cũng dùng) nên
+     Terrain đăng ký lại mỗi khi bật chế độ cần click, và trả null khi
+     tắt chế độ — chế độ nào bật sau sẽ thắng slot này. ---- */
+  function setGroundMode(mode) {
+    _groundMode = mode || null;
+    if (_groundMode) _installGroundHandler();
+    else _clearGroundHandler();
+    return _groundMode;
+  }
+  function getGroundMode() { return _groundMode ? _groundMode.kind : null; }
+  function _installGroundHandler() {
+    try {
+      if (ED.Viewport && typeof ED.Viewport.setGroundClickHandler === 'function') {
+        ED.Viewport.setGroundClickHandler(function (x, z) { onGroundClick(x, z); });
+      }
+    } catch (e) { /* Viewport chưa có API: chế độ click không chạy */ }
+  }
+  function _clearGroundHandler() {
+    try {
+      if (ED.Viewport && typeof ED.Viewport.setGroundClickHandler === 'function') {
+        ED.Viewport.setGroundClickHandler(null);
+      }
+    } catch (e) {}
+  }
+  function onGroundClick(x, z) {
+    if (!_groundMode) return;
+    if (_groundMode.kind === 'region') {
+      if (!_regionPick) return;
+      if (_regionPick.step === 1) {
+        _regionPick.corner1 = { x: x, z: z };
+        _regionPick.step = 2;
+        toast('Đã chọn góc 1 (' + x.toFixed(1) + ', ' + z.toFixed(1) + '). Bấm "Chọn góc 2" rồi bấm xuống đất.');
+      } else if (_regionPick.step === 2) {
+        _regionPick.corner2 = { x: x, z: z };
+        _regionPick.step = 0;
+        toast('Đã chọn góc 2. Bấm "Thêm vùng" để tạo vùng.');
+        setGroundMode(null);
+      }
+      updateRegionStatus();
+      return;
+    }
+    if (_groundMode.kind === 'spline') {
+      if (!_splineDraft) return;
+      /* Bấm đúp (2 lần chạm < 350ms) = kết thúc vẽ, không thêm điểm. */
+      var now = (typeof Date !== 'undefined' && Date.now) ? Date.now() : 0;
+      if (_splineDraft.points.length >= 2 && now - _lastSplineClick < 350) { finishSpline(); return; }
+      _lastSplineClick = now;
+      _splineDraft.points.push([x, z]);
+      updateSplineStatus();
+      return;
+    }
+    if (_groundMode.kind === 'scatter') {
+      var o = addScatter(_scatterSettings.kind, x, z, _scatterSettings);
+      if (o) toast('Đã rải ' + o.extra.count + ' ' + (SCATTER_NAMES[_scatterSettings.kind] || _scatterSettings.kind) + '.');
+      return;
+    }
+  }
+  function toast(msg) {
+    try { if (ED.UI && typeof ED.UI.toast === 'function') ED.UI.toast(msg); } catch (e) {}
+  }
+  function startRegionPick(step) {
+    step = (step === 2) ? 2 : 1;
+    if (step === 2 && (!_regionPick || !_regionPick.corner1)) {
+      toast('Chọn góc 1 trước.');
+      return false;
+    }
+    _regionPick.step = step;
+    setGroundMode({ kind: 'region' });
+    updateRegionStatus();
+    return true;
+  }
+  function updateRegionStatus() {
+    if (typeof document === 'undefined' || !_panel) return;
+    var el = _panel.querySelector ? _panel.querySelector('#ed-region-status') : null;
+    if (!el) return;
+    if (_regionPick.step === 1) el.textContent = 'Đang chọn góc 1: bấm xuống đất.';
+    else if (_regionPick.step === 2) {
+      var c = _regionPick.corner1 || { x: 0, z: 0 };
+      el.textContent = 'Góc 1: (' + c.x.toFixed(1) + ', ' + c.z.toFixed(1) + '). Đang chọn góc 2: bấm xuống đất.';
+    } else if (_regionPick.corner1 && _regionPick.corner2) el.textContent = 'Đã chọn 2 góc. Bấm "Thêm vùng" để tạo vùng.';
+    else el.textContent = 'Chưa chọn góc nào.';
+  }
+  function startSplineDraw(kind) {
+    if (SPLINE_KINDS.indexOf(kind) < 0) return false;
+    _splineDraft = { kind: kind, points: [], width: _splineSettings.width };
+    _lastSplineClick = 0;
+    setGroundMode({ kind: 'spline' });
+    updateSplineStatus();
+    return true;
+  }
+  function finishSpline() {
+    if (!_splineDraft) return null;
+    var d = _splineDraft;
+    _splineDraft = null;
+    setGroundMode(null);
+    updateSplineStatus();
+    if (d.points.length < 2) { toast('Spline cần ít nhất 2 điểm.'); return null; }
+    var obj = addSpline(d.kind, d.points, { width: d.width });
+    if (obj) {
+      var msg = 'Đã thêm ' + (SPLINE_NAMES[d.kind] || d.kind) + ' (' + d.points.length + ' điểm).';
+      if (d.kind === 'river' && obj.extra && obj.extra.riverSnapped) msg += ' Đã nối tới ô nước.';
+      toast(msg);
+    }
+    return obj;
+  }
+  function cancelSpline() {
+    if (!_splineDraft && (!_groundMode || _groundMode.kind !== 'spline')) return false;
+    _splineDraft = null;
+    setGroundMode(null);
+    updateSplineStatus();
+    return true;
+  }
+  function cancelGroundMode() {
+    var had = !!_groundMode;
+    _groundMode = null;
+    _splineDraft = null;
+    if (_regionPick) _regionPick.step = 0;
+    _clearGroundHandler();
+    updateSplineStatus(); updateRegionStatus(); updateScatterStatus();
+    return had;
+  }
+  function updateSplineStatus() {
+    if (typeof document === 'undefined' || !_panel) return;
+    var el = _panel.querySelector ? _panel.querySelector('#ed-spline-status') : null;
+    if (el) {
+      el.textContent = _splineDraft
+        ? 'Đang vẽ ' + (SPLINE_NAMES[_splineDraft.kind] || _splineDraft.kind) + ': ' + _splineDraft.points.length + ' điểm — bấm xuống đất thêm điểm, bấm đúp/Enter để xong, Esc để huỷ.'
+        : 'Chưa vẽ spline.';
+    }
+    var btns = _panel.querySelectorAll ? _panel.querySelectorAll('[data-spline-kind]') : [];
+    for (var i = 0; i < btns.length; i++) {
+      if (btns[i].classList) btns[i].classList.toggle('ed-active', !!_splineDraft && btns[i].getAttribute('data-spline-kind') === _splineDraft.kind);
+    }
+  }
+  function updateScatterStatus() {
+    if (typeof document === 'undefined' || !_panel) return;
+    var el = _panel.querySelector ? _panel.querySelector('#ed-scatter-status') : null;
+    var btn = _panel.querySelector ? _panel.querySelector('#ed-scatter-mode') : null;
+    var on = !!(_groundMode && _groundMode.kind === 'scatter');
+    if (el) {
+      el.textContent = on
+        ? 'Cọ rải ĐANG BẬT (' + (SCATTER_NAMES[_scatterSettings.kind] || '') + ' · r=' + _scatterSettings.radius + ' · mật độ ' + _scatterSettings.density + '): chạm xuống đất để rải 1 nhát (tối đa 200/nhát). Bấm lại nút để tắt.'
+        : 'Cọ rải đang tắt. Bật cọ rồi chạm xuống đất để rải 1 nhát (tối đa 200/nhát).';
+    }
+    if (btn) {
+      btn.textContent = on ? '🌿 Tắt cọ rải' : '🌿 Bật cọ rải';
+      if (btn.classList) btn.classList.toggle('ed-active', on);
+    }
+  }
+  function updateMapSizeLine() {
+    if (typeof document === 'undefined' || !_panel) return;
+    var el = _panel.querySelector ? _panel.querySelector('#ed-map-size-v') : null;
+    if (el) el.textContent = String(SIZE);
+    var btns = _panel.querySelectorAll ? _panel.querySelectorAll('[data-map-size]') : [];
+    for (var i = 0; i < btns.length; i++) {
+      if (btns[i].classList) btns[i].classList.toggle('ed-active', Number(btns[i].getAttribute('data-map-size')) === SIZE);
+    }
+  }
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function renderRegionList() {
+    if (typeof document === 'undefined' || !_panel) return;
+    var el = _panel.querySelector ? _panel.querySelector('#ed-region-list') : null;
+    if (!el) return;
+    if (!_regions.length) { el.innerHTML = '<div class="ed-hint">Chưa có vùng nào.</div>'; return; }
+    var html = '';
+    for (var i = 0; i < _regions.length; i++) {
+      var r = _regions[i];
+      html += '<div class="ed-region-row"><span class="ed-region-name">' + escapeHtml(r.name) + ' · ' + (PRESET_NAMES[r.preset] || r.preset) + '</span>' +
+        '<button type="button" data-region-apply="' + r.id + '">Áp preset</button>' +
+        '<button type="button" data-region-del="' + r.id + '" title="Xoá vùng">✕</button></div>';
+    }
+    el.innerHTML = html;
+    var ap = el.querySelectorAll('[data-region-apply]');
+    for (var a = 0; a < ap.length; a++) ap[a].addEventListener('click', function () {
+      var id = this.getAttribute('data-region-apply');
+      if (applyRegionPreset(id)) toast('Đã áp preset vùng.');
+      else toast('Chưa áp được preset (Environment chưa load?).');
+    });
+    var del = el.querySelectorAll('[data-region-del]');
+    for (var d = 0; d < del.length; d++) del[d].addEventListener('click', function () {
+      var id2 = this.getAttribute('data-region-del');
+      if (removeRegion(id2)) { renderRegionList(); toast('Đã xoá vùng.'); }
+    });
+  }
+
+  /* ---- Đợt 6: badge tên vùng + tự đổi preset theo camera. ---- */
+  function ensureRegionBadge() {
+    if (typeof document === 'undefined') return null;
+    var b = document.getElementById('ed-region-badge');
+    if (b) { _badge = b; return b; }
+    var host = document.getElementById('viewport-wrap') || document.getElementById('viewport') || document.body;
+    if (!host) return null;
+    b = document.createElement('div');
+    b.id = 'ed-region-badge';
+    b.className = 'ed-region-badge';
+    b.style.display = 'none';
+    host.appendChild(b);
+    _badge = b;
+    return b;
+  }
+  /* Cập nhật mỗi 300ms từ vị trí camera: chỉ hiện khi camera đang trong
+     1 vùng. Tự đổi preset chỉ gọi 1 lần khi VÀO vùng khác (không gọi
+     lặp mỗi 300ms). */
+  function refreshRegionBadge() {
+    if (!_badge) return;
+    var cam = null;
+    try { if (ED.Viewport && typeof ED.Viewport.getCamera === 'function') cam = ED.Viewport.getCamera(); } catch (e) {}
+    if (!cam || !cam.position || typeof cam.position.x !== 'number') {
+      _badge.style.display = 'none';
+      _lastAutoRegionId = null;
+      return;
+    }
+    var r = regionAt(_regions, cam.position.x, cam.position.z);
+    if (!r) {
+      _badge.style.display = 'none';
+      _lastAutoRegionId = null;
+      return;
+    }
+    _badge.textContent = '📍 ' + r.name + ' · ' + (PRESET_NAMES[r.preset] || r.preset);
+    _badge.style.display = 'block';
+    if (_autoSwitchRegion && _lastAutoRegionId !== r.id) {
+      _lastAutoRegionId = r.id;
+      applyRegionPreset(r);
+    }
+  }
+
   function setUseGroundTexture(v) {
     _useGroundTexture = !!v;
     _groundTextureDirty = true;
@@ -953,19 +1828,37 @@ ED.Terrain = (function () {
     if (!p || !p.terrain) return false;
     if (Array.isArray(p.terrain.heights) && p.terrain.heights.length === COUNT) _heights = p.terrain.heights.slice();
     if (Array.isArray(p.terrain.paints) && p.terrain.paints.length === COUNT) _paints = p.terrain.paints.slice();
+    /* Đợt 6: kích thước map + regions (project cũ không có -> mặc định
+       96 / không có vùng). */
+    var vs = validMapSize(p.terrain.size);
+    if (vs) SIZE = vs;
+    _regions = [];
+    if (Array.isArray(p.terrain.regions)) {
+      for (var i = 0; i < p.terrain.regions.length; i++) {
+        var nr = normalizeRegion(p.terrain.regions[i]);
+        if (nr) {
+          if (!nr.id) nr.id = 'region-' + (++_regionCounter);
+          _regions.push(nr);
+        }
+      }
+      _resyncRegionCounter();
+    }
+    renderRegionList();
+    updateMapSizeLine();
     return true;
   }
   function syncToProject() {
     var p = ED.Core && typeof ED.Core.getProject === 'function' ? ED.Core.getProject() : null;
     if (!p) p = ED.Core && ED.Core.project;
     if (!p) return false;
-    if (!p.terrain) p.terrain = { size: SIZE, segments: SEGMENTS, heights: _heights, paints: _paints };
+    if (!p.terrain) p.terrain = { size: SIZE, segments: SEGMENTS, heights: _heights, paints: _paints, regions: [] };
     p.terrain.size = SIZE; p.terrain.segments = SEGMENTS;
     p.terrain.heights = _heights; p.terrain.paints = _paints;
+    p.terrain.regions = getRegions(); // đợt 6
     return true;
   }
   function defaultTerrain() {
-    return { size: SIZE, segments: SEGMENTS, heights: makeHeights(), paints: makePaints() };
+    return { size: SIZE, segments: SEGMENTS, heights: makeHeights(), paints: makePaints(), regions: [] };
   }
 
   /* ---- Mesh chunk 4×4 (đợt 4): 16 mesh riêng để frustum culling từng
@@ -1386,6 +2279,36 @@ ED.Terrain = (function () {
       '<div class="ed-progress"><div id="ed-flow-fill" class="ed-progress-fill"></div></div>' +
       '<div class="ed-row"><span id="ed-flow-status" class="ed-hint">Chưa chạy.</span></div>' +
       '<div class="ed-row"><span id="ed-lod-info" class="ed-hint">LOD: 16×mức 0 · 0×mức 1 · 0×mức 2</span></div>' +
+      '<div class="ed-panel-title">🗺 Kích thước map (đợt 6)</div>' +
+      '<div class="ed-row"><span class="ed-hint">Hiện tại: <b id="ed-map-size-v">96</b> · lưới vẫn 65×65 đỉnh, chỉ đổi tỉ lệ ô (1.5 / 2 / 3).</span></div>' +
+      '<div class="ed-row"><button type="button" data-map-size="96">96</button><button type="button" data-map-size="128">128</button><button type="button" data-map-size="192">192</button></div>' +
+      '<div class="ed-panel-title">🗺 Vùng (Regions)</div>' +
+      '<div class="ed-row"><input id="ed-region-name" type="text" value="Vùng 1" maxlength="30" placeholder="Tên vùng"></div>' +
+      '<div class="ed-row"><label>Preset</label><select id="ed-region-preset">' +
+      '<option value="thanh-co">Thành cổ</option><option value="rung-truc">Rừng trúc</option>' +
+      '<option value="nui-tuyet">Núi tuyết</option><option value="chua">Chùa</option><option value="vo-dai">Võ đài</option>' +
+      '</select></div>' +
+      '<div class="ed-row"><button type="button" id="ed-region-pick1">📍 Chọn góc 1</button><button type="button" id="ed-region-pick2">📍 Chọn góc 2</button></div>' +
+      '<div class="ed-row"><span id="ed-region-status" class="ed-hint">Chưa chọn góc nào.</span></div>' +
+      '<div class="ed-row"><button type="button" id="ed-region-add">➕ Thêm vùng</button></div>' +
+      '<div id="ed-region-list"></div>' +
+      '<div class="ed-row ed-check-row"><label><input id="ed-region-autoswitch" type="checkbox"> Tự đổi preset khi vào vùng</label></div>' +
+      '<div class="ed-panel-title">〰️ Spline: đường / sông / hàng rào</div>' +
+      '<div class="ed-row"><button type="button" data-spline-kind="road">🛤 Đường đi</button><button type="button" data-spline-kind="river">🌊 Sông</button><button type="button" data-spline-kind="fence">🪵 Hàng rào</button></div>' +
+      '<div class="ed-row"><label>Rộng <span id="ed-spline-width-v">2</span></label>' +
+      '<input id="ed-spline-width" type="range" min="0.5" max="10" step="0.5" value="2"></div>' +
+      '<div class="ed-row"><span id="ed-spline-status" class="ed-hint">Chưa vẽ spline.</span></div>' +
+      '<div class="ed-row"><button type="button" id="ed-spline-finish">✓ Xong (Enter)</button><button type="button" id="ed-spline-cancel">✕ Huỷ (Esc)</button></div>' +
+      '<div class="ed-row"><span class="ed-hint">Bấm nút loại spline rồi bấm nhiều điểm xuống đất. Bấm đúp / Enter để kết thúc, Esc để huỷ. Đường đi: làm phẳng + tô đất dọc spline. Sông: đầu mút gần ô nước (≤3 ô) sẽ tự nối tới ô nước đó.</span></div>' +
+      '<div class="ed-panel-title">🌿 Cọ rải (Scatter)</div>' +
+      '<div class="ed-row"><label>Loại</label><select id="ed-scatter-kind"><option value="tree">Cây</option><option value="rock">Đá</option><option value="grass">Cỏ</option></select></div>' +
+      '<div class="ed-row"><label>Bán kính <span id="ed-scatter-radius-v">4</span></label>' +
+      '<input id="ed-scatter-radius" type="range" min="1" max="10" step="0.5" value="4"></div>' +
+      '<div class="ed-row"><label>Mật độ <span id="ed-scatter-density-v">10</span></label>' +
+      '<input id="ed-scatter-density" type="range" min="1" max="50" step="1" value="10"></div>' +
+      '<div class="ed-row"><label>Seed</label><input id="ed-scatter-seed" type="number" value="1"><button type="button" id="ed-scatter-newseed">🎲 Đổi seed</button></div>' +
+      '<div class="ed-row"><button type="button" id="ed-scatter-mode">🌿 Bật cọ rải</button><button type="button" id="ed-scatter-center">🎯 Rải tại giữa màn hình</button></div>' +
+      '<div class="ed-row"><span id="ed-scatter-status" class="ed-hint">Cọ rải đang tắt. Bật cọ rồi chạm xuống đất để rải 1 nhát (tối đa 200/nhát).</span></div>' +
       '<div class="ed-hint">Kéo chuột trên viewport ở chế độ Địa hình để nâng/hạ đất; giữ để tô. Heightmap: ảnh xám, trắng = cao nhất, đen = thấp nhất; ảnh lớn tự thu nhỏ về 512px.</div>';
     panel.innerHTML = h;
     var mode = panel.querySelector('#ed-brush-mode');
@@ -1620,10 +2543,119 @@ ED.Terrain = (function () {
         flowStatus.textContent = 'Đã hủy (địa hình giữ nguyên).';
       }
     });
+
+    /* ---- Đợt 6: kích thước map / regions / spline / scatter. ---- */
+    var sizeBtns = panel.querySelectorAll('[data-map-size]');
+    for (var sb = 0; sb < sizeBtns.length; sb++) {
+      sizeBtns[sb].addEventListener('click', function () {
+        var before = getSize();
+        setSize(Number(this.getAttribute('data-map-size')));
+        if (getSize() !== before) toast('Đã đổi kích thước map thành ' + getSize() + ' (lưới vẫn 65×65 đỉnh).');
+        updateMapSizeLine();
+      });
+    }
+    updateMapSizeLine();
+    var regionName = panel.querySelector('#ed-region-name');
+    var regionPreset = panel.querySelector('#ed-region-preset');
+    var regionAuto = panel.querySelector('#ed-region-autoswitch');
+    regionAuto.checked = _autoSwitchRegion;
+    regionAuto.addEventListener('change', function () {
+      setAutoSwitchRegion(regionAuto.checked);
+      toast(regionAuto.checked ? 'Đã bật tự đổi preset khi vào vùng.' : 'Đã tắt tự đổi preset khi vào vùng.');
+    });
+    panel.querySelector('#ed-region-pick1').addEventListener('click', function () { startRegionPick(1); });
+    panel.querySelector('#ed-region-pick2').addEventListener('click', function () { startRegionPick(2); });
+    panel.querySelector('#ed-region-add').addEventListener('click', function () {
+      if (!_regionPick || !_regionPick.corner1 || !_regionPick.corner2) { toast('Chọn góc 1 rồi góc 2 trước (bấm xuống đất).'); return; }
+      var r = addRegion(regionName.value, _regionPick.corner1.x, _regionPick.corner1.z, _regionPick.corner2.x, _regionPick.corner2.z, regionPreset.value);
+      if (!r) { toast('Không thêm được vùng (2 góc trùng nhau?).'); return; }
+      _regionPick = { step: 0, corner1: null, corner2: null };
+      setGroundMode(null);
+      updateRegionStatus();
+      renderRegionList();
+      regionName.value = 'Vùng ' + (_regions.length + 1);
+      toast('Đã thêm vùng ' + r.name + '.');
+    });
+    renderRegionList();
+    updateRegionStatus();
+    var splineWidth = panel.querySelector('#ed-spline-width');
+    var splineWidthLab = panel.querySelector('#ed-spline-width-v');
+    splineWidth.addEventListener('input', function () {
+      _splineSettings.width = clamp(Number(splineWidth.value) || 2, 0.5, 10);
+      splineWidthLab.textContent = String(_splineSettings.width);
+      if (_splineDraft) _splineDraft.width = _splineSettings.width;
+    });
+    var splineBtns = panel.querySelectorAll('[data-spline-kind]');
+    for (var sp = 0; sp < splineBtns.length; sp++) {
+      splineBtns[sp].addEventListener('click', function () {
+        startSplineDraw(this.getAttribute('data-spline-kind'));
+      });
+    }
+    panel.querySelector('#ed-spline-finish').addEventListener('click', function () { finishSpline(); });
+    panel.querySelector('#ed-spline-cancel').addEventListener('click', function () { cancelSpline(); });
+    updateSplineStatus();
+    var scatterKind = panel.querySelector('#ed-scatter-kind');
+    var scatterRadius = panel.querySelector('#ed-scatter-radius');
+    var scatterRadiusLab = panel.querySelector('#ed-scatter-radius-v');
+    var scatterDensity = panel.querySelector('#ed-scatter-density');
+    var scatterDensityLab = panel.querySelector('#ed-scatter-density-v');
+    var scatterSeed = panel.querySelector('#ed-scatter-seed');
+    scatterKind.value = _scatterSettings.kind;
+    scatterKind.addEventListener('change', function () { _scatterSettings.kind = scatterKind.value; });
+    scatterRadius.addEventListener('input', function () {
+      _scatterSettings.radius = clamp(Number(scatterRadius.value) || 4, 1, 10);
+      scatterRadiusLab.textContent = String(_scatterSettings.radius);
+    });
+    scatterDensity.addEventListener('input', function () {
+      _scatterSettings.density = clamp(Math.round(Number(scatterDensity.value)) || 10, 1, 50);
+      scatterDensityLab.textContent = String(_scatterSettings.density);
+    });
+    scatterSeed.addEventListener('change', function () {
+      var s = Math.floor(Number(scatterSeed.value));
+      _scatterSettings.seed = isFinite(s) ? (s >>> 0) : 1;
+    });
+    panel.querySelector('#ed-scatter-newseed').addEventListener('click', function () {
+      _scatterSettings.seed = Math.floor(Math.random() * 1000000000) >>> 0;
+      scatterSeed.value = String(_scatterSettings.seed);
+    });
+    panel.querySelector('#ed-scatter-mode').addEventListener('click', function () {
+      if (_groundMode && _groundMode.kind === 'scatter') { setGroundMode(null); updateScatterStatus(); }
+      else { setGroundMode({ kind: 'scatter' }); updateScatterStatus(); toast('Cọ rải BẬT: chạm xuống đất để rải 1 nhát.'); }
+    });
+    panel.querySelector('#ed-scatter-center').addEventListener('click', function () {
+      var c = null;
+      try { if (ED.Viewport && typeof ED.Viewport.getCameraFront === 'function') c = ED.Viewport.getCameraFront(8); } catch (e) {}
+      if (!c) {
+        try {
+          var cam = ED.Viewport && typeof ED.Viewport.getCamera === 'function' ? ED.Viewport.getCamera() : null;
+          if (cam && cam.position) c = [cam.position.x, cam.position.z];
+        } catch (e2) {}
+      }
+      if (!c) c = [0, 0];
+      var so = addScatter(_scatterSettings.kind, c[0], c[1], _scatterSettings);
+      if (so) toast('Đã rải ' + so.extra.count + ' ' + (SCATTER_NAMES[_scatterSettings.kind] || '') + ' tại giữa màn hình.');
+    });
+    updateScatterStatus();
+    /* Badge tên vùng + phím tắt spline (Enter xong, Esc huỷ). */
+    ensureRegionBadge();
+    if (typeof setInterval !== 'undefined' && !_badgeTimer) {
+      _badgeTimer = setInterval(refreshRegionBadge, 300);
+    }
+    if (typeof window !== 'undefined' && window.addEventListener && !_keyBound) {
+      _keyBound = true;
+      window.addEventListener('keydown', function (e) {
+        var tag = (e.target && e.target.tagName) || '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable)) return;
+        if (e.key === 'Enter' && _splineDraft) { e.preventDefault(); finishSpline(); }
+        else if (e.key === 'Escape') { e.preventDefault(); cancelGroundMode(); }
+      });
+    }
   }
 
   return {
-    SIZE: SIZE, SEGMENTS: SEGMENTS, COUNT: COUNT, PAINT_NAMES: PAINT_NAMES,
+    get SIZE() { return SIZE; }, // đợt 6: live (đọc sau setSize vẫn đúng)
+    set SIZE(v) { setSize(v); },
+    SEGMENTS: SEGMENTS, COUNT: COUNT, PAINT_NAMES: PAINT_NAMES,
     PAINT_COLORS: PAINT_COLORS,
     CHUNK_COUNT: CHUNK_COUNT, CHUNK_SEGMENTS: CHUNK_SEGMENTS, CHUNK_VERTS: CHUNK_VERTS,
     CHUNK_TOTAL: CHUNK_TOTAL, TEXTURE_SIZE: TEXTURE_SIZE, SNOW_LINE: SNOW_LINE,
@@ -1665,7 +2697,29 @@ ED.Terrain = (function () {
     syncFromProject: syncFromProject, syncToProject: syncToProject,
     defaultTerrain: defaultTerrain, rebuildMesh: rebuildMesh, getMesh: getMesh,
     showBrushPreview: showBrushPreview, hideBrushPreview: hideBrushPreview,
-    setBrush: setBrush, getBrush: getBrush, init: init
+    setBrush: setBrush, getBrush: getBrush,
+    /* Đợt 6: map lớn / regions / spline / scatter. */
+    MAP_SIZES: MAP_SIZES, getSize: getSize, setSize: setSize,
+    REGION_PRESETS: REGION_PRESETS, PRESET_NAMES: PRESET_NAMES,
+    regionAt: regionAt, getRegions: getRegions, getRegion: getRegion,
+    addRegion: addRegion, removeRegion: removeRegion,
+    applyRegionPreset: applyRegionPreset,
+    setAutoSwitchRegion: setAutoSwitchRegion, getAutoSwitchRegion: getAutoSwitchRegion,
+    refreshRegionBadge: refreshRegionBadge,
+    SPLINE_KINDS: SPLINE_KINDS, SPLINE_NAMES: SPLINE_NAMES,
+    splineNearestPoint: splineNearestPoint, splineFlatten: splineFlatten,
+    roadCells: roadCells, extendRiverToWater: extendRiverToWater,
+    resamplePolyline: resamplePolyline,
+    addSpline: addSpline, buildSplineGroup: buildSplineGroup, tick: tick,
+    getSplineDraft: getSplineDraft,
+    startSplineDraw: startSplineDraw, finishSpline: finishSpline, cancelSpline: cancelSpline,
+    SCATTER_KINDS: SCATTER_KINDS, SCATTER_NAMES: SCATTER_NAMES,
+    scatterPositions: scatterPositions, scatterStrokeCount: scatterStrokeCount,
+    addScatter: addScatter, buildScatterGroup: buildScatterGroup,
+    getScatterSettings: getScatterSettings,
+    setGroundMode: setGroundMode, getGroundMode: getGroundMode,
+    startRegionPick: startRegionPick, cancelGroundMode: cancelGroundMode,
+    init: init
   };
 })();
 
