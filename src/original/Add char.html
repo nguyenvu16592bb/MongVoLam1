@@ -1,0 +1,1158 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mộng Võ Lâm 3D - Chiêu Mộ Đệ Tử</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- PixiJS (cho hiệu ứng hạt UI 2D) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
+    <!-- Google Fonts: Font chữ mang phong cách kiếm hiệp cổ trang -->
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Noto+Serif:ital,wght@0,600;0,700;0,900;1,600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #090604;
+            font-family: 'Noto Serif', serif;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* Khung game chuẩn tỷ lệ 16:9 co giãn thông minh */
+        #game-viewport {
+            position: relative;
+            width: 100vw;
+            height: 56.25vw; /* 16:9 */
+            max-height: 100vh;
+            max-width: 177.78vh; /* 16:9 */
+            background: #1a110a;
+            box-shadow: 0 0 60px rgba(0, 0, 0, 0.95), 0 0 20px rgba(212, 175, 55, 0.3);
+            overflow: hidden;
+            border: 2px solid #5c3a18;
+        }
+
+        #three-canvas, #pixi-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #three-canvas { z-index: 1; }
+        #pixi-canvas { z-index: 5; pointer-events: none; }
+
+        /* Lớp giao diện UI chính */
+        #ui-layer {
+            position: absolute;
+            inset: 0;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            pointer-events: none;
+        }
+
+        .interactive {
+            pointer-events: auto;
+        }
+
+        /* Chữ nổi viền đen chuẩn game kiếm hiệp 2010s */
+        .wuxia-text {
+            text-shadow: 
+                -1.5px -1.5px 0 #000,  
+                 1.5px -1.5px 0 #000,
+                -1.5px  1.5px 0 #000,
+                 1.5px  1.5px 0 #000,
+                 0px 3px 5px rgba(0,0,0,0.9);
+        }
+
+        .gold-gradient-text {
+            background: linear-gradient(180deg, #fff6b3 0%, #ffd700 45%, #d97706 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.95));
+        }
+
+        /* Marquee thông báo chạy ngang */
+        @keyframes marquee {
+            0% { transform: translateX(100%); }
+            100% { transform: translateX(-100%); }
+        }
+        .animate-marquee {
+            display: inline-block;
+            white-space: nowrap;
+            animation: marquee 22s linear infinite;
+        }
+
+        /* Khung thẻ bài Chiêu Mộ phong cách Trung Hoa cổ điển */
+        .recruit-card {
+            background: linear-gradient(180deg, rgba(16, 46, 54, 0.92) 0%, rgba(11, 29, 36, 0.96) 60%, rgba(25, 18, 12, 0.98) 100%);
+            border: 3px solid #c84b31;
+            box-shadow: 
+                inset 0 0 20px rgba(0, 210, 255, 0.25),
+                0 10px 25px rgba(0, 0, 0, 0.85),
+                0 0 0 2px #f59e0b;
+            border-radius: 12px;
+            position: relative;
+            transition: transform 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.25s ease;
+        }
+        .recruit-card:hover {
+            transform: translateY(-6px) scale(1.02);
+            box-shadow: 
+                inset 0 0 30px rgba(255, 215, 0, 0.4),
+                0 15px 35px rgba(0, 0, 0, 0.95),
+                0 0 18px #fbbf24;
+        }
+
+        /* Họa tiết góc thẻ bài */
+        .card-corner {
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            border: 3px solid #fbbf24;
+            pointer-events: none;
+        }
+        .corner-tl { top: -3px; left: -3px; border-right: none; border-bottom: none; border-top-left-radius: 10px; }
+        .corner-tr { top: -3px; right: -3px; border-left: none; border-bottom: none; border-top-right-radius: 10px; }
+        .corner-bl { bottom: -3px; left: -3px; border-right: none; border-top: none; border-bottom-left-radius: 10px; }
+        .corner-br { bottom: -3px; right: -3px; border-left: none; border-top: none; border-bottom-right-radius: 10px; }
+
+        /* Viên ngọc phẩm chất Bính / Ất / Giáp */
+        .orb-binh {
+            background: radial-gradient(circle at 30% 30%, #6ee7b7, #059669 60%, #064e3b 100%);
+            box-shadow: 0 0 10px #10b981, inset 0 2px 4px rgba(255,255,255,0.6);
+        }
+        .orb-at {
+            background: radial-gradient(circle at 30% 30%, #93c5fd, #2563eb 60%, #1e3a8a 100%);
+            box-shadow: 0 0 10px #3b82f6, inset 0 2px 4px rgba(255,255,255,0.6);
+        }
+        .orb-giap {
+            background: radial-gradient(circle at 30% 30%, #e9d5ff, #9333ea 60%, #4c1d95 100%);
+            box-shadow: 0 0 12px #a855f7, inset 0 2px 4px rgba(255,255,255,0.7);
+        }
+
+        /* Nút bấm Thu Nhận hoàng kim */
+        .btn-thunhan {
+            background: linear-gradient(180deg, #92581d 0%, #5e340b 50%, #3d2004 100%);
+            border: 2px solid #fbbf24;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.8), inset 0 1px 2px rgba(255, 243, 176, 0.6);
+            transition: all 0.15s ease;
+        }
+        .btn-thunhan:hover {
+            background: linear-gradient(180deg, #b87328 0%, #7a440f 50%, #522b06 100%);
+            box-shadow: 0 0 15px rgba(251, 191, 36, 0.8), inset 0 1px 4px #fff;
+            transform: scale(1.04);
+        }
+        .btn-thunhan:active {
+            transform: scale(0.96);
+        }
+
+        /* Nút menu dưới đáy */
+        .nav-item {
+            transition: transform 0.2s ease, filter 0.2s ease;
+        }
+        .nav-item:hover {
+            transform: translateY(-4px) scale(1.08);
+            filter: brightness(1.2) drop-shadow(0 0 8px rgba(251, 191, 36, 0.8));
+        }
+
+        /* Hiệu ứng nhịp đập nhẹ cho dấu chấm hỏi */
+        @keyframes pulseGlow {
+            0%, 100% { transform: scale(1); filter: drop-shadow(0 0 8px rgba(255,255,255,0.6)); }
+            50% { transform: scale(1.08); filter: drop-shadow(0 0 18px rgba(251,191,36,0.95)); }
+        }
+        .question-pulse {
+            animation: pulseGlow 2.5s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-viewport">
+    <!-- Canvas 3D Bối cảnh & Nhân vật cỡ lớn -->
+    <canvas id="three-canvas"></canvas>
+    <!-- Canvas 2D Hiệu ứng hạt lửa & linh khí -->
+    <canvas id="pixi-canvas"></canvas>
+
+    <!-- Lớp giao diện HUD & Chiêu mộ -->
+    <div id="ui-layer">
+        
+        <!-- PHẦN TRÊN: THÔNG TIN NHÂN VẬT, KÊNH THẾ GIỚI & TIỀN TỆ -->
+        <div class="w-full flex flex-col">
+            <!-- Thanh thông báo chạy ngang trên cùng -->
+            <div class="w-full bg-black/75 border-b border-amber-500/40 py-0.5 px-3 overflow-hidden flex items-center text-xs md:text-sm">
+                <span class="text-amber-400 font-bold mr-2 shrink-0 wuxia-text">[Hệ Thống]</span>
+                <div class="w-full overflow-hidden">
+                    <div class="animate-marquee text-amber-100 wuxia-text">
+                        Chúc mừng đại hiệp <span class="text-yellow-300 font-bold">Tào Lao Bí Đao</span> xông phá Hắc Mộc Nhai và xuất sắc vượt ải 10! &nbsp;&nbsp;&bull;&nbsp;&nbsp; 
+                        Chúc mừng <span class="text-purple-300 font-bold">Hoa Thiên Cốt</span> chiêu mộ thành công đệ tử <span class="text-purple-400 font-bold">Đông Phương Bất Bại (Giáp)</span> tại Vạn Kiếm Sơn Trang!
+                    </div>
+                </div>
+            </div>
+
+            <!-- Thanh HUD Thông tin người chơi & Tài nguyên -->
+            <div class="w-full flex justify-between items-start px-3 pt-1.5">
+                <!-- Góc Trái: Avatar, Cấp độ, Tên, Thanh EXP -->
+                <div class="flex items-center space-x-2 interactive cursor-pointer group" onclick="showToast('Đang mở bảng thông tin nhân vật: Hoa Thiên Cốt (Cấp 179)')">
+                    <!-- Huy hiệu Cấp 179 -->
+                    <div class="relative w-14 h-16 md:w-16 md:h-20 flex flex-col items-center justify-center bg-gradient-to-b from-red-700 via-red-900 to-amber-950 border-2 border-amber-400 rounded-b-xl shadow-lg">
+                        <div class="text-[10px] text-amber-200 uppercase font-bold tracking-wider">Cấp</div>
+                        <div class="text-xl md:text-2xl font-black gold-gradient-text leading-none">179</div>
+                        <div class="w-10 h-1 bg-amber-400 rounded-full mt-1"></div>
+                    </div>
+
+                    <!-- Khung Tên & Lực Chiến -->
+                    <div class="bg-gradient-to-r from-stone-900/90 via-stone-900/75 to-transparent border border-amber-500/50 rounded-r-xl px-3 py-1.5 pr-8 shadow-md">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-amber-300 font-bold text-sm md:text-base wuxia-text">Hoa Thiên Cốt</span>
+                            <span class="text-[11px] bg-red-800/80 border border-amber-400/60 text-amber-200 px-1.5 rounded">Minh Chủ</span>
+                        </div>
+                        <!-- Thanh Thể Lực / Kinh Nghiệm -->
+                        <div class="w-40 md:w-52 h-3 bg-black/80 rounded-full border border-amber-600/60 mt-1 overflow-hidden relative">
+                            <div class="h-full bg-gradient-to-r from-red-600 via-orange-500 to-yellow-400 w-[82%]"></div>
+                            <span class="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white wuxia-text">521340 / 635000</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Giữa trên: Bảng tên nhân vật 3D bay lơ lửng (Giống ảnh 1) -->
+                <div class="hidden sm:flex flex-col items-center mt-1 pointer-events-none">
+                    <div class="bg-gradient-to-r from-transparent via-amber-950/90 to-transparent border-y border-amber-400 px-8 py-0.5 flex items-center space-x-2 shadow-lg">
+                        <span class="w-2.5 h-2.5 rounded-full bg-yellow-300 shadow-[0_0_8px_#fde047]"></span>
+                        <span class="text-yellow-300 font-bold text-xs md:text-sm tracking-wide wuxia-text">Kinh Thế Hãi Tục</span>
+                        <span class="w-2.5 h-2.5 rounded-full bg-yellow-300 shadow-[0_0_8px_#fde047]"></span>
+                    </div>
+                    <div class="flex items-center space-x-1 mt-0.5">
+                        <span class="text-purple-400 text-xs">🐉</span>
+                        <span class="text-amber-200 font-bold text-sm md:text-base wuxia-text">Hoa Thiên Cốt</span>
+                    </div>
+                </div>
+
+                <!-- Góc Phải: Bạc, KNB (Vàng) & VIP 2 -->
+                <div class="flex items-center space-x-2 interactive">
+                    <div class="flex flex-col space-y-1">
+                        <!-- Bạc -->
+                        <div class="flex items-center justify-between bg-black/75 border border-amber-500/50 rounded-full px-3 py-0.5 min-w-[125px] md:min-w-[150px]">
+                            <span class="text-xs text-slate-300 font-bold">Bạc:</span>
+                            <span id="silver-display" class="text-xs md:text-sm font-bold text-white wuxia-text">2,520,490</span>
+                        </div>
+                        <!-- Nguyên Bảo (KNB) -->
+                        <div class="flex items-center justify-between bg-black/75 border border-amber-500/50 rounded-full px-3 py-0.5 min-w-[125px] md:min-w-[150px]">
+                            <div class="flex items-center space-x-1">
+                                <!-- Icon Thỏi Vàng SVG -->
+                                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none">
+                                    <path d="M4 15L6 9H18L20 15C20 17.5 16.5 19 12 19C7.5 19 4 17.5 4 15Z" fill="#F59E0B" stroke="#FEF08A" stroke-width="1.5"/>
+                                    <ellipse cx="12" cy="9" rx="5" ry="2.5" fill="#FDE047"/>
+                                </svg>
+                                <span class="text-xs text-amber-300 font-bold">KNB:</span>
+                            </div>
+                            <span id="gold-display" class="text-xs md:text-sm font-bold text-yellow-300 wuxia-text">52,910</span>
+                        </div>
+                    </div>
+
+                    <!-- Huy hiệu VIP 2 -->
+                    <div onclick="showToast('Đặc quyền VIP 2: Tăng 20% tỷ lệ chiêu mộ đệ tử phẩm chất Giáp!')" class="cursor-pointer bg-gradient-to-b from-yellow-400 via-amber-600 to-red-900 border-2 border-yellow-200 rounded-lg px-2.5 py-1.5 shadow-lg flex flex-col items-center justify-center hover:scale-105 transition">
+                        <span class="text-[10px] font-black text-red-950 leading-none">ĐẶC QUYỀN</span>
+                        <span class="text-base md:text-lg font-black text-white italic tracking-tighter wuxia-text leading-tight">VIP2</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PHẦN GIỮA: KHU VỰC 3 THẺ BÀI CHIÊU MỘ ĐỆ TỬ (THAM BÁI) -->
+        <!-- Bố trí cân đối tỷ lệ 16:9 để vừa thấy rõ nhân vật 3D cỡ lớn phía trên/sau vừa thao tác thẻ bài mượt mà -->
+        <div class="w-full flex-1 flex items-end justify-center pb-2 px-4 md:px-12">
+            <div class="grid grid-cols-3 gap-3 md:gap-7 w-full max-w-4xl h-[54%] min-h-[250px] max-h-[340px] interactive">
+                
+                <!-- THẺ 1: VẠN LÝ ĐỘC HÀNH (Miễn phí / Bính - Ất) -->
+                <div class="recruit-card flex flex-col items-center justify-between p-2 md:p-3">
+                    <div class="card-corner corner-tl"></div>
+                    <div class="card-corner corner-tr"></div>
+                    <div class="card-corner corner-bl"></div>
+                    <div class="card-corner corner-br"></div>
+
+                    <!-- Tiêu đề gói -->
+                    <div class="text-xs md:text-sm font-bold text-emerald-300 tracking-wide wuxia-text uppercase">
+                        Tầm Sư Học Đạo
+                    </div>
+
+                    <!-- Bóng đen đệ tử đội nón lá + Dấu ? -->
+                    <div class="relative w-20 h-20 md:w-24 md:h-24 flex items-center justify-center my-0.5">
+                        <div class="absolute inset-0 bg-emerald-500/20 rounded-full blur-md"></div>
+                        <svg class="w-full h-full drop-shadow-[0_0_8px_rgba(16,185,129,0.6)]" viewBox="0 0 100 100">
+                            <!-- Nón lá kiếm khách -->
+                            <path d="M10 42 L50 18 L90 42 Q50 50 10 42 Z" fill="#071318" stroke="#10b981" stroke-width="1.5"/>
+                            <!-- Thân người -->
+                            <path d="M28 45 Q22 72 18 92 L82 92 Q78 72 72 45 Z" fill="#071318"/>
+                            <!-- Áo choàng bay -->
+                            <path d="M24 55 L12 85 L28 85 Z" fill="#071318"/>
+                        </svg>
+                        <span class="absolute text-3xl md:text-4xl font-black text-white wuxia-text question-pulse">?</span>
+                    </div>
+
+                    <!-- Phẩm chất đệ tử -->
+                    <div class="flex flex-col items-center w-full">
+                        <span class="text-[11px] md:text-xs text-amber-200 font-semibold wuxia-text mb-1">Đệ tử phẩm chất</span>
+                        <div class="flex items-center space-x-3">
+                            <div class="w-7 h-7 md:w-8 md:h-8 rounded-full orb-binh flex items-center justify-center border border-emerald-200">
+                                <span class="text-[10px] md:text-xs font-bold text-white wuxia-text">Bính</span>
+                            </div>
+                            <div class="w-7 h-7 md:w-8 md:h-8 rounded-full orb-at flex items-center justify-center border border-blue-200">
+                                <span class="text-[10px] md:text-xs font-bold text-white wuxia-text">Ất</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Trạng thái miễn phí -->
+                    <div class="text-center my-1">
+                        <p id="card1-status" class="text-[11px] md:text-xs text-emerald-300 font-bold wuxia-text">
+                            Miễn phí! Đã lấy <span id="free-count">0</span>/5 lần
+                        </p>
+                    </div>
+
+                    <!-- Nút Thu Nhận -->
+                    <button onclick="recruitDisciple(1)" class="btn-thunhan w-full py-1.5 md:py-2 rounded-lg text-amber-200 font-bold text-xs md:text-base tracking-wider wuxia-text cursor-pointer">
+                        Thu Nhận
+                    </button>
+                </div>
+
+                <!-- THẺ 2: BÁCH LÝ THIÊU NHẤT (200 KNB / Bính - Ất - Giáp) -->
+                <div class="recruit-card flex flex-col items-center justify-between p-2 md:p-3">
+                    <div class="card-corner corner-tl"></div>
+                    <div class="card-corner corner-tr"></div>
+                    <div class="card-corner corner-bl"></div>
+                    <div class="card-corner corner-br"></div>
+
+                    <div class="text-xs md:text-sm font-bold text-sky-300 tracking-wide wuxia-text uppercase">
+                        Danh Môn Cao Đồ
+                    </div>
+
+                    <!-- Bóng đen hiệp khách tóc búi cao + Dấu ? -->
+                    <div class="relative w-20 h-20 md:w-24 md:h-24 flex items-center justify-center my-0.5">
+                        <div class="absolute inset-0 bg-blue-500/25 rounded-full blur-md"></div>
+                        <svg class="w-full h-full drop-shadow-[0_0_10px_rgba(59,130,246,0.7)]" viewBox="0 0 100 100">
+                            <!-- Búi tóc & dải lụa -->
+                            <circle cx="50" cy="22" r="9" fill="#071318" stroke="#3b82f6" stroke-width="1.5"/>
+                            <path d="M58 20 Q78 15 84 32 Q72 28 58 25" fill="#071318"/>
+                            <!-- Đầu & Vai -->
+                            <circle cx="50" cy="36" r="13" fill="#071318"/>
+                            <path d="M24 92 Q26 54 50 50 Q74 54 76 92 Z" fill="#071318"/>
+                            <!-- Chuôi kiếm sau lưng -->
+                            <rect x="66" y="18" width="5" height="35" transform="rotate(28 66 18)" fill="#071318" stroke="#3b82f6" stroke-width="1"/>
+                        </svg>
+                        <span class="absolute text-3xl md:text-4xl font-black text-white wuxia-text question-pulse">?</span>
+                    </div>
+
+                    <!-- Phẩm chất đệ tử -->
+                    <div class="flex flex-col items-center w-full">
+                        <span class="text-[11px] md:text-xs text-amber-200 font-semibold wuxia-text mb-1">Đệ tử phẩm chất</span>
+                        <div class="flex items-center space-x-2">
+                            <div class="w-7 h-7 md:w-8 md:h-8 rounded-full orb-binh flex items-center justify-center border border-emerald-200">
+                                <span class="text-[10px] md:text-xs font-bold text-white wuxia-text">Bính</span>
+                            </div>
+                            <div class="w-7 h-7 md:w-8 md:h-8 rounded-full orb-at flex items-center justify-center border border-blue-200">
+                                <span class="text-[10px] md:text-xs font-bold text-white wuxia-text">Ất</span>
+                            </div>
+                            <div class="w-7 h-7 md:w-8 md:h-8 rounded-full orb-giap flex items-center justify-center border border-purple-200">
+                                <span class="text-[10px] md:text-xs font-bold text-white wuxia-text">Giáp</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Đếm ngược & Giá 200 KNB -->
+                    <div class="text-center leading-tight">
+                        <p class="text-[10px] md:text-[11px] text-slate-200 wuxia-text">
+                            <span id="timer-2" class="text-amber-300 font-bold">15:43:29</span> nữa miễn phí
+                        </p>
+                        <div class="flex items-center justify-center space-x-1 mt-0.5">
+                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none">
+                                <path d="M4 15L6 9H18L20 15C20 17.5 16.5 19 12 19C7.5 19 4 17.5 4 15Z" fill="#F59E0B" stroke="#FEF08A" stroke-width="1.5"/>
+                                <ellipse cx="12" cy="9" rx="5" ry="2.5" fill="#FDE047"/>
+                            </svg>
+                            <span class="text-xs md:text-sm font-black text-yellow-300 wuxia-text">200</span>
+                        </div>
+                    </div>
+
+                    <!-- Nút Thu Nhận -->
+                    <button onclick="recruitDisciple(2)" class="btn-thunhan w-full py-1.5 md:py-2 rounded-lg text-amber-200 font-bold text-xs md:text-base tracking-wider wuxia-text cursor-pointer">
+                        Thu Nhận
+                    </button>
+                </div>
+
+                <!-- THẺ 3: VẠN LÝ ĐỘC HÀNH - TÔNG SƯ (500 KNB / Ất - Giáp) -->
+                <div class="recruit-card flex flex-col items-center justify-between p-2 md:p-3 border-purple-500">
+                    <div class="card-corner corner-tl"></div>
+                    <div class="card-corner corner-tr"></div>
+                    <div class="card-corner corner-bl"></div>
+                    <div class="card-corner corner-br"></div>
+
+                    <div class="text-xs md:text-sm font-bold text-purple-300 tracking-wide wuxia-text uppercase">
+                        Nhất Đại Tông Sư
+                    </div>
+
+                    <!-- Bóng đen đại cao thủ áo choàng uy nghiêm + Dấu ? -->
+                    <div class="relative w-20 h-20 md:w-24 md:h-24 flex items-center justify-center my-0.5">
+                        <div class="absolute inset-0 bg-purple-600/35 rounded-full blur-md"></div>
+                        <svg class="w-full h-full drop-shadow-[0_0_12px_rgba(168,85,247,0.85)]" viewBox="0 0 100 100">
+                            <!-- Mũ quan / Mão tông sư -->
+                            <path d="M36 26 L42 14 L58 14 L64 26 Z" fill="#12071f" stroke="#c084fc" stroke-width="1.5"/>
+                            <!-- Tóc dài bay -->
+                            <path d="M32 28 Q16 55 15 92 L85 92 Q84 55 68 28 Z" fill="#12071f" stroke="#9333ea" stroke-width="1"/>
+                            <!-- Vai rộng uy phong -->
+                            <path d="M18 92 Q22 50 50 46 Q78 50 82 92 Z" fill="#0d0517"/>
+                        </svg>
+                        <span class="absolute text-3xl md:text-4xl font-black text-white wuxia-text question-pulse">?</span>
+                    </div>
+
+                    <!-- Phẩm chất đệ tử -->
+                    <div class="flex flex-col items-center w-full">
+                        <span class="text-[11px] md:text-xs text-amber-200 font-semibold wuxia-text mb-1">Đệ tử phẩm chất</span>
+                        <div class="flex items-center space-x-3">
+                            <div class="w-7 h-7 md:w-8 md:h-8 rounded-full orb-at flex items-center justify-center border border-blue-200">
+                                <span class="text-[10px] md:text-xs font-bold text-white wuxia-text">Ất</span>
+                            </div>
+                            <div class="w-7 h-7 md:w-8 md:h-8 rounded-full orb-giap flex items-center justify-center border border-purple-200">
+                                <span class="text-[10px] md:text-xs font-bold text-white wuxia-text">Giáp</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Đếm ngược & Giá 500 KNB -->
+                    <div class="text-center leading-tight">
+                        <p class="text-[10px] md:text-[11px] text-slate-200 wuxia-text">
+                            <span id="timer-3" class="text-amber-300 font-bold">00:14:22</span> nữa miễn phí
+                        </p>
+                        <div class="flex items-center justify-center space-x-1 mt-0.5">
+                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none">
+                                <path d="M4 15L6 9H18L20 15C20 17.5 16.5 19 12 19C7.5 19 4 17.5 4 15Z" fill="#F59E0B" stroke="#FEF08A" stroke-width="1.5"/>
+                                <ellipse cx="12" cy="9" rx="5" ry="2.5" fill="#FDE047"/>
+                            </svg>
+                            <span class="text-xs md:text-sm font-black text-yellow-300 wuxia-text">500</span>
+                        </div>
+                    </div>
+
+                    <!-- Nút Thu Nhận -->
+                    <button onclick="recruitDisciple(3)" class="btn-thunhan w-full py-1.5 md:py-2 rounded-lg text-amber-200 font-bold text-xs md:text-base tracking-wider wuxia-text cursor-pointer">
+                        Thu Nhận
+                    </button>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- PHẦN DƯỚI: THANH ĐIỀU HƯỚNG 10 TÍNH NĂNG CHUẨN MỘNG VÕ LÂM -->
+        <div class="w-full bg-gradient-to-t from-black/95 via-stone-950/90 to-transparent border-t border-amber-500/40 pt-1.5 pb-1 px-2 md:px-6 interactive">
+            <div class="max-w-6xl mx-auto grid grid-cols-10 gap-1 md:gap-2 items-center justify-items-center">
+                
+                <!-- 1. Tây Vực -->
+                <div onclick="showToast('Đang mở tính năng: Tây Vực Thương Nhân')" class="nav-item relative flex flex-col items-center cursor-pointer">
+                    <span class="absolute -top-1 -right-1 w-4 h-4 bg-red-600 border border-white rounded-full text-[10px] font-bold text-white flex items-center justify-center z-10">!</span>
+                    <div class="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-b from-amber-600 to-stone-900 border-2 border-amber-400 flex items-center justify-center shadow-md text-xl md:text-2xl">
+                        🐫
+                    </div>
+                    <span class="text-[10px] md:text-xs font-bold text-amber-200 wuxia-text mt-0.5 whitespace-nowrap">Tây Vực</span>
+                </div>
+
+                <!-- 2. Đệ Tử (Đang chọn) -->
+                <div onclick="showToast('Bạn đang ở giao diện Chiêu Mộ Đệ Tử')" class="nav-item relative flex flex-col items-center cursor-pointer scale-105">
+                    <span class="absolute -top-1 -right-1 w-4 h-4 bg-red-600 border border-white rounded-full text-[10px] font-bold text-white flex items-center justify-center z-10">!</span>
+                    <div class="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-b from-yellow-400 via-orange-600 to-red-900 border-2 border-yellow-200 flex items-center justify-center shadow-[0_0_12px_#f59e0b] text-xl md:text-2xl">
+                        🥋
+                    </div>
+                    <span class="text-[10px] md:text-xs font-black text-yellow-300 wuxia-text mt-0.5 whitespace-nowrap">Đệ Tử</span>
+                </div>
+
+                <!-- 3. Vật Phẩm -->
+                <div onclick="showToast('Đang mở Hành Trang Vật Phẩm')" class="nav-item relative flex flex-col items-center cursor-pointer">
+                    <span class="absolute -top-1 -right-1 w-4 h-4 bg-red-600 border border-white rounded-full text-[10px] font-bold text-white flex items-center justify-center z-10">!</span>
+                    <div class="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-b from-amber-600 to-stone-900 border-2 border-amber-400 flex items-center justify-center shadow-md text-xl md:text-2xl">
+                        🧰
+                    </div>
+                    <span class="text-[10px] md:text-xs font-bold text-amber-200 wuxia-text mt-0.5 whitespace-nowrap">Vật Phẩm</span>
+                </div>
+
+                <!-- 4. Lễ Bao -->
+                <div onclick="showToast('Đang mở Rương Lễ Bao Phúc Lợi')" class="nav-item relative flex flex-col items-center cursor-pointer">
+                    <div class="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-b from-amber-600 to-stone-900 border-2 border-amber-400 flex items-center justify-center shadow-md text-xl md:text-2xl">
+                        🎁
+                    </div>
+                    <span class="text-[10px] md:text-xs font-bold text-amber-200 wuxia-text mt-0.5 whitespace-nowrap">Lễ Bao</span>
+                </div>
+
+                <!-- 5. H. Thành -->
+                <div onclick="showToast('Đang trở về Hoàng Thành')" class="nav-item relative flex flex-col items-center cursor-pointer">
+                    <div class="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-b from-amber-600 to-stone-900 border-2 border-amber-400 flex items-center justify-center shadow-md text-xl md:text-2xl">
+                        🏯
+                    </div>
+                    <span class="text-[10px] md:text-xs font-bold text-amber-200 wuxia-text mt-0.5 whitespace-nowrap">H. Thành</span>
+                </div>
+
+                <!-- 6. M. Phái -->
+                <div onclick="showToast('Đang mở Đại Điện Môn Phái')" class="nav-item relative flex flex-col items-center cursor-pointer">
+                    <div class="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-b from-amber-600 to-stone-900 border-2 border-amber-400 flex items-center justify-center shadow-md text-xl md:text-2xl">
+                        ⚔️
+                    </div>
+                    <span class="text-[10px] md:text-xs font-bold text-amber-200 wuxia-text mt-0.5 whitespace-nowrap">M. Phái</span>
+                </div>
+
+                <!-- 7. H. Động -->
+                <div onclick="showToast('Đang mở Giang Hồ Hoạt Động')" class="nav-item relative flex flex-col items-center cursor-pointer">
+                    <div class="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-b from-amber-600 to-stone-900 border-2 border-amber-400 flex items-center justify-center shadow-md text-xl md:text-2xl">
+                        🚩
+                    </div>
+                    <span class="text-[10px] md:text-xs font-bold text-amber-200 wuxia-text mt-0.5 whitespace-nowrap">H. Động</span>
+                </div>
+
+                <!-- 8. S. Kiện -->
+                <div onclick="showToast('Đang mở Sự Kiện Đặc Biệt')" class="nav-item relative flex flex-col items-center cursor-pointer">
+                    <span class="absolute -top-1 -right-1 w-4 h-4 bg-red-600 border border-white rounded-full text-[10px] font-bold text-white flex items-center justify-center z-10">!</span>
+                    <div class="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-b from-amber-600 to-stone-900 border-2 border-amber-400 flex items-center justify-center shadow-md text-xl md:text-2xl">
+                        🪭
+                    </div>
+                    <span class="text-[10px] md:text-xs font-bold text-amber-200 wuxia-text mt-0.5 whitespace-nowrap">S. Kiện</span>
+                </div>
+
+                <!-- 9. Chợ -->
+                <div onclick="showToast('Đang mở Thương Thành Kỳ Trân Các')" class="nav-item relative flex flex-col items-center cursor-pointer">
+                    <span class="absolute -top-1 -right-1 w-4 h-4 bg-red-600 border border-white rounded-full text-[10px] font-bold text-white flex items-center justify-center z-10">!</span>
+                    <div class="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-b from-amber-600 to-stone-900 border-2 border-amber-400 flex items-center justify-center shadow-md text-xl md:text-2xl">
+                        💰
+                    </div>
+                    <span class="text-[10px] md:text-xs font-bold text-amber-200 wuxia-text mt-0.5 whitespace-nowrap">Chợ</span>
+                </div>
+
+                <!-- 10. B. Hội -->
+                <div onclick="showToast('Đang mở Bang Hội Tranh Bá')" class="nav-item relative flex flex-col items-center cursor-pointer">
+                    <div class="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-b from-amber-600 to-stone-900 border-2 border-amber-400 flex items-center justify-center shadow-md text-xl md:text-2xl">
+                        🏮
+                    </div>
+                    <span class="text-[10px] md:text-xs font-bold text-amber-200 wuxia-text mt-0.5 whitespace-nowrap">B. Hội</span>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL KẾT QUẢ CHIÊU MỘ ĐỆ TỬ (HIỂN THỊ KHI BẤM THU NHẬN) -->
+    <div id="recruit-modal" class="hidden absolute inset-0 z-30 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="relative w-full max-w-md bg-gradient-to-b from-stone-900 via-amber-950 to-stone-950 border-4 border-amber-400 rounded-2xl p-6 text-center shadow-[0_0_50px_rgba(251,191,36,0.7)] transform transition-all scale-100">
+            <div class="text-sm font-bold text-amber-300 uppercase tracking-widest mb-1 wuxia-text">Tham Bái Thành Công</div>
+            <h2 id="modal-disciple-name" class="text-2xl md:text-3xl font-black gold-gradient-text mb-2">Đông Phương Bất Bại</h2>
+            
+            <!-- Huy hiệu phẩm chất -->
+            <div class="flex justify-center mb-4">
+                <span id="modal-disciple-grade" class="px-4 py-1 rounded-full text-sm font-black text-white border border-white/60 shadow-lg orb-giap">
+                    Phẩm Chất: GIÁP
+                </span>
+            </div>
+
+            <!-- Chân dung nghệ thuật đệ tử -->
+            <div id="modal-avatar-box" class="w-32 h-32 mx-auto rounded-full border-4 border-amber-300 bg-gradient-to-b from-purple-900 to-black flex items-center justify-center text-6xl shadow-[0_0_30px_rgba(168,85,247,0.8)] mb-4">
+                👘
+            </div>
+
+            <!-- Chỉ số & Tuyệt học -->
+            <div class="bg-black/60 border border-amber-500/40 rounded-xl p-3 mb-5 text-left space-y-1.5 text-xs md:text-sm">
+                <div class="flex justify-between">
+                    <span class="text-amber-200">Võ Công Thiên Phú:</span>
+                    <span id="modal-skill" class="text-yellow-300 font-bold">Quỳ Hoa Bảo Điển</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-amber-200">Lực Chiến Cơ Bản:</span>
+                    <span id="modal-power" class="text-emerald-400 font-bold">+18,500</span>
+                </div>
+                <p id="modal-desc" class="text-slate-300 italic text-xs pt-1 border-t border-white/10">
+                    "Nhật xuất đông phương, duy ngã bất bại. Thân pháp nhanh như quỷ mị, một cây kim thêu định càn khôn."
+                </p>
+            </div>
+
+            <button onclick="closeRecruitModal()" class="btn-thunhan px-10 py-2.5 rounded-xl text-amber-200 font-bold text-base tracking-wider wuxia-text cursor-pointer">
+                Xác Nhận Thu Nhận
+            </button>
+        </div>
+    </div>
+
+    <!-- Hộp thông báo Toast nhỏ gọn thay thế alert() -->
+    <div id="toast-box" class="hidden absolute top-20 left-1/2 -translate-x-1/2 z-40 bg-stone-900/95 border-2 border-amber-400 text-amber-200 px-5 py-2 rounded-full text-xs md:text-sm font-bold shadow-2xl wuxia-text transition-opacity">
+    </div>
+</div>
+
+<script>
+    // ==========================================
+    // 1. DỮ LIỆU ĐỆ TỬ MỘNG VÕ LÂM & LOGIC UI
+    // ==========================================
+    let silver = 2520490;
+    let gold = 52910;
+    let freeUses = 0;
+    const maxFreeUses = 5;
+
+    const disciplesPool = {
+        binh: [
+            { name: "Lệnh Hồ Xung (Thiếu Niên)", grade: "BÍNH", gradeClass: "orb-binh", icon: "🗡️", skill: "Hoa Sơn Kiếm Pháp", power: "+4,200", desc: "Tính tình phóng khoáng, yêu rượu như mạng, kiếm pháp linh hoạt biến hóa." },
+            { name: "Nghi Lâm Tiểu Sư Muội", grade: "BÍNH", gradeClass: "orb-binh", icon: "📿", skill: "Hằng Sơn Tâm Pháp", power: "+3,950", desc: "Đệ tử phái Hằng Sơn, tâm địa lương thiện, sở trường trị liệu hộ thể." }
+        ],
+        at: [
+            { name: "Nhậm Doanh Doanh", grade: "ẤT", gradeClass: "orb-at", icon: "🎶", skill: "Tiếu Ngạo Giang Hồ Khúc", power: "+9,800", desc: "Thánh Cô Nhật Nguyệt Thần Giáo, tiếng đàn thanh tao ẩn chứa nội lực thâm hậu." },
+            { name: "Dương Quá", grade: "ẤT", gradeClass: "orb-at", icon: "🦅", skill: "Ám Nhiên Tiêu Hồn Chưởng", power: "+11,200", desc: "Thần Điêu Đại Hiệp, chưởng pháp uy mãnh kinh thiên động địa." }
+        ],
+        giap: [
+            { name: "Đông Phương Bất Bại", grade: "GIÁP", gradeClass: "orb-giap", icon: "🔥", skill: "Quỳ Hoa Bảo Điển", power: "+24,800", desc: "Nhật xuất đông phương, duy ngã bất bại. Thân pháp nhanh như quỷ mị." },
+            { name: "Độc Cô Cầu Bại", grade: "GIÁP", gradeClass: "orb-giap", icon: "⚔️", skill: "Độc Cô Cửu Kiếm", power: "+26,500", desc: "Kiếm ma tung hoành thiên hạ, vô chiêu thắng hữu chiêu, cả đời cầu một lần bại." },
+            { name: "Tiểu Long Nữ", grade: "GIÁP", gradeClass: "orb-giap", icon: "❄️", skill: "Ngọc Nữ Tâm Kinh", power: "+22,900", desc: "Truyền nhân Cổ Mộ Phái, băng thanh ngọc khiết, song kiếm hợp bích vô song." }
+        ]
+    };
+
+    function showToast(msg) {
+        const toast = document.getElementById('toast-box');
+        toast.textContent = msg;
+        toast.classList.remove('hidden');
+        clearTimeout(window.toastTimeout);
+        window.toastTimeout = setTimeout(() => {
+            toast.classList.add('hidden');
+        }, 2600);
+    }
+
+    function updateCurrencyUI() {
+        document.getElementById('silver-display').textContent = silver.toLocaleString('en-US');
+        document.getElementById('gold-display').textContent = gold.toLocaleString('en-US');
+    }
+
+    // Xử lý chiêu mộ khi bấm nút "Thu Nhận"
+    function recruitDisciple(tier) {
+        let chosenDisciple;
+        if (tier === 1) {
+            if (freeUses < maxFreeUses) {
+                freeUses++;
+                document.getElementById('free-count').textContent = freeUses;
+                if (freeUses >= maxFreeUses) {
+                    document.getElementById('card1-status').innerHTML = '<span class="text-amber-300">Hết lượt miễn phí hôm nay</span>';
+                }
+            } else {
+                if (silver < 10000) {
+                    showToast("Không đủ Bạc để chiêu mộ!");
+                    return;
+                }
+                silver -= 10000;
+            }
+            const pool = Math.random() < 0.7 ? disciplesPool.binh : disciplesPool.at;
+            chosenDisciple = pool[Math.floor(Math.random() * pool.length)];
+        } else if (tier === 2) {
+            if (gold < 200) {
+                showToast("Không đủ 200 Nguyên Bảo!");
+                return;
+            }
+            gold -= 200;
+            const r = Math.random();
+            const pool = r < 0.25 ? disciplesPool.giap : (r < 0.75 ? disciplesPool.at : disciplesPool.binh);
+            chosenDisciple = pool[Math.floor(Math.random() * pool.length)];
+        } else if (tier === 3) {
+            if (gold < 500) {
+                showToast("Không đủ 500 Nguyên Bảo!");
+                return;
+            }
+            gold -= 500;
+            const pool = Math.random() < 0.65 ? disciplesPool.giap : disciplesPool.at;
+            chosenDisciple = pool[Math.floor(Math.random() * pool.length)];
+        }
+
+        updateCurrencyUI();
+        triggerBurstEffect(); // Bùng nổ hạt lửa trên PixiJS
+
+        // Cập nhật Modal kết quả
+        document.getElementById('modal-disciple-name').textContent = chosenDisciple.name;
+        const gradeEl = document.getElementById('modal-disciple-grade');
+        gradeEl.textContent = `Phẩm Chất: ${chosenDisciple.grade}`;
+        gradeEl.className = `px-4 py-1 rounded-full text-sm font-black text-white border border-white/60 shadow-lg ${chosenDisciple.gradeClass}`;
+        document.getElementById('modal-avatar-box').textContent = chosenDisciple.icon;
+        document.getElementById('modal-skill').textContent = chosenDisciple.skill;
+        document.getElementById('modal-power').textContent = chosenDisciple.power;
+        document.getElementById('modal-desc').textContent = `"${chosenDisciple.desc}"`;
+
+        document.getElementById('recruit-modal').classList.remove('hidden');
+    }
+
+    function closeRecruitModal() {
+        document.getElementById('recruit-modal').classList.add('hidden');
+    }
+
+    // Đồng hồ đếm ngược thời gian thực trên thẻ 2 và 3
+    let sec2 = 15 * 3600 + 43 * 60 + 29;
+    let sec3 = 14 * 60 + 22;
+    setInterval(() => {
+        if (sec2 > 0) sec2--;
+        if (sec3 > 0) sec3--;
+        document.getElementById('timer-2').textContent = formatTime(sec2);
+        document.getElementById('timer-3').textContent = formatTime(sec3);
+    }, 1000);
+
+    function formatTime(totalSeconds) {
+        const h = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+        const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+        const s = String(totalSeconds % 60).padStart(2, '0');
+        return `${h}:${m}:${s}`;
+    }
+
+    // ==========================================
+    // 2. THREE.JS: SÂN VÕ ĐƯỜNG CỔ TRANG & NHÂN VẬT CỠ LỚN CƯỠI CHIẾN MÃ CÁNH PHƯỢNG HOÀNG
+    // ==========================================
+    let scene, camera, renderer;
+    let heroGroup, leftWing, rightWing, auraRing, horseLegs = [];
+    let isDragging = false, prevMouseX = 0, cameraAngleOffset = 0;
+
+    function initThreeJS() {
+        const container = document.getElementById('game-viewport');
+        const canvas = document.getElementById('three-canvas');
+
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x161210);
+        scene.fog = new THREE.FogExp2(0x1a1410, 0.022);
+
+        // Camera góc nhìn Isometric từ trên cao xuống giống hệt ảnh 1
+        camera = new THREE.PerspectiveCamera(42, container.clientWidth / container.clientHeight, 0.1, 100);
+        camera.position.set(0, 11.5, 13.5);
+        camera.lookAt(0, 1.2, 0.5);
+
+        renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+        // Ánh sáng vàng ấm áp của đèn lồng võ đường
+        const ambientLight = new THREE.AmbientLight(0xffd2a1, 0.65);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffdf9e, 1.2);
+        dirLight.position.set(8, 16, 10);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 1024;
+        dirLight.shadow.mapSize.height = 1024;
+        scene.add(dirLight);
+
+        // Điểm sáng đỏ rực từ cánh phượng hoàng & hào quang nhân vật
+        const phoenixLight = new THREE.PointLight(0xff4500, 2.2, 10);
+        phoenixLight.position.set(0, 3.5, -1.5);
+        scene.add(phoenixLight);
+
+        buildTempleCourtyard();
+        buildHeroAndMythicalHorse();
+
+        // Cho phép xoay nhẹ góc nhìn 3D khi kéo chuột trên nền sân
+        container.addEventListener('mousedown', (e) => {
+            if (e.target.id === 'three-canvas') {
+                isDragging = true;
+                prevMouseX = e.clientX;
+            }
+        });
+        window.addEventListener('mouseup', () => { isDragging = false; });
+        window.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                const deltaX = e.clientX - prevMouseX;
+                cameraAngleOffset += deltaX * 0.005;
+                cameraAngleOffset = Math.max(-0.6, Math.min(0.6, cameraAngleOffset));
+                prevMouseX = e.clientX;
+            }
+        });
+    }
+
+    // Dựng sân gạch đá cổ trang, mái ngói cong, lồng đèn đỏ
+    function buildTempleCourtyard() {
+        // Sàn gạch đá xám xanh họa tiết ô vuông
+        const tileCanvas = document.createElement('canvas');
+        tileCanvas.width = 256;
+        tileCanvas.height = 256;
+        const ctx = tileCanvas.getContext('2d');
+        ctx.fillStyle = '#2b323b';
+        ctx.fillRect(0, 0, 256, 256);
+        ctx.strokeStyle = '#181c22';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(2, 2, 124, 124);
+        ctx.strokeRect(130, 2, 124, 124);
+        ctx.strokeRect(2, 130, 124, 124);
+        ctx.strokeRect(130, 130, 124, 124);
+        // Hoa văn rêu phong & ánh vàng phản chiếu
+        ctx.fillStyle = 'rgba(217, 119, 6, 0.08)';
+        ctx.fillRect(10, 10, 108, 108);
+
+        const floorTex = new THREE.CanvasTexture(tileCanvas);
+        floorTex.wrapS = THREE.RepeatWrapping;
+        floorTex.wrapT = THREE.RepeatWrapping;
+        floorTex.repeat.set(14, 14);
+
+        const floorGeo = new THREE.PlaneGeometry(45, 45);
+        const floorMat = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.75, metalness: 0.15 });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.receiveShadow = true;
+        scene.add(floor);
+
+        // Kiến trúc điện thờ & mái ngói cong phía trái/sau (giống ảnh 1)
+        const buildingGroup = new THREE.Group();
+        buildingGroup.position.set(-5.8, 0, -4.5);
+        buildingGroup.rotation.y = 0.45;
+
+        // Bệ đá
+        const baseMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(8, 0.8, 5),
+            new THREE.MeshStandardMaterial({ color: 0x57534e })
+        );
+        baseMesh.position.y = 0.4;
+        baseMesh.receiveShadow = true;
+        buildingGroup.add(baseMesh);
+
+        // Cột gỗ đỏ son & tường
+        const wallMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(7.2, 3.2, 4.2),
+            new THREE.MeshStandardMaterial({ color: 0x451a03 })
+        );
+        wallMesh.position.y = 2.2;
+        wallMesh.castShadow = true;
+        buildingGroup.add(wallMesh);
+
+        // Mái ngói cong màu xanh rêu viền gỗ vàng
+        const roofGeo = new THREE.ConeGeometry(5.8, 2.2, 4);
+        const roofMat = new THREE.MeshStandardMaterial({ color: 0x263832, roughness: 0.5 });
+        const roof = new THREE.Mesh(roofGeo, roofMat);
+        roof.position.y = 4.8;
+        roof.rotation.y = Math.PI / 4;
+        roof.castShadow = true;
+        buildingGroup.add(roof);
+
+        // Viền mái vàng
+        const trimGeo = new THREE.BoxGeometry(8.4, 0.25, 5.4);
+        const trimMat = new THREE.MeshStandardMaterial({ color: 0xd97706 });
+        const trim = new THREE.Mesh(trimGeo, trimMat);
+        trim.position.y = 3.8;
+        buildingGroup.add(trim);
+
+        // Đèn lồng đỏ phát sáng treo trước hiên
+        const lanternGeo = new THREE.SphereGeometry(0.45, 16, 16);
+        const lanternMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
+        const lantern1 = new THREE.Mesh(lanternGeo, lanternMat);
+        lantern1.position.set(2.8, 3.1, 2.4);
+        buildingGroup.add(lantern1);
+
+        const lanternLight = new THREE.PointLight(0xff8c00, 1.8, 8);
+        lanternLight.position.set(2.8, 2.8, 2.6);
+        buildingGroup.add(lanternLight);
+
+        scene.add(buildingGroup);
+
+        // Bậc thang đá & lan can bên phải
+        const rightPavilion = buildingGroup.clone();
+        rightPavilion.position.set(7.5, 0, -5.2);
+        rightPavilion.rotation.y = -0.55;
+        scene.add(rightPavilion);
+    }
+
+    // Dựng nhân vật nữ hiệp cỡ lớn cưỡi chiến mã xanh + cánh phượng hoàng lửa rực cháy
+    function buildHeroAndMythicalHorse() {
+        heroGroup = new THREE.Group();
+        // Đặt nhân vật ở nửa trên trung tâm màn hình 16:9 để nổi bật trên 3 thẻ bài
+        heroGroup.position.set(0, 0, -2.2);
+        heroGroup.rotation.y = 0.25; // Góc nghiêng kiêu hãnh như ảnh 1
+
+        // 1. Vòng hào quang ma pháp đỏ phát sáng dưới chân ngựa
+        const auraGeo = new THREE.RingGeometry(1.4, 2.3, 48);
+        const auraMat = new THREE.MeshBasicMaterial({
+            color: 0xff2a55,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.75
+        });
+        auraRing = new THREE.Mesh(auraGeo, auraMat);
+        auraRing.rotation.x = -Math.PI / 2;
+        auraRing.position.y = 0.05;
+        heroGroup.add(auraRing);
+
+        const innerAura = new THREE.Mesh(
+            new THREE.RingGeometry(0.6, 1.1, 32),
+            new THREE.MeshBasicMaterial({ color: 0xffaa00, side: THREE.DoubleSide, transparent: true, opacity: 0.6 })
+        );
+        innerAura.rotation.x = -Math.PI / 2;
+        innerAura.position.y = 0.06;
+        heroGroup.add(innerAura);
+
+        // 2. Chiến mã thần thú màu xanh lam sẫm (Blue Mythical Horse)
+        const horseMat = new THREE.MeshStandardMaterial({
+            color: 0x1e3a8a,
+            roughness: 0.35,
+            metalness: 0.4
+        });
+        const armorGoldMat = new THREE.MeshStandardMaterial({
+            color: 0xf59e0b,
+            roughness: 0.25,
+            metalness: 0.8
+        });
+
+        // Thân ngựa
+        const horseBody = new THREE.Mesh(new THREE.BoxGeometry(1.15, 1.1, 2.4), horseMat);
+        horseBody.position.set(0, 1.55, 0);
+        horseBody.castShadow = true;
+        heroGroup.add(horseBody);
+
+        // Giáp ngực ngựa màu vàng kim
+        const chestArmor = new THREE.Mesh(new THREE.BoxGeometry(1.22, 0.7, 0.8), armorGoldMat);
+        chestArmor.position.set(0, 1.6, 0.9);
+        heroGroup.add(chestArmor);
+
+        // Cổ & Đầu ngựa hướng về phía trước
+        const horseNeck = new THREE.Mesh(new THREE.BoxGeometry(0.65, 1.3, 0.7), horseMat);
+        horseNeck.position.set(0, 2.3, 1.1);
+        horseNeck.rotation.x = 0.35;
+        heroGroup.add(horseNeck);
+
+        const horseHead = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.55, 1.0), horseMat);
+        horseHead.position.set(0, 2.85, 1.45);
+        horseHead.rotation.x = 0.25;
+        heroGroup.add(horseHead);
+
+        // Đuôi ngựa xanh phát sáng
+        const horseTail = new THREE.Mesh(
+            new THREE.ConeGeometry(0.35, 1.5, 8),
+            new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0284c7, emissiveIntensity: 0.5 })
+        );
+        horseTail.position.set(0, 1.4, -1.35);
+        horseTail.rotation.x = -0.4;
+        heroGroup.add(horseTail);
+
+        // 4 Chân ngựa
+        const legPositions = [
+            [-0.4, 0.6, 0.85],
+            [0.4, 0.6, 0.85],
+            [-0.4, 0.6, -0.85],
+            [0.4, 0.6, -0.85]
+        ];
+        legPositions.forEach(pos => {
+            const leg = new THREE.Mesh(new THREE.BoxGeometry(0.28, 1.2, 0.32), horseMat);
+            leg.position.set(...pos);
+            leg.castShadow = true;
+            heroGroup.add(leg);
+            horseLegs.push(leg);
+        });
+
+        // 3. Nữ Hiệp Hoa Thiên Cốt ngồi trên lưng ngựa
+        const riderGroup = new THREE.Group();
+        riderGroup.position.set(0, 2.25, -0.05);
+
+        // Giáp thân trên xanh & đỏ
+        const torso = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.32, 0.42, 1.05, 12),
+            new THREE.MeshStandardMaterial({ color: 0xbe123c, roughness: 0.4 })
+        );
+        torso.position.y = 0.5;
+        riderGroup.add(torso);
+
+        // Đầu & Tóc tím bồng bềnh (giống ảnh 1)
+        const head = new THREE.Mesh(
+            new THREE.SphereGeometry(0.32, 16, 16),
+            new THREE.MeshStandardMaterial({ color: 0xfde68a })
+        );
+        head.position.y = 1.25;
+        riderGroup.add(head);
+
+        const hair = new THREE.Mesh(
+            new THREE.ConeGeometry(0.42, 1.1, 12),
+            new THREE.MeshStandardMaterial({ color: 0xc084fc, emissive: 0x7e22ce, emissiveIntensity: 0.3 })
+        );
+        hair.position.set(0, 1.05, -0.15);
+        hair.rotation.x = -0.25;
+        riderGroup.add(hair);
+
+        // 4. Đôi cánh Phượng Hoàng Lửa rực cháy xòe rộng hai bên
+        const wingMat = new THREE.MeshBasicMaterial({
+            color: 0xff5500,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.92
+        });
+        const wingInnerMat = new THREE.MeshBasicMaterial({
+            color: 0xffdd00,
+            side: THREE.DoubleSide
+        });
+
+        function createWing(isLeft) {
+            const wingContainer = new THREE.Group();
+            wingContainer.position.set(isLeft ? -0.25 : 0.25, 0.75, -0.25);
+
+            // Tạo 5 lông vũ lửa xếp tầng xòe rộng
+            for (let i = 0; i < 5; i++) {
+                const length = 2.6 - i * 0.28;
+                const featherGeo = new THREE.ConeGeometry(0.28, length, 4);
+                featherGeo.translate(0, length / 2, 0);
+                featherGeo.rotateZ(isLeft ? Math.PI / 2 : -Math.PI / 2);
+
+                const feather = new THREE.Mesh(featherGeo, i % 2 === 0 ? wingMat : wingInnerMat);
+                feather.rotation.z = (isLeft ? 1 : -1) * (0.25 - i * 0.16);
+                feather.rotation.y = (isLeft ? -1 : 1) * 0.25;
+                wingContainer.add(feather);
+            }
+            return wingContainer;
+        }
+
+        leftWing = createWing(true);
+        rightWing = createWing(false);
+        riderGroup.add(leftWing);
+        riderGroup.add(rightWing);
+
+        heroGroup.add(riderGroup);
+        // Phóng to nhân vật cỡ lớn ấn tượng trên khung hình 16:9
+        heroGroup.scale.set(1.35, 1.35, 1.35);
+        scene.add(heroGroup);
+    }
+
+    // ==========================================
+    // 3. PIXI.JS: HIỆU ỨNG HẠT LINH KHÍ & LỬA PHƯỢNG HOÀNG 2D
+    // ==========================================
+    let pixiApp, particles = [];
+
+    function initPixiJS() {
+        const container = document.getElementById('game-viewport');
+        const canvas = document.getElementById('pixi-canvas');
+
+        pixiApp = new PIXI.Application({
+            view: canvas,
+            width: container.clientWidth,
+            height: container.clientHeight,
+            transparent: true,
+            antialias: true
+        });
+
+        // Tạo 45 đốm lửa & linh khí bay lơ lửng
+        for (let i = 0; i < 45; i++) {
+            spawnParticle(false);
+        }
+
+        pixiApp.ticker.add(() => {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.sprite.x += p.vx;
+                p.sprite.y += p.vy;
+                p.life -= p.decay;
+                p.sprite.alpha = Math.max(0, p.life);
+
+                if (p.life <= 0 || p.sprite.y < -20) {
+                    pixiApp.stage.removeChild(p.sprite);
+                    particles.splice(i, 1);
+                    if (!p.isBurst) spawnParticle(false);
+                }
+            }
+        });
+    }
+
+    function spawnParticle(isBurst, originX, originY) {
+        if (!pixiApp) return;
+        const g = new PIXI.Graphics();
+        const colors = [0xffd700, 0xff6b00, 0xff2a55, 0x38bdf8];
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        const radius = isBurst ? (Math.random() * 4 + 2) : (Math.random() * 2.5 + 1);
+
+        g.beginFill(color, 0.85);
+        g.drawCircle(0, 0, radius);
+        g.endFill();
+
+        const w = pixiApp.screen.width;
+        const h = pixiApp.screen.height;
+
+        g.x = isBurst ? originX : Math.random() * w;
+        g.y = isBurst ? originY : Math.random() * h;
+
+        pixiApp.stage.addChild(g);
+
+        particles.push({
+            sprite: g,
+            vx: isBurst ? (Math.random() - 0.5) * 8 : (Math.random() - 0.5) * 0.6,
+            vy: isBurst ? (Math.random() - 0.7) * 8 : -(Math.random() * 0.8 + 0.3),
+            life: 1.0,
+            decay: isBurst ? 0.025 : 0.004,
+            isBurst: isBurst
+        });
+    }
+
+    function triggerBurstEffect() {
+        if (!pixiApp) return;
+        const cx = pixiApp.screen.width / 2;
+        const cy = pixiApp.screen.height * 0.55;
+        for (let i = 0; i < 40; i++) {
+            spawnParticle(true, cx, cy);
+        }
+    }
+
+    // ==========================================
+    // 4. VÒNG LẶP ANIMATION & RESPONSIVE RESIZE
+    // ==========================================
+    const clock = new THREE.Clock();
+
+    function animate() {
+        requestAnimationFrame(animate);
+        const t = clock.getElapsedTime();
+
+        if (heroGroup) {
+            // Nhịp thở nhún nhẹ của chiến mã & nhân vật
+            heroGroup.position.y = Math.sin(t * 2.5) * 0.08;
+            heroGroup.rotation.y = 0.25 + Math.sin(t * 0.8) * 0.08;
+        }
+
+        if (leftWing && rightWing) {
+            // Đôi cánh phượng hoàng vỗ nhịp uyển chuyển
+            const flap = Math.sin(t * 4.5) * 0.22;
+            leftWing.rotation.y = -0.25 + flap;
+            rightWing.rotation.y = 0.25 - flap;
+        }
+
+        if (auraRing) {
+            auraRing.rotation.z = t * 1.2;
+            const pulse = 1 + Math.sin(t * 3) * 0.06;
+            auraRing.scale.set(pulse, pulse, 1);
+        }
+
+        if (camera) {
+            camera.position.x = Math.sin(cameraAngleOffset) * 12;
+            camera.position.z = Math.cos(cameraAngleOffset) * 13.5;
+            camera.lookAt(0, 1.2, 0.5);
+        }
+
+        if (renderer && scene && camera) {
+            renderer.render(scene, camera);
+        }
+    }
+
+    function handleResize() {
+        const container = document.getElementById('game-viewport');
+        if (!container) return;
+        const w = container.clientWidth;
+        const h = container.clientHeight;
+
+        if (camera && renderer) {
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+            renderer.setSize(w, h);
+        }
+        if (pixiApp) {
+            pixiApp.renderer.resize(w, h);
+        }
+    }
+
+    window.addEventListener('resize', handleResize);
+
+    window.onload = function () {
+        initThreeJS();
+        initPixiJS();
+        animate();
+    };
+</script>
+</body>
+</html>

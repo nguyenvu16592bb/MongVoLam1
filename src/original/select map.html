@@ -1,0 +1,1039 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mộng Võ Lâm - Bản Đồ Thế Giới Thủy Mặc 3D</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js & PixiJS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/6.5.8/browser/pixi.min.js"></script>
+    <!-- Font Awesome & Google Fonts -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;900&family=Noto+Serif:ital,wght@0,400;0,700;1,400&family=Philosopher:ital,wght@0,700;1,700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --ink-black: #181a19;
+            --ink-gray: #4b524e;
+            --paper-parchment: #f4ebd9;
+            --paper-aged: #dfd0b4;
+            --seal-red: #9c221b;
+            --seal-red-dark: #63110c;
+            --gold-antique: #c9963b;
+            --moss-green: #384d3e;
+        }
+
+        * {
+            box-sizing: border-box;
+            user-select: none;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0e0f0e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Noto Serif', serif;
+            overflow: hidden;
+        }
+
+        /* Khung tỉ lệ chuẩn 16:9 */
+        #world-viewport {
+            width: 100vw;
+            height: 56.25vw; /* 16:9 */
+            max-height: 100vh;
+            max-width: 177.78vh; /* 16:9 */
+            position: relative;
+            background: radial-gradient(ellipse at 50% 35%, #e8dfc8 0%, #c8bfa8 45%, #8a877c 80%, #484b47 100%);
+            box-shadow: 0 0 60px rgba(0, 0, 0, 0.95), 0 0 18px rgba(201, 150, 59, 0.45);
+            border: 3px solid #755324;
+            overflow: hidden;
+        }
+
+        .font-wuxia {
+            font-family: 'Philosopher', sans-serif;
+        }
+
+        /* Lớp họa tiết vân giấy cổ & viền thủy mặc */
+        .ink-vignette {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            box-shadow: inset 0 0 90px rgba(20, 24, 22, 0.65);
+            z-index: 4;
+        }
+
+        /* Canvas Three.js (Địa hình núi non thủy mặc 3D) */
+        #three-world {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            cursor: grab;
+        }
+        #three-world:active {
+            cursor: grabbing;
+        }
+
+        /* Canvas PixiJS (Sương mù trôi, hào quang lửa thiêng, cánh hoa đào) */
+        #pixi-atmosphere {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 3;
+        }
+
+        /* ================= UI GÓC TRÊN BÊN TRÁI (AVATAR & LV 76) ================= */
+        .top-left-hud {
+            position: absolute;
+            top: 2%;
+            left: 1.5%;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: linear-gradient(90deg, rgba(28, 22, 16, 0.9) 0%, rgba(46, 35, 24, 0.82) 75%, rgba(46, 35, 24, 0) 100%);
+            padding: 6px 28px 6px 8px;
+            border-left: 3px solid #c9963b;
+            border-top: 1px solid rgba(201, 150, 59, 0.5);
+            border-bottom: 1px solid rgba(201, 150, 59, 0.5);
+            border-top-left-radius: 10px;
+            border-bottom-left-radius: 10px;
+            z-index: 20;
+        }
+
+        .avatar-seal-frame {
+            width: clamp(46px, 4.2vw, 72px);
+            height: clamp(46px, 4.2vw, 72px);
+            border-radius: 10px;
+            border: 2.5px solid #d4a146;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.8), inset 0 0 8px rgba(0,0,0,0.6);
+            background: #221912;
+            position: relative;
+            overflow: visible;
+            flex-shrink: 0;
+        }
+
+        .level-tag-76 {
+            position: absolute;
+            bottom: -6px;
+            right: -6px;
+            background: radial-gradient(circle at 30% 30%, #b82b23, #63110c);
+            border: 1.5px solid #f2cf7e;
+            color: #fff5d6;
+            font-weight: 900;
+            font-size: clamp(10px, 0.85vw, 14px);
+            padding: 1px 6px;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.8);
+        }
+
+        /* ================= UI GÓC TRÊN BÊN PHẢI (VÀNG, BẠC, VIP) ================= */
+        .top-right-hud {
+            position: absolute;
+            top: 2%;
+            right: 1.5%;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            z-index: 20;
+        }
+
+        .currency-pill {
+            background: linear-gradient(180deg, rgba(36, 27, 19, 0.92), rgba(20, 15, 10, 0.92));
+            border: 1.5px solid #b58332;
+            border-radius: 999px;
+            padding: 4px 14px 4px 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 3px 8px rgba(0,0,0,0.65);
+        }
+
+        .vip-emblem {
+            background: linear-gradient(135deg, #8c1c13 0%, #4d0c07 100%);
+            border: 2px solid #e6b85c;
+            border-radius: 10px;
+            padding: 4px 12px;
+            color: #ffe299;
+            font-family: 'Cinzel', serif;
+            font-weight: 900;
+            font-size: clamp(11px, 0.95vw, 16px);
+            box-shadow: 0 3px 10px rgba(0,0,0,0.75);
+            letter-spacing: 0.5px;
+        }
+
+        /* ================= CÁC ĐIỂM ĐỊA DANH GIẤY CỔ VIỀN ĐỎ TRÊN BẢN ĐỒ ================= */
+        #map-markers-layer {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 15;
+        }
+
+        .location-marker {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            pointer-events: auto;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+
+        .location-marker:hover {
+            transform: translate(-50%, -56%) scale(1.08);
+            z-index: 25;
+        }
+
+        /* Bảng tên giấy cổ màu trắng ngà, viền đỏ chu sa */
+        .scroll-nameplate {
+            background: linear-gradient(180deg, #fcf8f0 0%, #ede0c9 100%);
+            border: 2px solid #9c221b;
+            outline: 1px solid rgba(156, 34, 27, 0.45);
+            outline-offset: -4px;
+            border-radius: 4px;
+            padding: 4px 14px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55), inset 0 0 6px rgba(156, 34, 27, 0.15);
+            color: #26140c;
+            font-family: 'Philosopher', sans-serif;
+            font-weight: 700;
+            font-size: clamp(11px, 0.95vw, 16px);
+            white-space: nowrap;
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* Chốt gỗ / kim loại hai đầu bảng tên */
+        .scroll-nameplate::before,
+        .scroll-nameplate::after {
+            content: '';
+            width: 5px;
+            height: 75%;
+            background: #7a1914;
+            border-radius: 2px;
+        }
+
+        /* Địa điểm trọng điểm ở giữa bản đồ (Phát sáng cam vàng & lửa huyền bí) */
+        .location-marker.boss-node .scroll-nameplate {
+            background: linear-gradient(180deg, #fff9eb 0%, #f5dfb3 100%);
+            border: 2.5px solid #b81d13;
+            box-shadow: 0 0 22px rgba(245, 130, 32, 0.95), 0 0 40px rgba(220, 38, 38, 0.65);
+            font-size: clamp(13px, 1.1vw, 19px);
+            padding: 6px 18px;
+        }
+
+        .boss-flame-ring {
+            width: clamp(44px, 3.8vw, 66px);
+            height: clamp(44px, 3.8vw, 66px);
+            margin-top: 6px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(255, 224, 102, 0.9) 0%, rgba(234, 88, 12, 0.65) 50%, transparent 75%);
+            border: 2px solid rgba(255, 196, 61, 0.85);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 25px #f97316, inset 0 0 12px #fef08a;
+            animation: pulseFlame 2s infinite ease-in-out;
+        }
+
+        .normal-node-pin {
+            width: clamp(22px, 1.9vw, 32px);
+            height: clamp(22px, 1.9vw, 32px);
+            margin-top: 4px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 35% 35%, #f5ebd6, #9c221b);
+            border: 2px solid #fff7e6;
+            box-shadow: 0 3px 8px rgba(0,0,0,0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: clamp(10px, 0.8vw, 13px);
+        }
+
+        @keyframes pulseFlame {
+            0%, 100% { transform: scale(1); filter: brightness(1); }
+            50% { transform: scale(1.12); filter: brightness(1.25); }
+        }
+
+        /* ================= THANH MENU CỔ TRANG PHÍA DƯỚI ================= */
+        .bottom-dock {
+            position: absolute;
+            bottom: 1.8%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: linear-gradient(180deg, rgba(38, 28, 19, 0.92) 0%, rgba(20, 14, 9, 0.96) 100%);
+            border: 2px solid #b58332;
+            border-radius: 14px;
+            padding: 6px 18px;
+            display: flex;
+            align-items: center;
+            gap: clamp(10px, 1.4vw, 24px);
+            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.85), inset 0 1px 2px rgba(255, 224, 150, 0.35);
+            z-index: 20;
+        }
+
+        .dock-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            padding: 5px 12px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: 1px solid transparent;
+        }
+
+        .dock-item:hover {
+            background: rgba(156, 34, 27, 0.35);
+            border-color: #d4a146;
+            transform: translateY(-4px);
+        }
+
+        .dock-icon-circle {
+            width: clamp(32px, 2.7vw, 46px);
+            height: clamp(32px, 2.7vw, 46px);
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, #634627, #2b1d10);
+            border: 1.5px solid #d4a146;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #f7dba1;
+            font-size: clamp(13px, 1.15vw, 19px);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.7);
+        }
+
+        .dock-label {
+            color: #f3e4c6;
+            font-family: 'Philosopher', sans-serif;
+            font-weight: 700;
+            font-size: clamp(11px, 0.88vw, 15px);
+            text-shadow: 0 1px 3px #000;
+        }
+
+        /* ================= BẢNG CHI TIẾT PHÓ BẢN KHI CHỌN ĐỊA DANH ================= */
+        #stage-modal {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(12, 14, 13, 0.72);
+            z-index: 50;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(2px);
+        }
+
+        .parchment-dialog {
+            width: min(520px, 88%);
+            background: linear-gradient(180deg, #f5ebd6 0%, #e0cfa9 100%);
+            border: 3px solid #8a2019;
+            outline: 2px solid #c9963b;
+            outline-offset: -6px;
+            border-radius: 12px;
+            padding: 20px 24px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.9);
+            color: #26160c;
+            position: relative;
+        }
+
+        .btn-battle-seal {
+            background: linear-gradient(180deg, #b82921 0%, #78130e 100%);
+            border: 2px solid #f0c975;
+            color: #fff6de;
+            font-family: 'Philosopher', sans-serif;
+            font-weight: 700;
+            padding: 8px 28px;
+            border-radius: 999px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .btn-battle-seal:hover {
+            filter: brightness(1.15);
+            transform: translateY(-1px);
+        }
+
+        /* Gợi ý xoay góc nhìn bản đồ */
+        .camera-hint {
+            position: absolute;
+            top: 2.2%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(24, 22, 19, 0.72);
+            border: 1px solid rgba(201, 150, 59, 0.55);
+            color: #e8d8b5;
+            font-size: clamp(10px, 0.78vw, 13px);
+            padding: 3px 14px;
+            border-radius: 999px;
+            z-index: 18;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="world-viewport">
+    <!-- 1. Cảnh quan núi non Thủy Mặc 3D (Three.js) -->
+    <div id="three-world" title="Kéo chuột để di chuyển góc nhìn sơn thủy"></div>
+
+    <!-- 2. Hiệu ứng sương mù, lửa thiêng & cánh hoa rơi (PixiJS) -->
+    <div id="pixi-atmosphere"></div>
+
+    <!-- Viền tối thủy mặc cổ phong -->
+    <div class="ink-vignette"></div>
+
+    <!-- Nhãn chỉ dẫn nhẹ phía trên -->
+    <div class="camera-hint">
+        <i class="fa-solid fa-compass text-amber-400 mr-1.5"></i>Bản Đồ Thế Giới Giang Hồ • Chọn Địa Danh Để Khiêu Chiến
+    </div>
+
+    <!-- 3. Góc trên bên trái: Avatar + Cấp 76 + Tên + Thanh EXP -->
+    <div class="top-left-hud">
+        <div class="avatar-seal-frame">
+            <!-- Chân dung kiếm khách phong cách thủy mặc cổ trang -->
+            <svg viewBox="0 0 100 100" class="w-full h-full rounded-lg">
+                <defs>
+                    <radialGradient id="inkAv" cx="50%" cy="35%" r="65%">
+                        <stop offset="0%" stop-color="#e6dcc5"/>
+                        <stop offset="100%" stop-color="#4a4e4b"/>
+                    </radialGradient>
+                </defs>
+                <rect width="100" height="100" fill="url(#inkAv)"/>
+                <!-- Nón lá / Mũ hiệp khách -->
+                <path d="M12 36 Q50 12 88 36 Z" fill="#2c241d" stroke="#c9963b" stroke-width="2"/>
+                <!-- Tóc dài bay -->
+                <path d="M26 36 L22 82 L36 75 Z" fill="#181a19"/>
+                <path d="M74 36 L78 82 L64 75 Z" fill="#181a19"/>
+                <!-- Khuôn mặt -->
+                <path d="M35 38 Q35 68 50 73 Q65 68 65 38 Z" fill="#ebd6b7"/>
+                <line x1="40" y1="48" x2="47" y2="50" stroke="#181a19" stroke-width="2.5"/>
+                <line x1="60" y1="48" x2="53" y2="50" stroke="#181a19" stroke-width="2.5"/>
+                <!-- Áo bào cổ trang -->
+                <path d="M18 100 L35 72 L50 84 L65 72 L82 100 Z" fill="#2e3b34" stroke="#c9963b" stroke-width="2"/>
+            </svg>
+            <div class="level-tag-76">Lv.76</div>
+        </div>
+
+        <div class="flex flex-col gap-1 min-w-[130px] sm:min-w-[175px]">
+            <div class="flex items-center justify-between">
+                <span class="font-wuxia font-bold text-[#f7ebd2] text-[clamp(12px,1.05vw,18px)] tracking-wide drop-shadow">
+                    Tiêu Dao Kiếm Khách
+                </span>
+            </div>
+            <!-- Thanh Kinh Nghiệm EXP -->
+            <div class="w-full h-[clamp(8px,0.7vw,12px)] bg-black/75 rounded-full border border-[#b58332] overflow-hidden relative">
+                <div class="h-full bg-gradient-to-r from-[#8c221b] via-[#c97a2b] to-[#f0c76e] w-[74%]"></div>
+                <span class="absolute inset-0 flex items-center justify-center text-[clamp(7px,0.58vw,10px)] font-bold text-white drop-shadow">
+                    EXP 74.2%
+                </span>
+            </div>
+            <div class="text-[clamp(9px,0.72vw,12px)] text-[#d9c7a3]">
+                Lực Chiến: <span class="text-amber-300 font-bold">1,284,500</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. Góc trên bên phải: Vàng, Bạc, VIP -->
+    <div class="top-right-hud">
+        <div class="currency-pill">
+            <i class="fa-solid fa-coins text-slate-300 text-[clamp(11px,0.95vw,16px)]"></i>
+            <span class="text-[#f2ebd9] font-bold text-[clamp(10px,0.88vw,15px)]">8,450,200</span>
+        </div>
+        <div class="currency-pill">
+            <i class="fa-solid fa-gem text-amber-400 text-[clamp(11px,0.95vw,16px)]"></i>
+            <span class="text-amber-300 font-bold text-[clamp(10px,0.88vw,15px)]">42,890</span>
+        </div>
+        <div class="vip-emblem">
+            <i class="fa-solid fa-crown text-amber-300 mr-1"></i>VIP 9
+        </div>
+    </div>
+
+    <!-- 5. Các địa danh thủy mặc trên bản đồ -->
+    <div id="map-markers-layer">
+        <!-- Render động từ danh sách địa danh -->
+    </div>
+
+    <!-- 6. Thanh Menu cổ trang phía dưới -->
+    <div class="bottom-dock">
+        <div class="dock-item" onclick="openMenuInfo('Chủ Thành - Biện Kinh', 'Trung tâm giao thương sầm uất bậc nhất thiên hạ, nơi tụ hội anh hùng hào kiệt tứ phương.')">
+            <div class="dock-icon-circle"><i class="fa-solid fa-torii-gate"></i></div>
+            <span class="dock-label">Thành</span>
+        </div>
+        <div class="dock-item" onclick="openMenuInfo('Môn Phái - Hoa Sơn Kiếm Tông', 'Tu luyện tâm pháp trấn phái, lĩnh ngộ kiếm ý vô thượng và khiêu chiến trưởng lão.')">
+            <div class="dock-icon-circle"><i class="fa-solid fa-yin-yang"></i></div>
+            <span class="dock-label">Môn Phái</span>
+        </div>
+        <div class="dock-item" onclick="openMenuInfo('Hoạt Động Giang Hồ', 'Tham gia Vận Tiêu Long Môn, Tống Kim Đại Chiến và Săn Boss Hoàng Kim hằng ngày.')">
+            <div class="dock-icon-circle"><i class="fa-solid fa-scroll"></i></div>
+            <span class="dock-label">Hoạt Động</span>
+        </div>
+        <div class="dock-item" onclick="openMenuInfo('Sự Kiện Võ Lâm', 'Minh Chủ Võ Lâm tranh đoạt ngôi vị Cửu Ngũ Chí Tôn nhận thần binh hiếm.')">
+            <div class="dock-icon-circle"><i class="fa-solid fa-fire-flame-curved"></i></div>
+            <span class="dock-label">Sự Kiện</span>
+        </div>
+        <div class="dock-item" onclick="openMenuInfo('Thương Hội & Chợ Đen', 'Trao đổi bí kíp võ công, linh đan diệu dược và trang bị truyền thuyết.')">
+            <div class="dock-icon-circle"><i class="fa-solid fa-scale-balanced"></i></div>
+            <span class="dock-label">Chợ</span>
+        </div>
+        <div class="dock-item" onclick="openMenuInfo('Bang Hội - Thiên Hạ Hội', 'Cùng huynh đệ đồng sinh cộng tử, xây dựng lãnh địa và công thành đoạt đất.')">
+            <div class="dock-icon-circle"><i class="fa-solid fa-flag"></i></div>
+            <span class="dock-label">Bang Hội</span>
+        </div>
+    </div>
+
+    <!-- 7. Modal Chi Tiết Địa Danh & Vào Trận Chiến -->
+    <div id="stage-modal" onclick="closeStageModal(event)">
+        <div class="parchment-dialog" onclick="event.stopPropagation()">
+            <button onclick="document.getElementById('stage-modal').style.display='none'" class="absolute top-3 right-3 w-8 h-8 rounded-full bg-[#8a2019] text-[#f5ebd6] border border-[#d4a146] flex items-center justify-center hover:brightness-110">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+
+            <div class="flex items-center gap-2 border-b-2 border-[#b5894c] pb-2 mb-3">
+                <span id="modal-badge" class="px-2.5 py-0.5 rounded bg-[#9c221b] text-[#fff6de] text-xs font-bold">Bí Cảnh</span>
+                <h2 id="modal-stage-title" class="font-wuxia font-bold text-xl text-[#5c120d]">Kiếm Linh Cốc</h2>
+            </div>
+
+            <p id="modal-stage-desc" class="text-sm leading-relaxed text-[#382314] mb-3"></p>
+
+            <div id="modal-battle-meta" class="bg-[#e8d9bc] border border-[#b5894c] rounded-lg p-3 mb-4 text-xs space-y-1.5">
+                <div class="flex justify-between">
+                    <span class="font-bold text-[#4a2c18]">Thủ Lĩnh Trấn Giữ:</span>
+                    <span id="modal-boss-name" class="font-bold text-[#9c221b]">Kiếm Ma Độc Cô</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="font-bold text-[#4a2c18]">Cấp Độ Đề Nghị:</span>
+                    <span id="modal-rec-lvl" class="font-bold text-[#2b4c3b]">Cấp 75 - 80</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="font-bold text-[#4a2c18]">Vật Phẩm Rơi:</span>
+                    <span id="modal-drops" class="font-bold text-[#784912]">Mảnh Thần Binh, Tâm Pháp Tàn Quyển</span>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3">
+                <button onclick="document.getElementById('stage-modal').style.display='none'" class="px-4 py-1.5 rounded-full border border-[#784912] text-[#4a2c18] font-bold text-sm hover:bg-black/5">
+                    Rời Đi
+                </button>
+                <button id="modal-enter-btn" onclick="startBattleTransition()" class="btn-battle-seal text-sm">
+                    <i class="fa-solid fa-khanda mr-1.5"></i>Xuất Chiến
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // =========================================================================
+    // 1. DỮ LIỆU CÁC ĐỊA DANH GIANG HỒ TRÊN BẢN ĐỒ THỦY MẶC
+    // =========================================================================
+    const worldLocations = [
+        {
+            id: 'kiem-linh-coc',
+            name: 'Kiếm Linh Cốc',
+            x: 25,
+            y: 34,
+            isBoss: false,
+            badge: 'Thánh Địa Kiếm Đạo',
+            boss: 'Kiếm Linh Hộ Pháp (Lv.74)',
+            recLvl: 'Cấp 72 - 76',
+            drops: 'Huyền Thiết Tinh Khoáng, Kiếm Ý Đan',
+            desc: 'Thung lũng quanh năm mây mù bao phủ, hàng vạn thanh cổ kiếm cắm trên vách đá rít lên từng hồi mỗi khi gió núi thổi qua.'
+        },
+        {
+            id: 'thien-hoa-dan-dinh',
+            name: 'Thiên Hỏa Đỉnh',
+            x: 50,
+            y: 47,
+            isBoss: true, // Địa điểm trung tâm phát sáng cam vàng & lửa huyền bí
+            badge: 'Trọng Điểm Quyết Chiến',
+            boss: 'Hỏa Kỳ Lân - Viêm Đế (Lv.78)',
+            recLvl: 'Cấp 76+',
+            drops: 'Thần Binh Hỏa Lân, Bí Kíp Cửu Dương, 5000 Vàng',
+            desc: 'Đỉnh núi linh thiêng hội tụ địa hỏa ngàn năm giữa lòng dãy núi thủy mặc. Hào quang cam vàng rực cháy báo hiệu Thần Thú sắp xuất thế!'
+        },
+        {
+            id: 'xanh-tu-nam',
+            name: 'Xanh Tử Nam',
+            x: 74,
+            y: 31,
+            isBoss: false,
+            badge: 'Rừng Tùng Cổ Tự',
+            boss: 'Thanh Tùng Đạo Nhân (Lv.75)',
+            recLvl: 'Cấp 74 - 77',
+            drops: 'Tùng Hạc Diên Niên Đan, Mảnh Áo Choàng',
+            desc: 'Khu rừng tùng cổ thụ ngàn năm tuổi ẩn hiện ngôi cổ tự trầm mặc bên thác nước trắng xóa đổ từ đỉnh non cao.'
+        },
+        {
+            id: 'mon-quan',
+            name: 'Môn Quan',
+            x: 69,
+            y: 66,
+            isBoss: false,
+            badge: 'Cửa Ải Yết Hầu',
+            boss: 'Trấn Quan Đại Tướng (Lv.76)',
+            recLvl: 'Cấp 75 - 78',
+            drops: 'Lệnh Bài Quân Công, Giáp Trụ Huyền Vũ',
+            desc: 'Cửa ải hiểm yếu nối liền Trung Nguyên và Tây Vực, những bậc thang đá uốn lượn men theo vách núi dựng đứng.'
+        },
+        {
+            id: 'van-mong-dam',
+            name: 'Vân Mộng Đầm',
+            x: 31,
+            y: 67,
+            isBoss: false,
+            badge: 'Thủy Mặc U Cốc',
+            boss: 'Thủy Nguyệt Tiên Tử (Lv.73)',
+            recLvl: 'Cấp 70 - 75',
+            drops: 'Băng Tâm Ngọc Bội, Linh Khí Thủy Nguyên',
+            desc: 'Đầm nước tĩnh lặng phản chiếu bóng núi mờ sương, nơi các bậc ẩn sĩ thường ngồi thuyền câu cá ngộ đạo.'
+        }
+    ];
+
+    let selectedLocation = worldLocations[1];
+
+    function renderMapMarkers() {
+        const layer = document.getElementById('map-markers-layer');
+        layer.innerHTML = '';
+
+        worldLocations.forEach(loc => {
+            const el = document.createElement('div');
+            el.className = `location-marker ${loc.isBoss ? 'boss-node' : ''}`;
+            el.style.left = `${loc.x}%`;
+            el.style.top = `${loc.y}%`;
+            el.onclick = () => openLocationModal(loc);
+
+            if (loc.isBoss) {
+                el.innerHTML = `
+                    <div class="scroll-nameplate">
+                        <i class="fa-solid fa-fire text-red-700"></i>
+                        <span>${loc.name}</span>
+                    </div>
+                    <div class="boss-flame-ring">
+                        <i class="fa-solid fa-dragon text-[#78130e] text-[clamp(18px,1.6vw,28px)] drop-shadow"></i>
+                    </div>
+                `;
+            } else {
+                el.innerHTML = `
+                    <div class="scroll-nameplate">
+                        <span>${loc.name}</span>
+                    </div>
+                    <div class="normal-node-pin">
+                        <i class="fa-solid fa-torii-gate"></i>
+                    </div>
+                `;
+            }
+
+            layer.appendChild(el);
+        });
+    }
+
+    function openLocationModal(loc) {
+        selectedLocation = loc;
+        document.getElementById('modal-badge').textContent = loc.badge;
+        document.getElementById('modal-stage-title').textContent = loc.name;
+        document.getElementById('modal-stage-desc').textContent = loc.desc;
+        document.getElementById('modal-boss-name').textContent = loc.boss;
+        document.getElementById('modal-rec-lvl').textContent = loc.recLvl;
+        document.getElementById('modal-drops').textContent = loc.drops;
+        document.getElementById('modal-battle-meta').style.display = 'block';
+        document.getElementById('modal-enter-btn').style.display = 'inline-block';
+        document.getElementById('stage-modal').style.display = 'flex';
+    }
+
+    function openMenuInfo(title, desc) {
+        document.getElementById('modal-badge').textContent = 'Hệ Thống Giang Hồ';
+        document.getElementById('modal-stage-title').textContent = title;
+        document.getElementById('modal-stage-desc').textContent = desc;
+        document.getElementById('modal-battle-meta').style.display = 'none';
+        document.getElementById('modal-enter-btn').style.display = 'none';
+        document.getElementById('stage-modal').style.display = 'flex';
+    }
+
+    function closeStageModal(e) {
+        if (e.target.id === 'stage-modal') {
+            document.getElementById('stage-modal').style.display = 'none';
+        }
+    }
+
+    function startBattleTransition() {
+        const btn = document.getElementById('modal-enter-btn');
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1.5"></i>Đang Khởi Hành...';
+        if (window.triggerSacredFlameBurst) {
+            window.triggerSacredFlameBurst();
+        }
+        setTimeout(() => {
+            btn.innerHTML = '<i class="fa-solid fa-khanda mr-1.5"></i>Xuất Chiến';
+            document.getElementById('stage-modal').style.display = 'none';
+        }, 900);
+    }
+
+    // =========================================================================
+    // 2. THREE.JS: DỰNG THẾ GIỚI NÚI NON THỦY MẶC ĐA LỚP, THÁC NƯỚC & ĐÌNH ĐÀI 3D
+    // =========================================================================
+    function initInkWashWorld3D() {
+        const container = document.getElementById('three-world');
+        const scene = new THREE.Scene();
+
+        // Sương mù thủy mặc màu giấy cổ pha xám khói
+        scene.fog = new THREE.FogExp2(0xd8ceb8, 0.032);
+
+        const camera = new THREE.PerspectiveCamera(42, container.clientWidth / container.clientHeight, 0.1, 200);
+        camera.position.set(0, 12.5, 26);
+        camera.lookAt(0, 2.5, 0);
+
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        // Ánh sáng dịu kiểu tranh thủy mặc + điểm sáng vàng cam ở trung tâm
+        const hemiLight = new THREE.HemisphereLight(0xf7efe0, 0x3a403d, 1.15);
+        scene.add(hemiLight);
+
+        const sunLight = new THREE.DirectionalLight(0xfff2d6, 0.9);
+        sunLight.position.set(-15, 25, 12);
+        scene.add(sunLight);
+
+        // Ánh sáng lửa thiêng tại Thiên Hỏa Đỉnh (giữa bản đồ)
+        const sacredLight = new THREE.PointLight(0xff7b00, 3.2, 16);
+        sacredLight.position.set(0, 4.5, 1.5);
+        scene.add(sacredLight);
+
+        const worldGroup = new THREE.Group();
+        scene.add(worldGroup);
+
+        // Mặt hồ thủy mặc tĩnh lặng ở thung lũng
+        const waterGeo = new THREE.PlaneGeometry(90, 60);
+        const waterMat = new THREE.MeshStandardMaterial({
+            color: 0x8f968e,
+            roughness: 0.25,
+            metalness: 0.15,
+            transparent: true,
+            opacity: 0.85
+        });
+        const waterPlane = new THREE.Mesh(waterGeo, waterMat);
+        waterPlane.rotation.x = -Math.PI / 2;
+        waterPlane.position.y = 0;
+        worldGroup.add(waterPlane);
+
+        // Hàm tạo khối núi đá thủy mặc (đỉnh nhọn, phân tầng đậm nhạt theo độ xa)
+        function createInkMountain(x, z, radius, height, inkShade) {
+            const geo = new THREE.ConeGeometry(radius, height, 7, 4);
+            // Biến dạng nhẹ các đỉnh cho tự nhiên như nét cọ sơn thủy
+            const pos = geo.attributes.position;
+            for (let i = 0; i < pos.count; i++) {
+                const vx = pos.getX(i);
+                const vy = pos.getY(i);
+                const vz = pos.getZ(i);
+                if (vy < height * 0.45) {
+                    const noise = Math.sin(vx * 1.7 + vz * 1.3) * 0.45;
+                    pos.setX(i, vx + noise);
+                    pos.setZ(i, vz + noise * 0.8);
+                }
+            }
+            geo.computeVertexNormals();
+
+            const mat = new THREE.MeshStandardMaterial({
+                color: inkShade,
+                roughness: 0.92,
+                metalness: 0.05,
+                flatShading: true
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(x, height / 2 - 0.2, z);
+            mesh.rotation.y = Math.random() * Math.PI;
+            worldGroup.add(mesh);
+
+            // Phủ tuyết / mây trắng nhẹ trên chóp núi cao
+            if (height > 8.5) {
+                const capGeo = new THREE.ConeGeometry(radius * 0.34, height * 0.32, 7);
+                const capMat = new THREE.MeshBasicMaterial({
+                    color: 0xf5efe2,
+                    transparent: true,
+                    opacity: 0.65
+                });
+                const cap = new THREE.Mesh(capGeo, capMat);
+                cap.position.set(x, height * 0.84, z);
+                cap.rotation.y = mesh.rotation.y;
+                worldGroup.add(cap);
+            }
+        }
+
+        // Dãy núi xa mờ (tông xám khói nhạt)
+        const farMountains = [
+            [-18, -16, 6.5, 13.5], [-10, -18, 7.5, 15.5], [-1, -17, 6.8, 14.0],
+            [9, -18, 8.0, 16.2], [19, -15, 6.5, 13.0], [-24, -10, 6.0, 11.5], [24, -11, 6.2, 12.0]
+        ];
+        farMountains.forEach(m => createInkMountain(m[0], m[1], m[2], m[3], 0x7e8580));
+
+        // Dãy núi trung cảnh (tông xám đá & xanh rêu trầm)
+        const midMountains = [
+            [-13, -6, 4.8, 9.5], [-6.5, -5, 4.2, 8.2], [0, -2.5, 4.6, 8.8],
+            [7.5, -6, 5.2, 10.2], [14.5, -4, 4.5, 8.6], [-16, 3, 4.4, 7.5], [15.5, 4, 4.8, 8.0]
+        ];
+        midMountains.forEach(m => createInkMountain(m[0], m[1], m[2], m[3], 0x454f48));
+
+        // Tiền cảnh núi đá đậm mực Tàu (tạo chiều sâu thị giác)
+        const nearMountains = [
+            [-11, 7.5, 3.6, 5.8], [10.5, 7.8, 3.8, 6.2], [-18, 10, 4.2, 6.8], [18, 9.5, 4.5, 7.2]
+        ];
+        nearMountains.forEach(m => createInkMountain(m[0], m[1], m[2], m[3], 0x262b28));
+
+        // Thác nước trắng đổ từ dãy núi Xanh Tử Nam
+        const waterfallGeo = new THREE.PlaneGeometry(0.95, 7.5);
+        const waterfallMat = new THREE.MeshBasicMaterial({
+            color: 0xf7f3e8,
+            transparent: true,
+            opacity: 0.78,
+            side: THREE.DoubleSide
+        });
+        const waterfall = new THREE.Mesh(waterfallGeo, waterfallMat);
+        waterfall.position.set(7.6, 3.8, -1.2);
+        waterfall.rotation.x = -0.28;
+        worldGroup.add(waterfall);
+
+        // Đình đài & Cổ tự mái cong ẩn hiện giữa núi
+        function createPagoda(x, y, z, scale = 1) {
+            const pagoda = new THREE.Group();
+            pagoda.position.set(x, y, z);
+            pagoda.scale.setScalar(scale);
+
+            const body = new THREE.Mesh(
+                new THREE.BoxGeometry(0.9, 0.7, 0.9),
+                new THREE.MeshStandardMaterial({ color: 0x5c3a21 })
+            );
+            pagoda.add(body);
+
+            const roof1 = new THREE.Mesh(
+                new THREE.ConeGeometry(0.95, 0.45, 4),
+                new THREE.MeshStandardMaterial({ color: 0x242625 })
+            );
+            roof1.position.y = 0.55;
+            roof1.rotation.y = Math.PI / 4;
+            pagoda.add(roof1);
+
+            const roof2 = new THREE.Mesh(
+                new THREE.ConeGeometry(0.65, 0.38, 4),
+                new THREE.MeshStandardMaterial({ color: 0x242625 })
+            );
+            roof2.position.y = 0.92;
+            roof2.rotation.y = Math.PI / 4;
+            pagoda.add(roof2);
+
+            worldGroup.add(pagoda);
+        }
+        createPagoda(-6.2, 4.2, -1.8, 0.85);
+        createPagoda(8.8, 4.8, -1.5, 0.9);
+        createPagoda(6.8, 3.2, 5.2, 0.8);
+
+        // Rừng tùng cổ thụ thủy mặc chấm phá quanh thung lũng
+        function createPineTree(x, z, scale = 1) {
+            const tree = new THREE.Group();
+            tree.position.set(x, 0.1, z);
+            tree.scale.setScalar(scale);
+
+            const trunk = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.06, 0.1, 0.8, 6),
+                new THREE.MeshStandardMaterial({ color: 0x2b1d12 })
+            );
+            trunk.position.y = 0.4;
+            tree.add(trunk);
+
+            const foliageMat = new THREE.MeshStandardMaterial({ color: 0x283b2e, flatShading: true });
+            for (let i = 0; i < 3; i++) {
+                const cone = new THREE.Mesh(new THREE.ConeGeometry(0.45 - i * 0.1, 0.55, 6), foliageMat);
+                cone.position.y = 0.85 + i * 0.35;
+                tree.add(cone);
+            }
+            worldGroup.add(tree);
+        }
+
+        const treeCoords = [
+            [-8.5, 4.5], [-7.8, 5.2], [-9.2, 5.5], [5.2, 4.8], [6.0, 5.6],
+            [-3.5, 6.2], [3.2, 6.5], [11.5, 4.2], [-12.5, 3.8], [1.8, 4.2]
+        ];
+        treeCoords.forEach(t => createPineTree(t[0], t[1], 0.8 + Math.random() * 0.45));
+
+        // Đàn Đỉnh Lửa Thiêng phát sáng cam vàng tại trung tâm bản đồ (Thiên Hỏa Đỉnh)
+        const altarRing = new THREE.Mesh(
+            new THREE.TorusGeometry(1.15, 0.08, 12, 36),
+            new THREE.MeshBasicMaterial({ color: 0xffa62b })
+        );
+        altarRing.rotation.x = Math.PI / 2;
+        altarRing.position.set(0, 1.35, 1.2);
+        worldGroup.add(altarRing);
+
+        const energyCore = new THREE.Mesh(
+            new THREE.OctahedronGeometry(0.48, 1),
+            new THREE.MeshBasicMaterial({ color: 0xffdf6b })
+        );
+        energyCore.position.set(0, 2.2, 1.2);
+        worldGroup.add(energyCore);
+
+        // Tương tác kéo chuột xoay nhẹ toàn cảnh sơn thủy
+        let isDragging = false;
+        let prevX = 0;
+        let targetRotY = 0;
+
+        container.addEventListener('mousedown', e => {
+            isDragging = true;
+            prevX = e.clientX;
+        });
+        window.addEventListener('mouseup', () => isDragging = false);
+        window.addEventListener('mousemove', e => {
+            if (!isDragging) return;
+            targetRotY += (e.clientX - prevX) * 0.004;
+            targetRotY = Math.max(-0.35, Math.min(0.35, targetRotY));
+            prevX = e.clientX;
+        });
+
+        window.addEventListener('resize', () => {
+            if (!container.clientWidth || !container.clientHeight) return;
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        });
+
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            const t = clock.getElapsedTime();
+
+            // Nhịp thở của lửa thiêng trung tâm
+            energyCore.rotation.y = t * 1.6;
+            energyCore.position.y = 2.2 + Math.sin(t * 2.5) * 0.18;
+            altarRing.scale.setScalar(1 + Math.sin(t * 3) * 0.08);
+            sacredLight.intensity = 2.8 + Math.sin(t * 4) * 0.7;
+
+            // Xoay mượt cảnh quan sơn thủy
+            worldGroup.rotation.y += (targetRotY - worldGroup.rotation.y) * 0.06;
+
+            renderer.render(scene, camera);
+        }
+        animate();
+    }
+
+    // =========================================================================
+    // 3. PIXIJS: HIỆU ỨNG SƯƠNG MÙ TRÔI, HẠT LỬA THIÊNG & CÁNH HOA ĐÀO RƠI
+    // =========================================================================
+    function initPixiAtmosphere() {
+        const container = document.getElementById('pixi-atmosphere');
+        const app = new PIXI.Application({
+            resizeTo: container,
+            transparent: true,
+            antialias: true
+        });
+        container.appendChild(app.view);
+
+        const wisps = [];
+        const embers = [];
+        const petals = [];
+
+        // 1. Tạo các dải mây sương thủy mặc trôi ngang thung lũng
+        for (let i = 0; i < 8; i++) {
+            const mist = new PIXI.Graphics();
+            mist.beginFill(0xf7f2e6, 0.14);
+            mist.drawEllipse(0, 0, 140 + Math.random() * 110, 26 + Math.random() * 18);
+            mist.endFill();
+            mist.x = Math.random() * app.screen.width;
+            mist.y = app.screen.height * (0.28 + Math.random() * 0.45);
+            mist.speedX = 0.18 + Math.random() * 0.25;
+            app.stage.addChild(mist);
+            wisps.push(mist);
+        }
+
+        // 2. Tạo hạt lửa & linh khí cam vàng bốc lên ở trung tâm Thiên Hỏa Đỉnh
+        function spawnSacredEmber(burst = false) {
+            const g = new PIXI.Graphics();
+            const color = Math.random() > 0.4 ? 0xffa726 : 0xffe082;
+            g.beginFill(color, 0.85);
+            g.drawCircle(0, 0, burst ? (Math.random() * 3.5 + 1.5) : (Math.random() * 2.2 + 1));
+            g.endFill();
+
+            const cx = app.screen.width * 0.5;
+            const cy = app.screen.height * 0.51;
+            g.x = cx + (Math.random() - 0.5) * (burst ? 90 : 55);
+            g.y = cy + (Math.random() - 0.5) * 25;
+            g.vx = (Math.random() - 0.5) * (burst ? 4.5 : 0.7);
+            g.vy = -Math.random() * (burst ? 5.0 : 1.5) - 0.5;
+            g.life = 1.0;
+            g.decay = burst ? 0.02 : (0.01 + Math.random() * 0.01);
+
+            app.stage.addChild(g);
+            embers.push(g);
+        }
+
+        // 3. Cánh hoa đào cổ phong bay nhẹ trong gió
+        for (let i = 0; i < 22; i++) {
+            const p = new PIXI.Graphics();
+            p.beginFill(0xf2b8c6, 0.65);
+            p.drawEllipse(0, 0, 4, 2.2);
+            p.endFill();
+            p.x = Math.random() * app.screen.width;
+            p.y = Math.random() * app.screen.height;
+            p.vx = 0.4 + Math.random() * 0.6;
+            p.vy = 0.35 + Math.random() * 0.45;
+            p.phase = Math.random() * Math.PI * 2;
+            app.stage.addChild(p);
+            petals.push(p);
+        }
+
+        window.triggerSacredFlameBurst = () => {
+            for (let i = 0; i < 45; i++) spawnSacredEmber(true);
+        };
+
+        app.ticker.add(() => {
+            // Cập nhật mây sương
+            wisps.forEach(m => {
+                m.x += m.speedX;
+                if (m.x - 200 > app.screen.width) m.x = -200;
+            });
+
+            // Sinh thêm đốm lửa thiêng trung tâm
+            if (embers.length < 32 && Math.random() < 0.4) {
+                spawnSacredEmber(false);
+            }
+            for (let i = embers.length - 1; i >= 0; i--) {
+                const e = embers[i];
+                e.x += e.vx;
+                e.y += e.vy;
+                e.life -= e.decay;
+                e.alpha = Math.max(0, e.life);
+                if (e.life <= 0) {
+                    app.stage.removeChild(e);
+                    e.destroy();
+                    embers.splice(i, 1);
+                }
+            }
+
+            // Cập nhật cánh hoa rơi
+            petals.forEach(p => {
+                p.phase += 0.04;
+                p.x += p.vx + Math.sin(p.phase) * 0.3;
+                p.y += p.vy;
+                p.rotation += 0.03;
+                if (p.x > app.screen.width) p.x = 0;
+                if (p.y > app.screen.height) p.y = 0;
+            });
+        });
+    }
+
+    // Khởi chạy toàn bộ khi trang tải xong
+    window.onload = function () {
+        renderMapMarkers();
+        initInkWashWorld3D();
+        initPixiAtmosphere();
+    };
+</script>
+</body>
+</html>

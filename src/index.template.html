@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b0805">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23140c07'/%3E%3Ctext x='32' y='45' font-size='36' text-anchor='middle' fill='%23ffd76b'%3E%E6%AD%A6%3C/text%3E%3C/svg%3E">
+<title>Mộng Võ Lâm 3D — Soha · Biện Kinh Thành</title>
+<style>
+__STYLE__
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- ============ 3D ============ -->
+  <canvas id="three-canvas"></canvas>
+  <div id="pixi-layer" class="layer"></div>
+  <div id="nameplates" class="layer"></div>
+  <div id="labels" class="layer"></div>
+
+  <!-- ============ HUD THẾ GIỚI ============ -->
+  <div id="hud-world" class="hud"></div>
+
+  <!-- ============ HUD CHIẾN TRƯỜNG ============ -->
+  <div id="hud-battle" class="hud"></div>
+
+  <!-- ============ HỒ SƠ NHÂN VẬT (table infoscene) ============ -->
+  <section id="info-screen" class="info" aria-hidden="true"></section>
+
+  <!-- ============ ĐỐI THOẠI NPC ============ -->
+  <div id="dialogue" class="dialogue"></div>
+
+  <!-- ============ MODAL DÙNG CHUNG ============ -->
+  <div id="modal" class="modal" aria-hidden="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2><span id="modal-icon">📜</span><span id="modal-title">Thông tin</span></h2>
+        <button class="x" data-act="close-modal" aria-label="Đóng">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- ============ KẾT QUẢ TRẬN ĐẤU ============ -->
+  <div id="result" class="result"></div>
+
+  <!-- ============ THÔNG BÁO ============ -->
+  <div id="toasts"></div>
+
+  <!-- ============ CHUYỂN CẢNH ============ -->
+  <div id="fade" class="fade"></div>
+
+  <!-- ============ MÀN HÌNH TẢI ============ -->
+  <div id="loading" class="loading">
+    <div class="lt">MỘNG VÕ LÂM</div>
+    <div class="ls">Soha · Cửu Ngũ Chí Tôn</div>
+    <div class="lbar"><i id="load-bar"></i></div>
+    <div class="ltip" id="load-tip">Đang dựng Biện Kinh Thành…</div>
+  </div>
+</div>
+
+<script>
+__THREE__
+</script>
+<script>
+__PIXI__
+</script>
+<script>
+__GAME__
+</script>
+</body>
+</html>

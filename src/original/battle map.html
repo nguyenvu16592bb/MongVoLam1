@@ -1,0 +1,1951 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mộng Võ Lâm - Võ Lâm Giang Hồ 3D</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js r128 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Font Awesome & Google Fonts -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Playfair+Display:ital,wght@0,700;0,900;1,700&family=Roboto+Condensed:wght@700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --gold-light: #ffe885;
+            --gold-main: #d4af37;
+            --gold-dark: #7a5210;
+            --crimson: #b91c1c;
+            --jade: #15803d;
+            --parchment: #f3e5c8;
+            --parchment-dark: #d8c094;
+        }
+
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #090a0f;
+            overflow: hidden;
+            font-family: 'Roboto Condensed', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Khung tỉ lệ chuẩn 16:9 co giãn tự động */
+        #game-viewport {
+            position: relative;
+            width: 100vw;
+            height: 56.25vw; /* 16:9 */
+            max-height: 100vh;
+            max-width: 177.78vh; /* 16:9 */
+            background: #111812;
+            box-shadow: 0 0 60px rgba(0, 0, 0, 0.95), 0 0 0 2px #4a3515;
+            overflow: hidden;
+        }
+
+        #three-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: block;
+            z-index: 1;
+        }
+
+        /* Lớp phủ giao diện 2D & Nhãn nhân vật */
+        #world-labels-layer {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 5;
+            overflow: hidden;
+        }
+
+        #hud-layer {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .pointer-auto {
+            pointer-events: auto;
+        }
+
+        /* Kiểu chữ Kiếm Hiệp & Thư Pháp */
+        .wuxia-title {
+            font-family: 'Playfair Display', serif;
+            text-shadow: 0 2px 4px #000, 0 0 10px rgba(255, 200, 0, 0.6);
+        }
+
+        .wuxia-stroke {
+            text-shadow: 
+                -1.5px -1.5px 0 #000,  
+                 1.5px -1.5px 0 #000,
+                -1.5px  1.5px 0 #000,
+                 1.5px  1.5px 0 #000,
+                 0px    3px   5px rgba(0,0,0,0.9);
+        }
+
+        .skill-calligraphy {
+            font-family: 'Playfair Display', serif;
+            font-style: italic;
+            font-weight: 900;
+            background: linear-gradient(180deg, #ff77ff 0%, #c026d3 50%, #581c87 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(0 0 2px #fff) drop-shadow(0 3px 6px #000);
+            animation: skillCalligraphyAnim 1.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        @keyframes skillCalligraphyAnim {
+            0% { transform: translate(-50%, -50%) scale(2.2); opacity: 0; }
+            20% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+            80% { transform: translate(-50%, -60%) scale(1.05); opacity: 1; }
+            100% { transform: translate(-50%, -80%) scale(1.1); opacity: 0; }
+        }
+
+        /* Số sát thương bay lên giống ảnh 2 */
+        .floating-dmg {
+            position: absolute;
+            font-family: 'Playfair Display', serif;
+            font-weight: 900;
+            pointer-events: none;
+            white-space: nowrap;
+            transform: translate(-50%, -50%);
+            animation: dmgFloatUp 1.15s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            z-index: 20;
+        }
+
+        @keyframes dmgFloatUp {
+            0% { transform: translate(-50%, -20%) scale(0.5); opacity: 0; }
+            15% { transform: translate(-50%, -50%) scale(1.25); opacity: 1; }
+            30% { transform: translate(-50%, -65%) scale(1.0); opacity: 1; }
+            100% { transform: translate(-50%, -145%) scale(0.95); opacity: 0; }
+        }
+
+        /* Khung viền Vàng Cổ Trang */
+        .wuxia-panel {
+            background: linear-gradient(180deg, rgba(34, 24, 16, 0.92) 0%, rgba(18, 12, 8, 0.96) 100%);
+            border: 2px solid #b8860b;
+            box-shadow: inset 0 0 12px rgba(212, 175, 55, 0.3), 0 4px 12px rgba(0,0,0,0.8);
+            border-radius: 8px;
+        }
+
+        .parchment-panel {
+            background: radial-gradient(circle at center, #f7ebd2 0%, #e4cfa3 75%, #c9ab73 100%);
+            border: 3px solid #7c4d12;
+            box-shadow: inset 0 0 25px rgba(101, 61, 14, 0.45), 0 10px 30px rgba(0,0,0,0.9);
+            color: #3b230a;
+        }
+
+        /* Nút Kỹ Năng Góc Phải Trên (Giống Ảnh 2) */
+        .skill-btn {
+            position: relative;
+            width: 64px;
+            height: 64px;
+            border-radius: 10px;
+            border: 2.5px solid #ffd700;
+            box-shadow: 0 0 12px rgba(255, 215, 0, 0.5), inset 0 0 10px rgba(0,0,0,0.8);
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.12s ease, box-shadow 0.12s ease;
+        }
+        .skill-btn:hover {
+            transform: scale(1.07);
+            box-shadow: 0 0 18px rgba(255, 230, 100, 0.9);
+        }
+        .skill-btn:active {
+            transform: scale(0.94);
+        }
+
+        /* Nút X1 / Auto Xoáy Tím Đen (Giống Ảnh 2) */
+        .orb-auto-btn {
+            width: 68px;
+            height: 68px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 35% 35%, #701a75 0%, #2e0632 65%, #09010a 100%);
+            border: 3px solid #d946ef;
+            box-shadow: 0 0 18px rgba(217, 70, 239, 0.7), inset 0 0 15px #000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .orb-auto-btn:hover {
+            transform: scale(1.08);
+            box-shadow: 0 0 25px rgba(232, 121, 249, 1);
+        }
+
+        /* Thanh Khí Thế Dưới Đáy (Giống Ảnh 2) */
+        .qi-bar-container {
+            width: 240px;
+            height: 22px;
+            background: #1c130d;
+            border: 2px solid #d4af37;
+            border-radius: 6px;
+            padding: 2px;
+            box-shadow: 0 3px 8px rgba(0,0,0,0.9);
+            position: relative;
+        }
+        .qi-bar-fill-green {
+            height: 100%;
+            background: linear-gradient(90deg, #15803d 0%, #4ade80 50%, #bbf7d0 100%);
+            border-radius: 3px;
+            transition: width 0.25s ease;
+        }
+        .qi-bar-fill-red {
+            height: 100%;
+            background: linear-gradient(90deg, #7f1d1d 0%, #ef4444 50%, #fca5a5 100%);
+            border-radius: 3px;
+            transition: width 0.25s ease;
+        }
+
+        /* Nút Menu Tròn Cổ Trang Dưới Đáy (Giống Ảnh 1 & 4) */
+        .bottom-nav-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            cursor: pointer;
+            transition: transform 0.15s ease;
+        }
+        .bottom-nav-item:hover {
+            transform: translateY(-5px) scale(1.06);
+        }
+        .bottom-nav-icon {
+            width: 54px;
+            height: 54px;
+            border-radius: 14px;
+            background: radial-gradient(circle at top, #fff3b0, #d97706 70%, #78350f);
+            border: 2.5px solid #fef08a;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.85);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+
+        /* Thanh cuộn tùy chỉnh */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #b45309; border-radius: 4px; }
+
+        /* Nhãn Áp Chế Đỏ Dọc (Giống Ảnh 2) */
+        .ap-che-badge {
+            background: linear-gradient(180deg, #dc2626 0%, #7f1d1d 100%);
+            border: 1.5px solid #fca5a5;
+            box-shadow: 0 0 10px rgba(220, 38, 38, 0.8);
+            writing-mode: horizontal-tb;
+            line-height: 1.05;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-viewport">
+    <!-- Canvas 3D Three.js -->
+    <canvas id="three-canvas"></canvas>
+
+    <!-- Lớp Nhãn Nhân Vật & Thanh Máu Trong Thế Giới 3D -->
+    <div id="world-labels-layer"></div>
+
+    <!-- Lớp Giao Diện MMORPG -->
+    <div id="hud-layer">
+        
+        <!-- GÓC TRÊN BÊN TRÁI: Thông Tin & Chỉ Số (Giống Ảnh 1 & 2) -->
+        <div class="absolute top-2 left-3 flex flex-col gap-1.5 pointer-auto">
+            <!-- Khung Nhân Vật Chính & Tài Nguyên -->
+            <div class="flex items-start gap-2">
+                <!-- Cờ Cấp Độ & Chân Dung (Giống Ảnh 1 & 4) -->
+                <div onclick="GameUI.openModal('character')" class="relative cursor-pointer group">
+                    <div class="w-14 h-16 bg-gradient-to-b from-red-600 via-red-800 to-amber-950 border-2 border-yellow-400 rounded-b-2xl flex flex-col items-center justify-center shadow-lg group-hover:scale-105 transition">
+                        <span class="text-[10px] text-yellow-200 uppercase font-bold tracking-wider">Cấp</span>
+                        <span id="hud-player-lvl" class="text-2xl font-black text-yellow-300 wuxia-stroke leading-none">100</span>
+                    </div>
+                    <div class="absolute -bottom-1 -right-2 bg-amber-900 border border-yellow-400 text-yellow-300 text-[10px] font-bold px-1.5 rounded">
+                        VIP14
+                    </div>
+                </div>
+
+                <!-- Bảng Chỉ Số Chiến Đấu Trực Tiếp (Giống Ảnh 2) -->
+                <div class="flex flex-col gap-0.5 bg-black/45 backdrop-blur-[2px] px-2.5 py-1.5 rounded-lg border border-yellow-600/40">
+                    <div class="flex items-center gap-3">
+                        <span id="hud-top-name" class="text-emerald-300 font-bold text-sm wuxia-stroke tracking-wide">Ma Giáo Cao Thủ</span>
+                        <span class="text-xs text-amber-300 font-bold wuxia-stroke"><i class="fas fa-khanda text-sky-300 mr-1"></i><span id="stat-atk">1620953</span></span>
+                        <span class="text-xs text-cyan-300 font-bold wuxia-stroke"><i class="fas fa-feather-alt mr-1"></i><span id="stat-spd">0.10</span></span>
+                    </div>
+                    
+                    <!-- Thanh HP Đỏ & Chỉ Số -->
+                    <div class="flex items-center gap-2">
+                        <div class="relative w-36 h-4 bg-gray-900 border border-yellow-500/80 rounded overflow-hidden">
+                            <div id="hud-hp-bar" class="h-full bg-gradient-to-r from-red-700 via-red-500 to-orange-400 transition-all duration-200" style="width: 85%;"></div>
+                            <span id="hud-hp-text" class="absolute inset-0 text-[11px] font-bold text-white flex items-center justify-center wuxia-stroke">5819928/30677004</span>
+                        </div>
+                        <span class="text-xs text-gray-200 font-bold wuxia-stroke"><i class="fas fa-shield-alt text-amber-400 mr-1"></i><span id="stat-def">1620822</span></span>
+                        <span class="text-xs text-amber-200 font-bold wuxia-stroke"><i class="fas fa-shoe-prints text-orange-400 mr-1"></i><span id="stat-dodge">3.74</span></span>
+                    </div>
+
+                    <!-- Thanh Nội Lực MP Xanh & Chỉ Số -->
+                    <div class="flex items-center gap-2">
+                        <div class="relative w-36 h-4 bg-gray-900 border border-sky-400/80 rounded overflow-hidden">
+                            <div id="hud-mp-bar" class="h-full bg-gradient-to-r from-blue-800 via-blue-500 to-cyan-300 transition-all duration-200" style="width: 68%;"></div>
+                            <span id="hud-mp-text" class="absolute inset-0 text-[11px] font-bold text-white flex items-center justify-center wuxia-stroke">269151/12966576</span>
+                        </div>
+                        <span class="text-xs text-red-300 font-bold wuxia-stroke"><i class="fas fa-heart text-red-500 mr-1"></i><span id="stat-crit">170000</span></span>
+                        <span class="text-xs text-purple-200 font-bold wuxia-stroke"><i class="fas fa-yin-yang text-white mr-1"></i><span id="stat-qi">162082</span></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hàng Nút Thoát Trận, Sao Đánh Giá & Tiền Tệ (Giống Ảnh 1 & 2) -->
+            <div class="flex items-center gap-2 mt-0.5">
+                <button onclick="GameEngine.togglePause()" title="Tạm dừng / Cài đặt" class="w-8 h-8 rounded-full bg-stone-800/90 border border-amber-500 text-red-500 hover:bg-red-950 flex items-center justify-center shadow">
+                    <i class="fas fa-times text-base"></i>
+                </button>
+                <div class="flex items-center text-yellow-400 text-sm drop-shadow">
+                    <i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star text-gray-500"></i>
+                </div>
+                <!-- KNB & Bạc -->
+                <div class="flex items-center gap-2 bg-black/60 border border-yellow-600/50 rounded-full px-2.5 py-0.5 text-xs">
+                    <span class="text-yellow-300 font-bold"><i class="fas fa-coins text-yellow-400 mr-1"></i><span id="res-gold">14995138</span></span>
+                    <span class="text-slate-200 font-bold"><i class="fas fa-gem text-cyan-300 mr-1"></i><span id="res-silver">11158534816</span></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- GÓC TRÊN GIỮA: Chọn Chiến Trường (3 Map từ Ảnh 1, 2, 3) -->
+        <div class="absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-black/65 border border-amber-500/60 px-2 py-1 rounded-full pointer-auto shadow-lg">
+            <button onclick="GameEngine.switchMap('bamboo')" id="btn-map-bamboo" class="px-3 py-1 rounded-full text-xs font-bold bg-emerald-700 text-yellow-200 border border-yellow-400 transition">
+                <i class="fas fa-tree mr-1"></i>Rừng Trúc U Minh
+            </button>
+            <button onclick="GameEngine.switchMap('buddha')" id="btn-map-buddha" class="px-3 py-1 rounded-full text-xs font-bold bg-stone-800 text-gray-300 hover:text-white transition">
+                <i class="fas fa-torii-gate mr-1"></i>Đài Phật Anh Đào
+            </button>
+            <button onclick="GameEngine.switchMap('city')" id="btn-map-city" class="px-3 py-1 rounded-full text-xs font-bold bg-stone-800 text-gray-300 hover:text-white transition">
+                <i class="fas fa-city mr-1"></i>Biện Kinh Thành
+            </button>
+        </div>
+
+        <!-- GÓC TRÊN BÊN PHẢI: 4 Ô Tuyệt Kỹ Lớn (Giống Ảnh 2) -->
+        <div class="absolute top-3 right-4 flex flex-col items-end gap-2 pointer-auto">
+            <div class="flex items-center gap-2.5">
+                <!-- Skill 1: Hỏa Long Phần Thiên -->
+                <div onclick="CombatSystem.triggerManualSkill(0)" class="skill-btn group" title="[Phím 1] Hỏa Long Phần Thiên - Sát thương diện rộng cực lớn">
+                    <div class="w-full h-full bg-gradient-to-br from-orange-500 via-red-600 to-amber-900 flex items-center justify-center">
+                        <i class="fas fa-dragon text-3xl text-yellow-200 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]"></i>
+                    </div>
+                    <div id="cd-overlay-0" class="absolute inset-0 bg-black/75 flex items-center justify-center text-white font-black text-lg hidden">0</div>
+                    <span class="absolute bottom-0.5 right-1 text-[10px] font-bold text-yellow-300 wuxia-stroke">Lv.10</span>
+                    <span class="absolute top-0.5 left-1 text-[10px] font-bold text-white/80 wuxia-stroke">1</span>
+                </div>
+
+                <!-- Skill 2: Tử Lôi Kiếm Khí -->
+                <div onclick="CombatSystem.triggerManualSkill(1)" class="skill-btn group" title="[Phím 2] Tử Lôi Kiếm Khí - Đao Chữ Thần Thông">
+                    <div class="w-full h-full bg-gradient-to-br from-fuchsia-500 via-purple-700 to-indigo-950 flex items-center justify-center">
+                        <i class="fas fa-bolt text-3xl text-pink-200 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]"></i>
+                    </div>
+                    <div id="cd-overlay-1" class="absolute inset-0 bg-black/75 flex items-center justify-center text-white font-black text-lg hidden">0</div>
+                    <span class="absolute bottom-0.5 right-1 text-[10px] font-bold text-yellow-300 wuxia-stroke">Lv.10</span>
+                    <span class="absolute top-0.5 left-1 text-[10px] font-bold text-white/80 wuxia-stroke">2</span>
+                </div>
+
+                <!-- Skill 3: Hắc Ám Ma Công -->
+                <div onclick="CombatSystem.triggerManualSkill(2)" class="skill-btn group" title="[Phím 3] Hắc Ám Ma Công - Tăng Bạo Kích & Hút Sinh Lực">
+                    <div class="w-full h-full bg-gradient-to-br from-indigo-600 via-violet-900 to-black flex items-center justify-center">
+                        <i class="fas fa-user-ninja text-3xl text-purple-300 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]"></i>
+                    </div>
+                    <div id="cd-overlay-2" class="absolute inset-0 bg-black/75 flex items-center justify-center text-white font-black text-lg hidden">0</div>
+                    <span class="absolute bottom-0.5 right-1 text-[10px] font-bold text-yellow-300 wuxia-stroke">Lv.9</span>
+                    <span class="absolute top-0.5 left-1 text-[10px] font-bold text-white/80 wuxia-stroke">3</span>
+                </div>
+
+                <!-- Skill 4: Mạn Thiên Hoa Vũ / Cửu Thiên Huyền Qua -->
+                <div onclick="CombatSystem.triggerManualSkill(3)" class="skill-btn group" title="[Phím 4] Mạn Thiên Hoa Vũ - Triệu hồi bão kiếm băng giá">
+                    <div class="w-full h-full bg-gradient-to-br from-cyan-400 via-blue-600 to-indigo-900 flex items-center justify-center">
+                        <i class="fas fa-dharmachakra fa-spin text-3xl text-cyan-100 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]" style="animation-duration: 8s;"></i>
+                    </div>
+                    <div id="cd-overlay-3" class="absolute inset-0 bg-black/75 flex items-center justify-center text-white font-black text-lg hidden">0</div>
+                    <span class="absolute bottom-0.5 right-1 text-[10px] font-bold text-yellow-300 wuxia-stroke">Lv.10</span>
+                    <span class="absolute top-0.5 left-1 text-[10px] font-bold text-white/80 wuxia-stroke">4</span>
+                </div>
+            </div>
+
+            <!-- Thanh công cụ nhanh bên phải (Giống Ảnh 1) -->
+            <div class="flex flex-col gap-2 mt-1">
+                <button onclick="GameUI.openModal('character')" title="Nhân Vật & Duyên Phận" class="w-10 h-10 rounded-full bg-amber-900/90 border-2 border-yellow-400 text-yellow-300 flex items-center justify-center shadow-lg hover:scale-110 transition">
+                    <i class="fas fa-user-shield"></i>
+                </button>
+                <button onclick="GameUI.openModal('editor')" title="Trình Chỉnh Sửa Engine & Spine" class="w-10 h-10 rounded-full bg-sky-900/90 border-2 border-cyan-400 text-cyan-200 flex items-center justify-center shadow-lg hover:scale-110 transition">
+                    <i class="fas fa-cogs"></i>
+                </button>
+                <button onclick="GameUI.openModal('mail')" title="Thư Tín Giang Hồ" class="w-10 h-10 rounded-full bg-amber-800/90 border-2 border-amber-300 text-amber-200 flex items-center justify-center shadow-lg hover:scale-110 transition relative">
+                    <i class="fas fa-envelope"></i>
+                    <span class="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center">3</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- CẠNH TRÁI GIỮA: Radar / Auto Quest (Giống Ảnh 1) -->
+        <div class="absolute top-1/3 left-3 flex flex-col gap-2 pointer-auto">
+            <div onclick="GameEngine.toggleAutoBattle()" class="relative w-12 h-12 rounded-full bg-emerald-900/80 border-2 border-emerald-400 flex items-center justify-center cursor-pointer shadow-lg hover:scale-105 transition" title="Bật/Tắt Tự Động Chiến Đấu">
+                <i id="auto-radar-icon" class="fas fa-crosshairs text-emerald-300 text-xl fa-spin" style="animation-duration: 4s;"></i>
+                <span id="auto-status-badge" class="absolute -top-1 -right-1 px-1.5 bg-red-600 text-white text-[10px] font-bold rounded-full border border-white">AUTO</span>
+            </div>
+            <div class="text-[11px] text-white/80 font-mono wuxia-stroke px-1" id="fps-counter">60 fps</div>
+        </div>
+
+        <!-- GÓC DƯỚI PHẢI TRÊN THANH KHÍ THẾ: Nút Tốc Độ Trận Đấu X1/X2/X3/X5 (Giống Ảnh 2) -->
+        <div class="absolute bottom-24 right-14 flex items-center gap-3 pointer-auto">
+            <button onclick="GameEngine.toggleAutoSkill()" id="btn-auto-skill" class="px-3 py-1.5 rounded-full bg-purple-950/90 border border-fuchsia-400 text-fuchsia-200 text-xs font-bold shadow-lg hover:bg-purple-900 transition">
+                <i class="fas fa-magic mr-1 text-yellow-300"></i>Tự Tung Chiêu: BẬT
+            </button>
+            <div onclick="GameEngine.cycleBattleSpeed()" class="orb-auto-btn" title="Thay đổi tốc độ trận đấu (X1, X2, X3, X5)">
+                <span id="battle-speed-text" class="text-2xl font-black text-amber-300 wuxia-stroke leading-none">X1</span>
+                <span class="text-[9px] text-fuchsia-200 font-bold uppercase tracking-wider">Tốc Độ</span>
+            </div>
+        </div>
+
+        <!-- PHÍA DƯỚI MÀN HÌNH: 2 Bảng Trạng Thái Khí Thế & Thanh Menu Môn Phái (Giống Ảnh 1 & 2) -->
+        <div class="absolute bottom-2 inset-x-4 flex items-end justify-between pointer-auto">
+            
+            <!-- BÊN TRÁI: Tùy Tiêu Sầu & Khí Thế (Giống Ảnh 2) -->
+            <div class="flex items-center gap-2">
+                <div class="flex flex-col items-center">
+                    <div class="flex items-end gap-3 mb-0.5">
+                        <span class="text-amber-300 font-black text-lg tracking-wider wuxia-title">KHÍ THẾ</span>
+                        <span id="left-qi-val" class="text-white font-bold text-sm wuxia-stroke">4322</span>
+                    </div>
+                    <div id="left-char-name" class="text-white font-bold text-base wuxia-stroke mb-1">Tùy Tiêu Sầu</div>
+                    <div class="qi-bar-container">
+                        <div id="left-qi-bar" class="qi-bar-fill-green" style="width: 72%;"></div>
+                    </div>
+                </div>
+                <!-- Huy hiệu Áp Chế Đỏ -->
+                <div class="ap-che-badge px-2 py-1.5 rounded text-center text-white font-black text-xs wuxia-stroke">
+                    ÁP<br>CHẾ
+                </div>
+            </div>
+
+            <!-- Ở GIỮA: Thanh Menu Biểu Tượng Cổ Trang (Giống Ảnh 1) -->
+            <div class="flex items-center gap-3 bg-black/40 backdrop-blur-sm px-4 py-1.5 rounded-2xl border border-amber-500/40">
+                <div onclick="GameEngine.spawnWave()" class="bottom-nav-item">
+                    <div class="bottom-nav-icon"><i class="fas fa-scroll text-amber-950"></i></div>
+                    <span class="text-xs font-bold text-yellow-200 wuxia-stroke mt-0.5">H. Tẩu</span>
+                </div>
+                <div onclick="GameUI.openModal('character')" class="bottom-nav-item">
+                    <div class="bottom-nav-icon"><i class="fas fa-user-ninja text-red-900"></i></div>
+                    <span class="text-xs font-bold text-yellow-200 wuxia-stroke mt-0.5">M. Phái</span>
+                </div>
+                <div onclick="GameUI.openModal('formation')" class="bottom-nav-item">
+                    <div class="bottom-nav-icon"><i class="fas fa-chess-knight text-purple-950"></i></div>
+                    <span class="text-xs font-bold text-yellow-200 wuxia-stroke mt-0.5">Đội Hình</span>
+                </div>
+                <div onclick="GameUI.openModal('skills')" class="bottom-nav-item">
+                    <div class="bottom-nav-icon"><i class="fas fa-fire-alt text-orange-900"></i></div>
+                    <span class="text-xs font-bold text-yellow-200 wuxia-stroke mt-0.5">Tuyệt Kỹ</span>
+                </div>
+                <div onclick="GameUI.openModal('inventory')" class="bottom-nav-item">
+                    <div class="bottom-nav-icon"><i class="fas fa-sack-dollar text-amber-900"></i></div>
+                    <span class="text-xs font-bold text-yellow-200 wuxia-stroke mt-0.5">Hành Trang</span>
+                </div>
+                <div onclick="GameUI.openModal('boss')" class="bottom-nav-item">
+                    <div class="bottom-nav-icon"><i class="fas fa-dragon text-red-800"></i></div>
+                    <span class="text-xs font-bold text-yellow-200 wuxia-stroke mt-0.5">Khiêu Chiến</span>
+                </div>
+            </div>
+
+            <!-- BÊN PHẢI: Ma Giáo Cao Thủ & Khí Thế (Giống Ảnh 2) -->
+            <div class="flex flex-col items-center">
+                <div class="flex items-end gap-3 mb-0.5">
+                    <span class="text-amber-300 font-black text-lg tracking-wider wuxia-title">KHÍ THẾ</span>
+                    <span id="right-qi-val" class="text-white font-bold text-sm wuxia-stroke">0</span>
+                </div>
+                <div id="right-enemy-name" class="text-white font-bold text-base wuxia-stroke mb-1">Ma Giáo Cao Thủ</div>
+                <div class="qi-bar-container">
+                    <div id="right-qi-bar" class="qi-bar-fill-red" style="width: 58%;"></div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- KHU VỰC THÔNG BÁO CHIÊU THỨC THƯ PHÁP Ở GIỮA MÀN HÌNH -->
+        <div id="skill-banner-container" class="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-30"></div>
+
+        <!-- HỘP THÔNG BÁO HỆ THỐNG (Thay thế alert) -->
+        <div id="toast-container" class="absolute top-20 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 pointer-events-none z-50"></div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- CỬA SỔ GIAO DIỆN NHÂN VẬT & DUYÊN PHẬN (Tái hiện chính xác Ảnh 4) -->
+    <!-- ===================================================================== -->
+    <div id="modal-overlay" class="absolute inset-0 bg-black/75 backdrop-blur-sm z-40 hidden flex items-center justify-center p-4 pointer-auto">
+        <div id="modal-content-box" class="relative w-full max-w-5xl h-[86%] parchment-panel rounded-xl overflow-hidden flex flex-col shadow-2xl">
+            <!-- Nút Đóng Đỏ Góc Phải Trên (Giống Ảnh 4) -->
+            <button onclick="GameUI.closeModal()" class="absolute top-2 right-2 z-50 w-10 h-10 rounded-full bg-gradient-to-b from-red-500 to-red-800 border-2 border-yellow-300 text-white font-black text-xl flex items-center justify-center shadow-lg hover:scale-110 transition">
+                <i class="fas fa-times"></i>
+            </button>
+            
+            <!-- Nội dung động của Modal -->
+            <div id="modal-body" class="w-full h-full overflow-y-auto"></div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+/**
+ * ============================================================================
+ * KIẾN TRÚC MODULE GAME MỘNG VÕ LÂM 3D (Namespaces & Classic JS)
+ * Bao gồm: AssetManager, MapSystem, CharacterSystem, CombatSystem, 
+ * ParticleSystem, AISystem, RPGProgression, GameUI, EngineEditor, GameEngine
+ * ============================================================================
+ */
+window.VoLam = window.VoLam || {};
+
+// 1. ASSET MANAGER & DỮ LIỆU NHÂN VẬT / KỸ NĂNG
+VoLam.Database = {
+    heroes: [
+        {
+            id: 'de_thich_thien',
+            name: 'Đế Thích Thiên',
+            title: 'Nhất Phương Xưng Hùng',
+            sect: 'Thiên Môn',
+            type: 'Giáp',
+            level: 400,
+            stars: 3,
+            hp: 3838909184,
+            maxHp: 3838909184,
+            atk: 87615920,
+            def: 65035392,
+            qi: 70015928,
+            crit: 64655,
+            colorPrimary: 0xdc2626, // Áo đỏ hoàng kim
+            colorHair: 0xf8fafc,    // Tóc trắng
+            maskColor: 0x4c1d95,    // Mặt nạ tím
+            weapon: 'Thiên Kiếp Đao',
+            bio: 'Môn chủ Thiên Môn, võ công thâm bất khả trắc, được thiên hạ đồn đại là kẻ từng giết được thần thú.',
+            innateSkill: 'Thánh Tâm Tứ Kiếp',
+            fates: [
+                { name: 'Vang Danh Thiên Hạ', desc: 'ra trận cùng Kiếm Thánh được + 32% Khí.', active: true },
+                { name: 'Long Nguyên', desc: 'ra trận cùng Nhiếp Phong, Bộ Kinh Vân được + 28% Khí.', active: true },
+                { name: 'Môn Chủ Thiên Môn', desc: 'trang bị Thiên Kiếp - Thiên Tội được + 30% Mệnh.', active: true },
+                { name: 'Ẩn Thế Cao Nhân', desc: 'trang bị Thiên Kim Hoàng Bào được + 27% Mệnh.', active: false },
+                { name: 'Ngông Cuồng', desc: 'trang bị Thiên Vũ Giới Chỉ được + 25% Mệnh.', active: false }
+            ]
+        },
+        {
+            id: 'tuy_tieu_sau',
+            name: 'Tùy Tiêu Sầu',
+            title: 'Tiêu Dao Kiếm Tiên',
+            sect: 'Tiêu Dao Phái',
+            type: 'Giáp',
+            level: 385,
+            stars: 3,
+            hp: 2950000000,
+            maxHp: 2950000000,
+            atk: 74200500,
+            def: 51200400,
+            qi: 68900120,
+            crit: 58900,
+            colorPrimary: 0x1e293b, // Áo đen viền vàng
+            colorHair: 0xe2e8f0,    // Tóc bạch kim
+            maskColor: null,
+            weapon: 'Tiêu Dao Thần Kiếm',
+            bio: 'Kiếm khách tóc trắng tiêu sái giang hồ, lấy rượu làm bạn, một kiếm chém đứt trường giang.',
+            innateSkill: 'Đao Chữ Thần Thông',
+            fates: [
+                { name: 'Song Kiếm Hợp Bích', desc: 'cùng Đế Thích Thiên xuất trận tăng +35% Công.', active: true },
+                { name: 'Túy Ngọa Sa Trường', desc: 'trang bị Hồ Lô Tiên Tửu tăng +25% Bạo Kích.', active: true }
+            ]
+        },
+        {
+            id: 'kiem_thanh',
+            name: 'Độc Cô Kiếm Thánh',
+            title: 'Kiếm Đạo Chí Tôn',
+            sect: 'Vô Song Thành',
+            type: 'Giáp',
+            level: 390,
+            stars: 3,
+            hp: 3120000000,
+            maxHp: 3120000000,
+            atk: 81500000,
+            def: 49800000,
+            qi: 72100000,
+            crit: 69500,
+            colorPrimary: 0x1d4ed8, // Áo xanh lam
+            colorHair: 0x1e1b4b,    // Tóc đen búi cao
+            maskColor: null,
+            weapon: 'Vô Song Thần Kiếm',
+            bio: 'Người sáng tạo ra Kiếm Nhị Thập Tam huyền thoại, kiếm khí tung hoành khắp võ lâm.',
+            innateSkill: 'Mạn Thiên Hoa Vũ',
+            fates: [
+                { name: 'Vô Song Kiếm Vực', desc: 'tăng 30% sát thương kỹ năng quần thể.', active: true }
+            ]
+        },
+        {
+            id: 'nu_hiep_linh_nhi',
+            name: 'Triệu Linh Nhi',
+            title: 'Thánh Nữ Nam Chiếu',
+            sect: 'Nga Mi Phái',
+            type: 'Giáp',
+            level: 375,
+            stars: 3,
+            hp: 2680000000,
+            maxHp: 2680000000,
+            atk: 68400000,
+            def: 58400000,
+            qi: 79500000,
+            crit: 52100,
+            colorPrimary: 0x7e22ce, // Áo tím thướt tha
+            colorHair: 0x0f172a,
+            maskColor: null,
+            weapon: 'Thiên Xà Trượng',
+            bio: 'Hậu duệ Nữ Oa, tinh thông ngũ hành pháp thuật và hồi phục khí huyết cho đồng đội.',
+            innateSkill: 'Ngũ Lôi Chú',
+            fates: [
+                { name: 'Thiên Địa Linh Khí', desc: 'hồi phục 15% sinh lực toàn đội mỗi hiệp.', active: true }
+            ]
+        }
+    ],
+    enemies: [
+        { name: 'Ma Giáo Cao Thủ', isBoss: true, hp: 18500000, atk: 1250000, colorPrimary: 0x111827, colorHair: 0x94a3b8, scale: 1.25 },
+        { name: 'Hộ Pháp Hắc Bạch', isBoss: false, hp: 8200000, atk: 780000, colorPrimary: 0x312e81, colorHair: 0xf1f5f9, scale: 1.0 },
+        { name: 'Tử Y Sát Thủ', isBoss: false, hp: 6900000, atk: 920000, colorPrimary: 0x581c87, colorHair: 0x1e1b4b, scale: 1.0 },
+        { name: 'Độc Long Sứ Giả', isBoss: false, hp: 7500000, atk: 840000, colorPrimary: 0x065f46, colorHair: 0xd1d5db, scale: 1.0 }
+    ],
+    skills: [
+        { id: 0, name: 'Hỏa Long Phần Thiên', cooldown: 8, currentCd: 0, color: 0xff5500, ringColor: 0xffaa00, dmgMult: 3.4, aoe: true },
+        { id: 1, name: 'Đao Chữ Thần Thông', cooldown: 6, currentCd: 0, color: 0xc026d3, ringColor: 0x3b82f6, dmgMult: 2.8, aoe: true },
+        { id: 2, name: 'Hắc Ám Ma Công', cooldown: 10, currentCd: 0, color: 0x6d28d9, ringColor: 0xa855f7, dmgMult: 2.2, aoe: false },
+        { id: 3, name: 'Mạn Thiên Hoa Vũ', cooldown: 9, currentCd: 0, color: 0x38bdf8, ringColor: 0xf472b6, dmgMult: 3.1, aoe: true }
+    ]
+};
+
+// 2. HỆ THỐNG THÔNG BÁO & UI
+window.GameUI = {
+    selectedHeroIndex: 0,
+
+    showToast: function(msg, type = 'gold') {
+        const container = document.getElementById('toast-container');
+        const el = document.createElement('div');
+        const colors = {
+            gold: 'border-yellow-400 text-yellow-200 bg-amber-950/90',
+            purple: 'border-fuchsia-400 text-fuchsia-200 bg-purple-950/90',
+            green: 'border-emerald-400 text-emerald-200 bg-emerald-950/90'
+        };
+        el.className = `px-4 py-1.5 rounded-full border ${colors[type] || colors.gold} text-xs font-bold shadow-lg transition-all duration-300`;
+        el.innerHTML = `<i class="fas fa-sparkles mr-1.5 text-yellow-400"></i>${msg}`;
+        container.appendChild(el);
+        setTimeout(() => {
+            el.style.opacity = '0';
+            el.style.transform = 'translateY(-10px)';
+            setTimeout(() => el.remove(), 300);
+        }, 2200);
+    },
+
+    showSkillBanner: function(skillName) {
+        const container = document.getElementById('skill-banner-container');
+        container.innerHTML = `<div class="skill-calligraphy text-3xl md:text-5xl tracking-wider whitespace-nowrap">${skillName}</div>`;
+    },
+
+    spawnDamageNumber: function(screenX, screenY, amount, type = 'normal') {
+        const layer = document.getElementById('hud-layer');
+        const el = document.createElement('div');
+        el.className = 'floating-dmg wuxia-stroke';
+        el.style.left = `${screenX}px`;
+        el.style.top = `${screenY}px`;
+
+        if (type === 'crit') {
+            el.style.color = '#ffffff';
+            el.style.fontSize = '30px';
+            el.style.textShadow = '0 0 12px #d946ef, -2px -2px 0 #000, 2px 2px 0 #000';
+            el.innerText = amount.toString();
+        } else if (type === 'heal') {
+            el.style.color = '#4ade80';
+            el.style.fontSize = '22px';
+            el.innerText = `+${amount}`;
+        } else {
+            el.style.color = '#fef08a';
+            el.style.fontSize = '21px';
+            el.innerText = amount.toString();
+        }
+
+        layer.appendChild(el);
+        setTimeout(() => el.remove(), 1150);
+    },
+
+    openModal: function(tab) {
+        const overlay = document.getElementById('modal-overlay');
+        const body = document.getElementById('modal-body');
+        overlay.classList.remove('hidden');
+
+        if (tab === 'character') {
+            this.renderCharacterModal(body);
+        } else if (tab === 'formation') {
+            this.renderFormationModal(body);
+        } else if (tab === 'skills') {
+            this.renderSkillsModal(body);
+        } else if (tab === 'inventory') {
+            this.renderInventoryModal(body);
+        } else if (tab === 'boss') {
+            this.renderBossModal(body);
+        } else if (tab === 'editor') {
+            this.renderEngineEditorModal(body);
+        } else if (tab === 'mail') {
+            this.renderMailModal(body);
+        }
+    },
+
+    closeModal: function() {
+        document.getElementById('modal-overlay').classList.add('hidden');
+    },
+
+    // Tái hiện chính xác giao diện Đế Thích Thiên trong Ảnh 4
+    renderCharacterModal: function(container) {
+        const hero = VoLam.Database.heroes[this.selectedHeroIndex];
+        const heroTabsHtml = VoLam.Database.heroes.map((h, idx) => `
+            <div onclick="GameUI.selectedHeroIndex=${idx}; GameUI.renderCharacterModal(document.getElementById('modal-body'))" 
+                 class="w-16 h-16 rounded-xl border-2 ${idx === this.selectedHeroIndex ? 'border-yellow-300 ring-2 ring-amber-400 scale-105' : 'border-amber-800 opacity-80'} bg-gradient-to-b from-purple-900 to-stone-900 flex flex-col items-center justify-center cursor-pointer transition relative overflow-hidden">
+                <i class="fas fa-user-ninja text-2xl text-amber-200"></i>
+                <span class="text-[9px] text-white font-bold truncate w-full text-center bg-black/60 px-0.5">${h.name.split(' ').pop()}</span>
+                <div class="flex text-[8px] text-yellow-400"><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i></div>
+            </div>
+        `).join('');
+
+        const fatesHtml = hero.fates.map(f => `
+            <div class="mb-2 text-sm leading-snug">
+                <span class="font-bold ${f.active ? 'text-amber-800' : 'text-stone-600'}">${f.name}:</span>
+                <span class="${f.active ? 'text-red-700 font-bold' : 'text-stone-700'}">${f.desc}</span>
+            </div>
+        `).join('');
+
+        container.innerHTML = `
+            <div class="grid grid-cols-1 md:grid-cols-12 h-full">
+                <!-- CỘT TRÁI: Đội hình, Trang bị Hoàng Kim & Tư Chất (Giống nửa trái Ảnh 4) -->
+                <div class="md:col-span-6 bg-gradient-to-b from-emerald-950 via-teal-950 to-stone-950 p-3 flex flex-col justify-between border-r-4 border-amber-700 text-white">
+                    <!-- Hàng chân dung đệ tử -->
+                    <div class="flex items-center justify-between gap-1.5 bg-black/40 p-2 rounded-xl border border-amber-600/50">
+                        <div class="flex items-center gap-2">${heroTabsHtml}</div>
+                        <div onclick="GameUI.openModal('formation')" class="px-2.5 py-2 rounded-lg bg-gradient-to-b from-orange-500 to-red-800 border border-yellow-300 text-center cursor-pointer hover:scale-105 transition">
+                            <i class="fas fa-chess-board text-yellow-200 text-lg"></i>
+                            <div class="text-[10px] font-bold leading-tight">Trận<br>Pháp</div>
+                        </div>
+                    </div>
+
+                    <!-- Khu vực nhân vật & 8 ô trang bị Hoàng Kim -->
+                    <div class="relative my-2 flex-1 flex items-center justify-between px-2 bg-[radial-gradient(circle,rgba(16,185,129,0.25)_0%,transparent_70%)] rounded-xl border border-emerald-700/40">
+                        <!-- 4 Ô Trang Bị Trái -->
+                        <div class="flex flex-col gap-2 z-10">
+                            <div class="w-12 h-12 rounded-lg bg-purple-950/90 border-2 border-fuchsia-400 flex items-center justify-center relative shadow-lg">
+                                <i class="fas fa-hurricane text-fuchsia-300 text-xl"></i>
+                                <span class="absolute -top-1 -left-1 bg-purple-700 text-[10px] px-1 rounded font-bold">10</span>
+                            </div>
+                            <div class="w-12 h-12 rounded-lg bg-amber-900/80 border-2 border-yellow-400 flex items-center justify-center relative shadow-lg">
+                                <i class="fas fa-book-dead text-yellow-200 text-xl"></i>
+                            </div>
+                            <div class="w-12 h-12 rounded-lg bg-amber-950/90 border-2 border-amber-400 flex items-center justify-center relative shadow-lg">
+                                <i class="fas fa-dragon text-amber-300 text-xl"></i>
+                                <span class="absolute -top-1 -left-1 bg-purple-700 text-[10px] px-1 rounded font-bold">9</span>
+                            </div>
+                            <div class="w-12 h-12 rounded-lg bg-stone-900/90 border-2 border-yellow-500 flex items-center justify-center relative shadow-lg">
+                                <i class="fas fa-scroll text-yellow-400 text-xl"></i>
+                                <span class="absolute -top-1 -left-1 bg-purple-700 text-[10px] px-1 rounded font-bold">2</span>
+                            </div>
+                        </div>
+
+                        <!-- Hình tượng Cao Thủ Ở Giữa -->
+                        <div class="flex flex-col items-center text-center z-10">
+                            <div class="px-3 py-0.5 bg-gradient-to-r from-transparent via-amber-700 to-transparent text-yellow-300 font-bold text-sm wuxia-title mb-1">
+                                ${hero.title}
+                            </div>
+                            <div class="w-32 h-36 rounded-full bg-gradient-to-b from-red-600/40 to-amber-500/20 border-2 border-yellow-400/60 flex flex-col items-center justify-center relative shadow-[0_0_30px_rgba(251,191,36,0.4)]">
+                                <i class="fas fa-user-secret text-6xl text-yellow-200 drop-shadow-[0_4px_8px_rgba(0,0,0,0.9)]"></i>
+                                <span class="mt-2 px-2 py-0.5 bg-red-800/90 border border-yellow-400 rounded text-[10px] font-bold text-yellow-200">${hero.weapon}</span>
+                            </div>
+                            <div class="mt-1 text-lg font-black text-pink-300 wuxia-stroke">${hero.name}</div>
+                            <div class="flex items-center gap-1 bg-black/70 border border-emerald-400 rounded-full px-3 py-0.5 text-xs">
+                                <span class="bg-emerald-600 text-white px-1.5 rounded-full font-bold">${hero.level}</span>
+                                <span class="text-emerald-300 font-mono">${hero.hp}/${hero.maxHp}</span>
+                            </div>
+                        </div>
+
+                        <!-- 4 Ô Trang Bị Hoàng Kim Phải -->
+                        <div class="flex flex-col gap-2 z-10">
+                            <div class="w-12 h-12 rounded-lg bg-red-950/90 border-2 border-yellow-400 flex items-center justify-center relative shadow-lg">
+                                <i class="fas fa-khanda text-yellow-300 text-xl"></i>
+                                <span class="absolute -top-1 -right-1 bg-fuchsia-700 text-[10px] px-1 rounded font-bold">950</span>
+                            </div>
+                            <div class="w-12 h-12 rounded-lg bg-amber-950/90 border-2 border-yellow-400 flex items-center justify-center relative shadow-lg">
+                                <i class="fas fa-crown text-amber-300 text-xl"></i>
+                                <span class="absolute -top-1 -right-1 bg-fuchsia-700 text-[10px] px-1 rounded font-bold">1</span>
+                            </div>
+                            <div class="w-12 h-12 rounded-lg bg-indigo-950/90 border-2 border-yellow-400 flex items-center justify-center relative shadow-lg">
+                                <i class="fas fa-tshirt text-purple-300 text-xl"></i>
+                                <span class="absolute -top-1 -right-1 bg-fuchsia-700 text-[10px] px-1 rounded font-bold">301</span>
+                            </div>
+                            <div class="w-12 h-12 rounded-lg bg-amber-900/90 border-2 border-yellow-400 flex items-center justify-center relative shadow-lg">
+                                <i class="fas fa-ring text-yellow-300 text-xl"></i>
+                                <span class="absolute -top-1 -right-1 bg-fuchsia-700 text-[10px] px-1 rounded font-bold">250</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bảng Tư Chất & Thực Lực -->
+                    <div class="bg-[#e8d5b5] text-stone-900 rounded-lg p-2.5 border-2 border-amber-700 grid grid-cols-2 gap-2 text-xs font-bold">
+                        <div>
+                            <div class="text-amber-900 border-b border-amber-700/40 pb-0.5 mb-1">Tư Chất</div>
+                            <div class="flex justify-between"><span><i class="fas fa-fist-raised text-amber-700 mr-1"></i>Công:</span><span>${hero.atk}</span></div>
+                            <div class="flex justify-between"><span><i class="fas fa-heart text-red-600 mr-1"></i>Mệnh:</span><span>${hero.crit}</span></div>
+                            <div class="flex justify-between"><span><i class="fas fa-shield-alt text-blue-700 mr-1"></i>Thủ:</span><span>${hero.def}</span></div>
+                            <div class="flex justify-between"><span><i class="fas fa-yin-yang text-purple-700 mr-1"></i>Khí:</span><span>${hero.qi}</span></div>
+                        </div>
+                        <div>
+                            <div class="text-amber-900 border-b border-amber-700/40 pb-0.5 mb-1">Thực Lực</div>
+                            <div class="flex justify-between"><span>Sinh Lực:</span><span class="text-red-700">912,634,046</span></div>
+                            <div class="flex justify-between"><span>Phá Kích:</span><span class="text-amber-800">6,490,068</span></div>
+                            <div class="flex justify-between"><span>Bạo Kích:</span><span class="text-purple-800">3.86%</span></div>
+                            <div class="flex justify-between"><span>Nội Lực:</span><span class="text-blue-800">7,001,593</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- CỘT PHẢI: Chi Tiết Đệ Tử, Thiên Phú & Duyên Phận (Giống nửa phải Ảnh 4) -->
+                <div class="md:col-span-6 p-5 flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-center gap-3 border-b-2 border-amber-800/30 pb-3">
+                            <div class="w-16 h-16 rounded-xl bg-gradient-to-br from-purple-800 to-amber-900 border-2 border-amber-600 flex items-center justify-center relative">
+                                <i class="fas fa-user-ninja text-3xl text-yellow-200"></i>
+                                <span class="absolute -left-2 bottom-1 bg-amber-900 text-yellow-300 text-xs font-bold px-1.5 rounded-full border border-yellow-400">${hero.level}</span>
+                            </div>
+                            <div class="flex-1">
+                                <div class="flex items-center gap-2">
+                                    <span class="px-2 py-0.5 rounded-full bg-purple-800 text-white text-xs font-bold">${hero.type}</span>
+                                    <h2 class="text-2xl font-black text-red-900 wuxia-title">${hero.name}</h2>
+                                </div>
+                                <div class="grid grid-cols-2 gap-x-4 text-sm font-bold text-stone-800 mt-1">
+                                    <span><i class="fas fa-khanda text-amber-700 mr-1"></i>${hero.atk}</span>
+                                    <span><i class="fas fa-shield-alt text-blue-700 mr-1"></i>${hero.def}</span>
+                                    <span><i class="fas fa-heart text-red-700 mr-1"></i>${hero.crit}</span>
+                                    <span><i class="fas fa-yin-yang text-purple-700 mr-1"></i>${hero.qi}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tiểu sử & Thiên Phú -->
+                        <div class="mt-3 bg-[#ebd8b5] p-3 rounded-xl border border-amber-700/50 flex items-center justify-between gap-3">
+                            <p class="text-sm text-stone-800 font-medium leading-relaxed">${hero.bio}</p>
+                            <div class="flex flex-col items-center shrink-0">
+                                <span class="text-xs font-black text-red-900 mb-1">Thiên Phú</span>
+                                <div class="w-16 h-16 rounded-xl bg-gradient-to-br from-fuchsia-600 to-indigo-950 border-2 border-yellow-400 flex items-center justify-center shadow-md">
+                                    <i class="fas fa-bahai fa-spin text-3xl text-pink-200" style="animation-duration: 10s;"></i>
+                                </div>
+                                <span class="text-[11px] font-bold text-purple-900 mt-1">${hero.innateSkill}</span>
+                            </div>
+                        </div>
+
+                        <!-- Bảng Duyên Phận -->
+                        <div class="mt-4">
+                            <div class="flex items-center justify-center gap-3 mb-2">
+                                <h3 class="text-xl font-black text-red-900 wuxia-title">Duyên phận</h3>
+                                <span class="px-3 py-0.5 rounded-full bg-amber-300 border border-amber-700 text-xs font-bold text-amber-950">Chi tiết</span>
+                            </div>
+                            <div class="bg-[#ebd8b5]/80 p-3 rounded-xl border border-amber-700/40">
+                                ${fatesHtml}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Nút Bồi Dưỡng Lớn Ở Đáy (Giống Ảnh 4) -->
+                    <div class="mt-4 flex items-center justify-between">
+                        <button onclick="RPGProgression.cultivateHero(${this.selectedHeroIndex})" class="px-8 py-2.5 rounded-full bg-gradient-to-b from-amber-400 via-orange-500 to-amber-700 border-2 border-yellow-200 text-red-950 font-black text-lg shadow-lg hover:scale-105 active:scale-95 transition">
+                            <i class="fas fa-arrow-up mr-2"></i>Bồi Dưỡng Đột Phá
+                        </button>
+                        <div class="text-right">
+                            <div class="text-xl font-black text-amber-900 wuxia-title">MỘNG VÕ LÂM</div>
+                            <div class="text-[10px] font-bold text-red-800 tracking-widest">CỬU NGŨ CHÍ TÔN</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    renderFormationModal: function(container) {
+        container.innerHTML = `
+            <div class="p-6">
+                <h2 class="text-2xl font-black text-red-900 wuxia-title mb-2"><i class="fas fa-chess-knight mr-2"></i>Bố Trí Trận Pháp & Đội Hình Xuất Chiến</h2>
+                <p class="text-sm text-stone-700 mb-4">Sắp xếp các cao thủ Tiền Phong (Chịu đòn) và Hậu Phương (Sát thương / Hỗ trợ) trên chiến trường 3D.</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    ${VoLam.Database.heroes.map((h, i) => `
+                        <div class="p-4 rounded-xl bg-[#ebd8b5] border-2 border-amber-700 flex items-center justify-between">
+                            <div>
+                                <div class="font-black text-lg text-red-900">${h.name} <span class="text-xs bg-amber-800 text-yellow-200 px-2 py-0.5 rounded ml-1">Lv.${h.level}</span></div>
+                                <div class="text-xs font-bold text-stone-700 mt-1">Vị trí: ${i < 2 ? 'Tiền Phong (Cận Chiến)' : 'Hậu Phương (Kiếm Khí / Pháp Thuật)'}</div>
+                                <div class="text-xs text-emerald-800 font-bold mt-0.5">Tuyệt kỹ: ${h.innateSkill}</div>
+                            </div>
+                            <button onclick="GameUI.showToast('Đã đặt ${h.name} làm Chủ Tướng xuất trận!')" class="px-4 py-2 rounded-lg bg-emerald-700 text-white font-bold text-xs hover:bg-emerald-600">
+                                Đang Xuất Trận
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    },
+
+    renderSkillsModal: function(container) {
+        container.innerHTML = `
+            <div class="p-6">
+                <h2 class="text-2xl font-black text-red-900 wuxia-title mb-4"><i class="fas fa-fire-alt mr-2"></i>Tàng Kinh Các - Tuyệt Kỹ Võ Học</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    ${VoLam.Database.skills.map(s => `
+                        <div class="p-4 rounded-xl bg-[#ebd8b5] border-2 border-amber-700 flex items-center justify-between">
+                            <div>
+                                <div class="font-black text-lg text-purple-900">${s.name}</div>
+                                <div class="text-xs font-bold text-stone-700">Sát thương: ${(s.dmgMult * 100).toFixed(0)}% Công Lực | Hồi chiêu: ${s.cooldown}s</div>
+                                <div class="text-xs text-red-700 font-bold mt-1">${s.aoe ? 'Phạm vi: Quần thể diện rộng' : 'Phạm vi: Đơn mục tiêu bạo kích'}</div>
+                            </div>
+                            <button onclick="RPGProgression.upgradeSkill(${s.id})" class="px-4 py-2 rounded-lg bg-amber-600 text-white font-bold text-xs hover:bg-amber-500 shadow">
+                                Lĩnh Ngộ (+Cấp)
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    },
+
+    renderInventoryModal: function(container) {
+        const items = [
+            { name: 'Thiên Kiếp Đao (Hoàng Kim)', desc: 'Vũ khí thần binh của Đế Thích Thiên, Công +35%', qty: 1 },
+            { name: 'Thiên Kim Hoàng Bào', desc: 'Áo giáp hộ thể kim tơ, Thủ +30%', qty: 1 },
+            { name: 'Cửu Chuyển Hoàn Hồn Đan', desc: 'Hồi phục lập tức 100% Sinh Lực và Nội Lực toàn đội', qty: 99 },
+            { name: 'Bí Kíp Đao Chữ Thần Thông', desc: 'Dùng để đột phá tầng cao nhất của tuyệt kỹ Ma Giáo', qty: 15 }
+        ];
+        container.innerHTML = `
+            <div class="p-6">
+                <h2 class="text-2xl font-black text-red-900 wuxia-title mb-4"><i class="fas fa-sack-dollar mr-2"></i>Hành Trang & Thần Binh Bảo Khố</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    ${items.map(it => `
+                        <div class="p-3.5 rounded-xl bg-[#ebd8b5] border-2 border-amber-700 flex items-center justify-between">
+                            <div>
+                                <div class="font-black text-amber-950">${it.name} <span class="text-xs text-red-700">(x${it.qty})</span></div>
+                                <div class="text-xs text-stone-700 mt-0.5">${it.desc}</div>
+                            </div>
+                            <button onclick="GameUI.showToast('Đã sử dụng ${it.name}!', 'green')" class="px-3 py-1.5 rounded bg-red-800 text-yellow-200 text-xs font-bold hover:bg-red-700">
+                                Sử Dụng
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    },
+
+    renderBossModal: function(container) {
+        container.innerHTML = `
+            <div class="p-6">
+                <h2 class="text-2xl font-black text-red-900 wuxia-title mb-4"><i class="fas fa-dragon mr-2"></i>Khiêu Chiến Phó Bản & Ma Giáo Cao Thủ</h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="p-4 rounded-xl bg-emerald-950 text-white border-2 border-emerald-400 flex flex-col justify-between">
+                        <div>
+                            <div class="font-black text-lg text-emerald-300">Rừng Trúc U Minh</div>
+                            <p class="text-xs text-gray-300 mt-1">Phục kích Ma Giáo Cao Thủ giữa rừng trúc rậm rạp.</p>
+                        </div>
+                        <button onclick="GameEngine.switchMap('bamboo'); GameUI.closeModal();" class="mt-4 w-full py-2 rounded-lg bg-emerald-600 font-bold text-xs hover:bg-emerald-500">Vào Chiến Trường</button>
+                    </div>
+                    <div class="p-4 rounded-xl bg-rose-950 text-white border-2 border-pink-400 flex flex-col justify-between">
+                        <div>
+                            <div class="font-black text-lg text-pink-300">Đài Phật Hoa Anh Đào</div>
+                            <p class="text-xs text-gray-300 mt-1">Luận kiếm dưới tượng Đại Phật cổ kính giữa mưa hoa anh đào.</p>
+                        </div>
+                        <button onclick="GameEngine.switchMap('buddha'); GameUI.closeModal();" class="mt-4 w-full py-2 rounded-lg bg-pink-600 font-bold text-xs hover:bg-pink-500">Vào Chiến Trường</button>
+                    </div>
+                    <div class="p-4 rounded-xl bg-amber-950 text-white border-2 border-yellow-400 flex flex-col justify-between">
+                        <div>
+                            <div class="font-black text-lg text-yellow-300">Biện Kinh Thành Cổ</div>
+                            <p class="text-xs text-gray-300 mt-1">Hành tẩu giang hồ qua cầu đá hồ sen và trà quán sầm uất.</p>
+                        </div>
+                        <button onclick="GameEngine.switchMap('city'); GameUI.closeModal();" class="mt-4 w-full py-2 rounded-lg bg-amber-600 font-bold text-xs hover:bg-amber-500">Vào Chiến Trường</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    renderMailModal: function(container) {
+        container.innerHTML = `
+            <div class="p-6">
+                <h2 class="text-2xl font-black text-red-900 wuxia-title mb-4"><i class="fas fa-envelope-open-text mr-2"></i>Bồ Câu Đưa Thư</h2>
+                <div class="space-y-3">
+                    <div class="p-4 rounded-xl bg-[#ebd8b5] border border-amber-700 flex items-center justify-between">
+                        <div>
+                            <div class="font-bold text-red-900">Quà Tri Ân Minh Chủ Võ Lâm</div>
+                            <div class="text-xs text-stone-700">Tặng 500,000 Nguyên Bảo & 10,000,000 Bạc.</div>
+                        </div>
+                        <button onclick="RPGProgression.claimMailReward()" class="px-4 py-2 rounded-lg bg-amber-600 text-white font-bold text-xs">Nhận Quà</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    renderEngineEditorModal: function(container) {
+        container.innerHTML = `
+            <div class="p-6">
+                <h2 class="text-2xl font-black text-sky-950 wuxia-title mb-2"><i class="fas fa-cogs mr-2"></i>Wuxia 3D Engine & Spine Inspector</h2>
+                <p class="text-xs text-stone-700 mb-4">Bảng điều khiển kỹ thuật thời gian thực: Ánh sáng môi trường, Sương mù, Camera Isometric & Sinh quái thử nghiệm.</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                    <div class="p-4 rounded-xl bg-[#ebd8b5] border border-amber-800 space-y-3">
+                        <div class="font-black text-amber-950">Điều Khiển Camera & Cảnh Quan</div>
+                        <div class="flex items-center justify-between">
+                            <span>Góc nghiêng Camera Isometric:</span>
+                            <input type="range" min="18" max="42" value="28" oninput="GameEngine.setCameraDistance(this.value)" class="accent-amber-700">
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span>Cường độ sương mù cổ trang:</span>
+                            <input type="range" min="0" max="40" value="16" oninput="GameEngine.setFogDensity(this.value / 1000)" class="accent-amber-700">
+                        </div>
+                        <button onclick="GameEngine.spawnWave(); GameUI.closeModal();" class="w-full py-2 rounded bg-red-800 text-yellow-200 font-bold text-xs">
+                            <i class="fas fa-plus-circle mr-1"></i>Triệu Hồi Đợt Ma Giáo Mới
+                        </button>
+                    </div>
+                    <div class="p-4 rounded-xl bg-stone-900 text-emerald-400 font-mono text-xs overflow-y-auto h-44">
+                        <div>[Engine] Three.js r128 WebGLRenderer Active</div>
+                        <div>[Aspect] 1920x1080 (16:9 Responsive Container)</div>
+                        <div>[Map] Active Arena: ${GameEngine.currentMapName}</div>
+                        <div>[Allies] ${GameEngine.allies.length} Chibi Wuxia Heroes Ready</div>
+                        <div>[Enemies] ${GameEngine.enemies.length} Ma Giáo Units Active</div>
+                        <div>[AutoBattle] ${GameEngine.isAutoBattle ? 'ENABLED' : 'MANUAL'} | Speed: X${GameEngine.battleSpeed}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+};
+
+// 3. HỆ THỐNG TIẾN TRÌNH RPG (Lưu trữ & Nâng cấp)
+window.RPGProgression = {
+    gold: 14995138,
+    silver: 11158534816,
+    cultivateHero: function(idx) {
+        const hero = VoLam.Database.heroes[idx];
+        hero.level += 1;
+        hero.atk = Math.floor(hero.atk * 1.04);
+        hero.def = Math.floor(hero.def * 1.04);
+        hero.maxHp = Math.floor(hero.maxHp * 1.05);
+        hero.hp = hero.maxHp;
+        GameUI.showToast(`Đột phá thành công! ${hero.name} đạt cấp ${hero.level}!`, 'gold');
+        GameUI.renderCharacterModal(document.getElementById('modal-body'));
+    },
+    upgradeSkill: function(skillId) {
+        const skill = VoLam.Database.skills[skillId];
+        skill.dmgMult = +(skill.dmgMult + 0.25).toFixed(2);
+        GameUI.showToast(`Lĩnh ngộ ${skill.name}: Sát thương tăng lên ${(skill.dmgMult * 100).toFixed(0)}%!`, 'purple');
+        GameUI.renderSkillsModal(document.getElementById('modal-body'));
+    },
+    claimMailReward: function() {
+        this.gold += 500000;
+        this.silver += 10000000;
+        document.getElementById('res-gold').innerText = this.gold;
+        document.getElementById('res-silver').innerText = this.silver;
+        GameUI.showToast('Nhận thành công 500,000 KNB & 10,000,000 Bạc!', 'gold');
+    }
+};
+
+// 4. HỆ THỐNG DỰNG CẢNH 3D ISOMETRIC (3 Map từ Ảnh 1, 2, 3)
+window.MapSystem = {
+    group: null,
+
+    clearMap: function(scene) {
+        if (this.group) {
+            scene.remove(this.group);
+        }
+        this.group = new THREE.Group();
+        scene.add(this.group);
+    },
+
+    // MAP 1 (Ảnh 2): Đấu Trường Rừng Trúc U Minh
+    buildBambooForestMap: function(scene) {
+        this.clearMap(scene);
+        scene.background = new THREE.Color(0x162918);
+        scene.fog = new THREE.FogExp2(0x1a301c, 0.016);
+
+        // Mặt đất rêu phong & đường mòn đá cổ
+        const groundGeo = new THREE.PlaneGeometry(70, 70, 32, 32);
+        const groundMat = new THREE.MeshStandardMaterial({ 
+            color: 0x354a29, 
+            roughness: 0.9,
+            metalness: 0.05
+        });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        this.group.add(ground);
+
+        // Đá lát cổ ở trung tâm đấu trường
+        const stoneMat = new THREE.MeshStandardMaterial({ color: 0x5c6356, roughness: 0.85 });
+        for (let i = 0; i < 18; i++) {
+            const slab = new THREE.Mesh(new THREE.BoxGeometry(2.4 + Math.random()*1.5, 0.12, 1.8 + Math.random()), stoneMat);
+            const angle = (i / 18) * Math.PI * 2;
+            const r = 2 + (i % 3) * 3.5;
+            slab.position.set(Math.cos(angle) * r, 0.06, Math.sin(angle) * r);
+            slab.rotation.y = Math.random() * Math.PI;
+            slab.receiveShadow = true;
+            this.group.add(slab);
+        }
+
+        // Bức tường đá cổ kính phía bắc (Giống nền trên Ảnh 2)
+        const wallGroup = new THREE.Group();
+        const wallBase = new THREE.Mesh(new THREE.BoxGeometry(10, 1.8, 1.2), stoneMat);
+        wallBase.position.set(0, 0.9, -15);
+        wallBase.castShadow = true;
+        wallGroup.add(wallBase);
+        for (let x = -4; x <= 4; x += 4) {
+            const pillar = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.7, 1.5), stoneMat);
+            pillar.position.set(x, 1.35, -15);
+            pillar.castShadow = true;
+            wallGroup.add(pillar);
+        }
+        this.group.add(wallGroup);
+
+        // Rừng Trúc Xanh Rậm Rạp bao quanh (Giống Ảnh 2)
+        const bambooStemMat = new THREE.MeshStandardMaterial({ color: 0x4d7c2b, roughness: 0.45 });
+        const bambooLeafMat = new THREE.MeshStandardMaterial({ color: 0x2f5e1e, side: THREE.DoubleSide });
+
+        const createBambooStalk = (x, z, height) => {
+            const stalk = new THREE.Group();
+            const segCount = Math.floor(height / 1.4);
+            for (let s = 0; s < segCount; s++) {
+                const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.16, 1.32, 8), bambooStemMat);
+                seg.position.y = s * 1.4 + 0.7;
+                seg.castShadow = true;
+                stalk.add(seg);
+
+                if (s > 1 && s % 2 === 0) {
+                    const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.65, 1.6, 4), bambooLeafMat);
+                    leaf.position.set((Math.random()-0.5)*0.6, s * 1.4 + 0.8, (Math.random()-0.5)*0.6);
+                    leaf.rotation.z = (Math.random()-0.5) * 1.2;
+                    stalk.add(leaf);
+                }
+            }
+            stalk.position.set(x, 0, z);
+            this.group.add(stalk);
+        };
+
+        // Bố trí bụi trúc bao quanh đấu trường (chừa tầm nhìn camera phía trước)
+        for (let i = 0; i < 85; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist = 12.5 + Math.random() * 14;
+            const bx = Math.cos(angle) * dist;
+            const bz = Math.sin(angle) * dist;
+            // Làm thưa bớt ở góc dưới trái/phải để không che nhân vật
+            if (bz > 11 && Math.abs(bx) < 9) continue;
+            createBambooStalk(bx, bz, 9 + Math.random() * 6);
+        }
+
+        // Tảng đá rêu phong & bụi cỏ
+        const rockMat = new THREE.MeshStandardMaterial({ color: 0x4a5246, roughness: 0.95 });
+        for (let i = 0; i < 16; i++) {
+            const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.7 + Math.random()*0.8, 0), rockMat);
+            const a = (i / 16) * Math.PI * 2;
+            rock.position.set(Math.cos(a) * (10 + Math.random()*3), 0.35, Math.sin(a) * (10 + Math.random()*3));
+            rock.scale.set(1.3, 0.7, 1.1);
+            rock.castShadow = true;
+            this.group.add(rock);
+        }
+    },
+
+    // MAP 2 (Ảnh 3): Đài Phật Hoa Anh Đào
+    buildBuddhaArenaMap: function(scene) {
+        this.clearMap(scene);
+        scene.background = new THREE.Color(0x526b6c);
+        scene.fog = new THREE.FogExp2(0x7c9696, 0.012);
+
+        // Sân gạch đá cổ rêu phong
+        const floor = new THREE.Mesh(
+            new THREE.BoxGeometry(26, 0.5, 22),
+            new THREE.MeshStandardMaterial({ color: 0x8c8d75, roughness: 0.8 })
+        );
+        floor.position.y = -0.25;
+        floor.receiveShadow = true;
+        this.group.add(floor);
+
+        // Lan can đá chạm khắc bao quanh
+        const railMat = new THREE.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.7 });
+        const leftRail = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.2, 22), railMat);
+        leftRail.position.set(-13, 0.6, 0);
+        this.group.add(leftRail);
+        const rightRail = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.2, 22), railMat);
+        rightRail.position.set(13, 0.6, 0);
+        this.group.add(rightRail);
+
+        // Tượng Đại Phật Cổ Khổng Lồ phía Bắc (Giống Ảnh 3)
+        const buddhaGroup = new THREE.Group();
+        const head = new THREE.Mesh(new THREE.SphereGeometry(2.6, 16, 16), new THREE.MeshStandardMaterial({ color: 0x6b7265, roughness: 0.85 }));
+        head.scale.set(0.9, 1.15, 0.85);
+        head.position.set(0, 3.2, -13);
+        buddhaGroup.add(head);
+
+        const ushnisha = new THREE.Mesh(new THREE.SphereGeometry(1.1, 12, 12), new THREE.MeshStandardMaterial({ color: 0x575e52 }));
+        ushnisha.position.set(0, 5.8, -13);
+        buddhaGroup.add(ushnisha);
+        this.group.add(buddhaGroup);
+
+        // Cây Hoa Anh Đào Hồng Rực Rỡ hai bên (Giống Ảnh 3)
+        const trunkMat = new THREE.MeshStandardMaterial({ color: 0x452719 });
+        const blossomMat = new THREE.MeshStandardMaterial({ color: 0xf9a8d4, emissive: 0x831843, emissiveIntensity: 0.2 });
+        [[-11, -10], [11, -10], [-13, 2], [13, 2]].forEach(([tx, tz]) => {
+            const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.7, 5, 8), trunkMat);
+            trunk.position.set(tx, 2.5, tz);
+            this.group.add(trunk);
+            for (let b = 0; b < 5; b++) {
+                const crown = new THREE.Mesh(new THREE.DodecahedronGeometry(2.2, 1), blossomMat);
+                crown.position.set(tx + (Math.random()-0.5)*3, 5 + Math.random()*1.5, tz + (Math.random()-0.5)*3);
+                this.group.add(crown);
+            }
+        });
+    },
+
+    // MAP 3 (Ảnh 1 & 5): Biện Kinh Thành Cổ - Cầu Đá Hồ Sen
+    buildCityMap: function(scene) {
+        this.clearMap(scene);
+        scene.background = new THREE.Color(0x3b6e6c);
+        scene.fog = new THREE.FogExp2(0x4b7f7d, 0.011);
+
+        // Mặt nước hồ sen xanh ngọc (Giống Ảnh 1 & 5)
+        const water = new THREE.Mesh(
+            new THREE.PlaneGeometry(70, 70),
+            new THREE.MeshStandardMaterial({ color: 0x2c8c85, roughness: 0.2, metalness: 0.4 })
+        );
+        water.rotation.x = -Math.PI / 2;
+        water.position.y = -0.4;
+        this.group.add(water);
+
+        // Quảng trường lát gạch đá hoa văn cổ
+        const plaza = new THREE.Mesh(
+            new THREE.BoxGeometry(26, 0.8, 22),
+            new THREE.MeshStandardMaterial({ color: 0xb8c4b4, roughness: 0.75 })
+        );
+        plaza.position.y = 0;
+        plaza.receiveShadow = true;
+        this.group.add(plaza);
+
+        // Lá sen & Hoa sen hồng trên mặt hồ
+        const lilyPadMat = new THREE.MeshStandardMaterial({ color: 0x3f8f4b });
+        const lotusMat = new THREE.MeshStandardMaterial({ color: 0xf472b6, emissive: 0xbe185d, emissiveIntensity: 0.3 });
+        for (let i = 0; i < 24; i++) {
+            const lx = (Math.random() - 0.5) * 32;
+            const lz = 12.5 + Math.random() * 8;
+            const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.65, 0.06, 12), lilyPadMat);
+            pad.position.set(lx, -0.35, lz);
+            this.group.add(pad);
+            if (i % 3 === 0) {
+                const flower = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.35, 6), lotusMat);
+                flower.position.set(lx, -0.2, lz);
+                this.group.add(flower);
+            }
+        }
+
+        // Lầu các mái ngói đỏ cổ trang phía bắc (Giống Ảnh 1)
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(16, 4.5, 5), new THREE.MeshStandardMaterial({ color: 0xe5e0d0 }));
+        wall.position.set(0, 2.25, -12);
+        this.group.add(wall);
+
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(11, 2.8, 4), new THREE.MeshStandardMaterial({ color: 0x991b1b }));
+        roof.position.set(0, 5.8, -12);
+        roof.rotation.y = Math.PI / 4;
+        this.group.add(roof);
+
+        // Quán trà bạt xanh (Giống Ảnh 1 & 5)
+        const tentRoof = new THREE.Mesh(new THREE.ConeGeometry(2.6, 1.2, 4), new THREE.MeshStandardMaterial({ color: 0x2c4c6e }));
+        tentRoof.position.set(-7, 3.2, -5);
+        tentRoof.rotation.y = Math.PI / 4;
+        this.group.add(tentRoof);
+    }
+};
+
+// 5. HỆ THỐNG NHÂN VẬT CHIBI 3D (Tỷ lệ đầu to thân nhỏ giống Ảnh 2, 3, 4)
+window.CharacterSystem = {
+    createChibiUnit: function(config, isAlly) {
+        const root = new THREE.Group();
+        const scale = config.scale || 1.0;
+        root.scale.set(scale, scale, scale);
+
+        // Vòng sáng dưới chân nhân vật (Tím / Xanh / Đỏ giống Ảnh 2)
+        const auraColor = isAlly ? 0xc026d3 : 0xef4444;
+        const ringGeo = new THREE.RingGeometry(0.65, 0.95, 24);
+        const ringMat = new THREE.MeshBasicMaterial({ 
+            color: auraColor, 
+            side: THREE.DoubleSide, 
+            transparent: true, 
+            opacity: 0.65 
+        });
+        const auraRing = new THREE.Mesh(ringGeo, ringMat);
+        auraRing.rotation.x = -Math.PI / 2;
+        auraRing.position.y = 0.04;
+        root.add(auraRing);
+
+        // Thân nhân vật (Áo bào võ lâm)
+        const bodyMat = new THREE.MeshStandardMaterial({ color: config.colorPrimary, roughness: 0.5 });
+        const trimMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, metalness: 0.6, roughness: 0.3 });
+
+        const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.52, 1.05, 12), bodyMat);
+        torso.position.y = 0.65;
+        torso.castShadow = true;
+        root.add(torso);
+
+        // Đai lưng hoàng kim
+        const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.39, 0.16, 12), trimMat);
+        belt.position.y = 0.65;
+        root.add(belt);
+
+        // Đầu Chibi cỡ lớn (Tỷ lệ đặc trưng Mộng Võ Lâm)
+        const headGroup = new THREE.Group();
+        headGroup.position.y = 1.52;
+
+        const skinMat = new THREE.MeshStandardMaterial({ color: 0xffdfc4, roughness: 0.6 });
+        const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.46, 16, 16), skinMat);
+        headMesh.castShadow = true;
+        headGroup.add(headMesh);
+
+        // Mái tóc cổ trang & Búi tóc đỉnh đầu
+        const hairMat = new THREE.MeshStandardMaterial({ color: config.colorHair, roughness: 0.4 });
+        const hairCap = new THREE.Mesh(new THREE.SphereGeometry(0.49, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.58), hairMat);
+        hairCap.rotation.x = -0.25;
+        headGroup.add(hairCap);
+
+        const topKnot = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 12), hairMat);
+        topKnot.position.set(0, 0.52, -0.05);
+        headGroup.add(topKnot);
+
+        // Tóc dài bay phía sau
+        const ponyTail = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.85, 8), hairMat);
+        ponyTail.position.set(0, 0.1, -0.45);
+        ponyTail.rotation.x = -0.4;
+        headGroup.add(ponyTail);
+
+        // Mặt nạ tím Đế Thích Thiên (nếu có)
+        if (config.maskColor) {
+            const mask = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.47, 0.47, 0.22, 16, 1, true, -Math.PI*0.35, Math.PI*0.7),
+                new THREE.MeshStandardMaterial({ color: config.maskColor, side: THREE.DoubleSide })
+            );
+            mask.position.y = 0.02;
+            headGroup.add(mask);
+        }
+
+        root.add(headGroup);
+
+        // Tay phải & Thần Binh Kiếm Phát Sáng
+        const weaponGroup = new THREE.Group();
+        weaponGroup.position.set(0.55, 0.85, 0.25);
+
+        const bladeMat = new THREE.MeshStandardMaterial({ 
+            color: isAlly ? 0x38bdf8 : 0xf43f5e, 
+            emissive: isAlly ? 0x0284c7 : 0xbe123c, 
+            emissiveIntensity: 0.8 
+        });
+        const blade = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.45, 0.16), bladeMat);
+        blade.position.y = 0.55;
+        blade.rotation.x = 0.45;
+        weaponGroup.add(blade);
+
+        const hilt = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.08, 0.12), trimMat);
+        hilt.position.y = -0.05;
+        weaponGroup.add(hilt);
+
+        root.add(weaponGroup);
+
+        // Tạo phần tử Thanh Máu & Tên trên giao diện 2D
+        const labelEl = document.createElement('div');
+        labelEl.className = 'absolute -translate-x-1/2 -translate-y-full flex flex-col items-center pointer-events-none transition-opacity duration-200';
+        labelEl.innerHTML = `
+            <div class="text-[11px] font-bold ${isAlly ? 'text-yellow-200' : 'text-red-300'} wuxia-stroke whitespace-nowrap mb-0.5">${config.name}</div>
+            <div class="w-16 h-2 bg-black/80 border border-black rounded-sm overflow-hidden shadow">
+                <div class="unit-hp-fill h-full ${isAlly ? 'bg-gradient-to-r from-green-600 to-lime-400' : 'bg-gradient-to-r from-red-800 to-red-500'}" style="width: 100%;"></div>
+            </div>
+        `;
+        document.getElementById('world-labels-layer').appendChild(labelEl);
+
+        return {
+            mesh: root,
+            headGroup: headGroup,
+            weaponGroup: weaponGroup,
+            auraRing: auraRing,
+            labelEl: labelEl,
+            hpFillEl: labelEl.querySelector('.unit-hp-fill'),
+            name: config.name,
+            isAlly: isAlly,
+            isBoss: !!config.isBoss,
+            hp: config.hp,
+            maxHp: config.hp,
+            atk: config.atk,
+            attackTimer: Math.random() * 1.2,
+            animPhase: Math.random() * Math.PI * 2,
+            hitFlash: 0,
+            dead: false
+        };
+    }
+};
+
+// 6. HỆ THỐNG HIỆU ỨNG KỸ NĂNG & HẠT 3D (Tím / Xanh / Đỏ giống Ảnh 2 & 3)
+window.ParticleSystem = {
+    effects: [],
+
+    spawnSkillVFX: function(scene, pos, colorHex, ringColorHex) {
+        const group = new THREE.Group();
+        group.position.copy(pos);
+        group.position.y = 0.2;
+
+        // Vòng tròn ma pháp xoay dưới đất (Giống vòng tím/xanh trong Ảnh 2)
+        const magicCircle = new THREE.Mesh(
+            new THREE.RingGeometry(1.2, 3.6, 32),
+            new THREE.MeshBasicMaterial({ color: ringColorHex, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
+        );
+        magicCircle.rotation.x = -Math.PI / 2;
+        group.add(magicCircle);
+
+        // Vòng xoáy năng lượng đứng
+        const vortex = new THREE.Mesh(
+            new THREE.TorusGeometry(2.2, 0.14, 12, 32),
+            new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0.9 })
+        );
+        vortex.position.y = 1.2;
+        vortex.rotation.x = Math.PI / 3;
+        group.add(vortex);
+
+        // Các tia kiếm khí / cánh hoa bay lên
+        const shards = [];
+        const shardMat = new THREE.MeshBasicMaterial({ color: colorHex });
+        for (let i = 0; i < 18; i++) {
+            const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), shardMat);
+            const a = (i / 18) * Math.PI * 2;
+            const r = 0.8 + Math.random() * 2.2;
+            shard.position.set(Math.cos(a) * r, Math.random() * 1.5, Math.sin(a) * r);
+            shard.userData = { vy: 2.5 + Math.random() * 3, angle: a, radius: r };
+            group.add(shard);
+            shards.push(shard);
+        }
+
+        scene.add(group);
+        this.effects.push({
+            group, magicCircle, vortex, shards,
+            life: 1.1, maxLife: 1.1
+        });
+    },
+
+    spawnSlashSpark: function(scene, pos, colorHex) {
+        const spark = new THREE.Mesh(
+            new THREE.RingGeometry(0.2, 1.3, 16),
+            new THREE.MeshBasicMaterial({ color: colorHex, side: THREE.DoubleSide, transparent: true, opacity: 0.9 })
+        );
+        spark.position.copy(pos);
+        spark.position.y = 1.0;
+        spark.lookAt(GameEngine.camera.position);
+        scene.add(spark);
+        this.effects.push({
+            group: spark, isSimple: true, life: 0.35, maxLife: 0.35
+        });
+    },
+
+    update: function(scene, dt) {
+        for (let i = this.effects.length - 1; i >= 0; i--) {
+            const ef = this.effects[i];
+            ef.life -= dt;
+            const progress = 1 - (ef.life / ef.maxLife);
+
+            if (ef.isSimple) {
+                ef.group.scale.setScalar(1 + progress * 1.5);
+                ef.group.material.opacity = 1 - progress;
+            } else {
+                ef.magicCircle.rotation.z += dt * 4;
+                ef.magicCircle.scale.setScalar(0.8 + progress * 0.6);
+                ef.magicCircle.material.opacity = (1 - progress) * 0.85;
+
+                ef.vortex.rotation.z -= dt * 7;
+                ef.vortex.rotation.y += dt * 5;
+                ef.vortex.material.opacity = 1 - progress;
+
+                ef.shards.forEach(s => {
+                    s.position.y += s.userData.vy * dt;
+                    s.userData.angle += dt * 4;
+                    s.position.x = Math.cos(s.userData.angle) * s.userData.radius;
+                    s.position.z = Math.sin(s.userData.angle) * s.userData.radius;
+                });
+            }
+
+            if (ef.life <= 0) {
+                scene.remove(ef.group);
+                this.effects.splice(i, 1);
+            }
+        }
+    }
+};
+
+// 7. HỆ THỐNG CHIẾN ĐẤU TỰ ĐỘNG & KỸ NĂNG
+window.CombatSystem = {
+    triggerManualSkill: function(skillIndex) {
+        const skill = VoLam.Database.skills[skillIndex];
+        if (!skill) return;
+
+        if (skill.currentCd > 0) {
+            GameUI.showToast(`Tuyệt kỹ ${skill.name} đang hồi chiêu (${skill.currentCd.toFixed(1)}s)!`, 'purple');
+            return;
+        }
+
+        const aliveAllies = GameEngine.allies.filter(u => !u.dead);
+        const aliveEnemies = GameEngine.enemies.filter(u => !u.dead);
+        if (aliveAllies.length === 0 || aliveEnemies.length === 0) return;
+
+        skill.currentCd = skill.cooldown;
+        const caster = aliveAllies[0];
+        const primaryTarget = aliveEnemies[0];
+
+        // Hiển thị chữ thư pháp tuyệt kỹ trên màn hình (Giống Ảnh 2 & 3)
+        GameUI.showSkillBanner(skill.name);
+        GameEngine.triggerCameraShake(0.45);
+
+        // Hiệu ứng vòng tròn ma pháp 3D
+        ParticleSystem.spawnSkillVFX(GameEngine.scene, primaryTarget.mesh.position, skill.color, skill.ringColor);
+
+        // Tính sát thương
+        const targets = skill.aoe ? aliveEnemies : [primaryTarget];
+        targets.forEach((enemy, idx) => {
+            const isCrit = Math.random() < 0.65;
+            // Tạo con số sát thương khổng lồ đậm chất game kiếm hiệp (Giống Ảnh 2: 602082151841)
+            const baseVal = Math.floor(caster.atk * skill.dmgMult * (0.9 + Math.random() * 0.3));
+            const displayDmg = isCrit ? baseVal * 1245 : baseVal * 12;
+
+            this.applyDamage(enemy, baseVal * 0.45, displayDmg, isCrit ? 'crit' : 'normal');
+        });
+    },
+
+    applyDamage: function(target, realHpLoss, displayDmg, type) {
+        if (target.dead) return;
+        target.hp = Math.max(0, target.hp - realHpLoss);
+        target.hitFlash = 0.2;
+
+        // Cập nhật thanh máu trên đầu
+        const pct = Math.max(0, (target.hp / target.maxHp) * 100);
+        target.hpFillEl.style.width = `${pct}%`;
+
+        // Chiếu tọa độ 3D ra 2D để hiện số sát thương bay lên
+        const screenPos = GameEngine.toScreenPosition(target.mesh.position, 2.2);
+        GameUI.spawnDamageNumber(screenPos.x + (Math.random()-0.5)*30, screenPos.y, displayDmg, type);
+
+        // Cập nhật HUD nếu là Boss Ma Giáo Cao Thủ
+        if (target.isBoss) {
+            document.getElementById('right-qi-bar').style.width = `${pct}%`;
+            document.getElementById('right-qi-val').innerText = Math.floor(target.hp / 10000);
+        }
+
+        if (target.hp <= 0) {
+            target.dead = true;
+            target.mesh.visible = false;
+            target.labelEl.style.display = 'none';
+            GameUI.showToast(`Đã đánh bại ${target.name}!`, 'gold');
+
+            // Tự động triệu hồi đợt kẻ địch mới nếu tiêu diệt hết
+            if (GameEngine.enemies.every(e => e.dead)) {
+                setTimeout(() => GameEngine.spawnWave(), 1400);
+            }
+        }
+    }
+};
+
+// 8. CORE ENGINE & VÒNG LẶP 3D
+window.GameEngine = {
+    scene: null,
+    camera: null,
+    renderer: null,
+    allies: [],
+    enemies: [],
+    currentMapName: 'bamboo',
+    isAutoBattle: true,
+    isAutoSkill: true,
+    battleSpeed: 1,
+    isPaused: false,
+    shakeTime: 0,
+    cameraZoom: 26,
+    isDragging: false,
+    prevMouse: { x: 0, y: 0 },
+    cameraAngleOffset: 0,
+
+    init: function() {
+        const container = document.getElementById('game-viewport');
+        const canvas = document.getElementById('three-canvas');
+
+        // Khởi tạo Scene
+        this.scene = new THREE.Scene();
+
+        // Camera góc nhìn Isometric 3D (Giống Ảnh 1, 2, 3)
+        this.camera = new THREE.PerspectiveCamera(36, 16 / 9, 0.1, 200);
+        this.updateCameraPosition();
+
+        // Renderer WebGL chất lượng cao
+        this.renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, powerPreference: 'high-performance' });
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.handleResize();
+
+        // Hệ thống Ánh sáng Rừng Trúc / Cổ Trang
+        const hemiLight = new THREE.HemisphereLight(0xdff5e1, 0x263822, 0.85);
+        this.scene.add(hemiLight);
+
+        const dirLight = new THREE.DirectionalLight(0xfff4d6, 1.35);
+        dirLight.position.set(14, 26, 16);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 1024;
+        dirLight.shadow.mapSize.height = 1024;
+        this.scene.add(dirLight);
+
+        // Ánh sáng ma pháp tím/xanh ở trung tâm giao chiến
+        const battleGlow = new THREE.PointLight(0xa855f7, 1.6, 18);
+        battleGlow.position.set(0, 2.5, 0);
+        this.scene.add(battleGlow);
+
+        // Dựng bản đồ Rừng Trúc mặc định (Giống Ảnh 2)
+        MapSystem.buildBambooForestMap(this.scene);
+
+        // Triệu hồi Đội Hình Chính Phái & Ma Giáo
+        this.spawnAllies();
+        this.spawnWave();
+
+        // Sự kiện chuột / cảm ứng xoay nhẹ góc nhìn & phím tắt 1-4
+        this.bindEvents(container);
+
+        // Bắt đầu vòng lặp game
+        this.lastTime = performance.now();
+        this.frameCount = 0;
+        this.fpsTime = 0;
+        requestAnimationFrame((t) => this.loop(t));
+    },
+
+    updateCameraPosition: function() {
+        const rad = this.cameraAngleOffset;
+        const dist = this.cameraZoom;
+        this.camera.position.set(Math.sin(rad) * dist * 0.45, dist * 0.72, Math.cos(rad) * dist);
+        this.camera.lookAt(0, 1.0, 0);
+    },
+
+    setCameraDistance: function(val) {
+        this.cameraZoom = parseFloat(val);
+        this.updateCameraPosition();
+    },
+
+    setFogDensity: function(val) {
+        if (this.scene.fog) this.scene.fog.density = val;
+    },
+
+    spawnAllies: function() {
+        this.allies.forEach(u => { this.scene.remove(u.mesh); u.labelEl.remove(); });
+        this.allies = [];
+
+        const positions = [
+            [-2.4, 2.2],
+            [-1.2, 3.4],
+            [-3.8, 0.8],
+            [-2.8, 4.2]
+        ];
+
+        VoLam.Database.heroes.forEach((h, i) => {
+            const unit = CharacterSystem.createChibiUnit(h, true);
+            unit.mesh.position.set(positions[i][0], 0, positions[i][1]);
+            unit.homePos = unit.mesh.position.clone();
+            this.scene.add(unit.mesh);
+            this.allies.push(unit);
+        });
+    },
+
+    spawnWave: function() {
+        this.enemies.forEach(u => { this.scene.remove(u.mesh); u.labelEl.remove(); });
+        this.enemies = [];
+
+        const positions = [
+            [1.6, -1.8],  // Ma Giáo Cao Thủ (Boss)
+            [0.2, -0.5],  // Hộ Pháp
+            [2.6, 0.4],   // Tử Y Sát Thủ
+            [3.8, -1.6]   // Độc Long Sứ Giả
+        ];
+
+        VoLam.Database.enemies.forEach((e, i) => {
+            const unit = CharacterSystem.createChibiUnit(e, false);
+            unit.mesh.position.set(positions[i][0], 0, positions[i][1]);
+            unit.homePos = unit.mesh.position.clone();
+            this.scene.add(unit.mesh);
+            this.enemies.push(unit);
+        });
+
+        document.getElementById('right-qi-bar').style.width = '100%';
+        document.getElementById('right-qi-val').innerText = '1850';
+    },
+
+    switchMap: function(mapKey) {
+        this.currentMapName = mapKey;
+        ['bamboo', 'buddha', 'city'].forEach(k => {
+            const btn = document.getElementById(`btn-map-${k}`);
+            if (k === mapKey) {
+                btn.className = 'px-3 py-1 rounded-full text-xs font-bold bg-emerald-700 text-yellow-200 border border-yellow-400 transition';
+            } else {
+                btn.className = 'px-3 py-1 rounded-full text-xs font-bold bg-stone-800 text-gray-300 hover:text-white transition';
+            }
+        });
+
+        if (mapKey === 'bamboo') {
+            MapSystem.buildBambooForestMap(this.scene);
+            GameUI.showToast('Đã dịch chuyển tới Rừng Trúc U Minh', 'green');
+        } else if (mapKey === 'buddha') {
+            MapSystem.buildBuddhaArenaMap(this.scene);
+            GameUI.showToast('Đã dịch chuyển tới Đài Phật Hoa Anh Đào', 'purple');
+        } else {
+            MapSystem.buildCityMap(this.scene);
+            GameUI.showToast('Đã dịch chuyển tới Biện Kinh Thành Cổ', 'gold');
+        }
+    },
+
+    toggleAutoBattle: function() {
+        this.isAutoBattle = !this.isAutoBattle;
+        const badge = document.getElementById('auto-status-badge');
+        badge.innerText = this.isAutoBattle ? 'AUTO' : 'TAY';
+        badge.className = `absolute -top-1 -right-1 px-1.5 ${this.isAutoBattle ? 'bg-red-600' : 'bg-stone-600'} text-white text-[10px] font-bold rounded-full border border-white`;
+        GameUI.showToast(this.isAutoBattle ? 'Đã BẬT Tự Động Đánh Quái' : 'Đã chuyển sang Điều Khiển Tay');
+    },
+
+    toggleAutoSkill: function() {
+        this.isAutoSkill = !this.isAutoSkill;
+        const btn = document.getElementById('btn-auto-skill');
+        btn.innerHTML = `<i class="fas fa-magic mr-1 text-yellow-300"></i>Tự Tung Chiêu: ${this.isAutoSkill ? 'BẬT' : 'TẮT'}`;
+        GameUI.showToast(`Tự động thi triển tuyệt kỹ: ${this.isAutoSkill ? 'BẬT' : 'TẮT'}`, 'purple');
+    },
+
+    cycleBattleSpeed: function() {
+        const speeds = [1, 2, 3, 5];
+        const nextIdx = (speeds.indexOf(this.battleSpeed) + 1) % speeds.length;
+        this.battleSpeed = speeds[nextIdx];
+        document.getElementById('battle-speed-text').innerText = `X${this.battleSpeed}`;
+        GameUI.showToast(`Tốc độ trận đấu: X${this.battleSpeed}`, 'gold');
+    },
+
+    togglePause: function() {
+        this.isPaused = !this.isPaused;
+        GameUI.showToast(this.isPaused ? 'Đã tạm dừng trận đấu' : 'Tiếp tục giao chiến!');
+    },
+
+    triggerCameraShake: function(duration) {
+        this.shakeTime = duration;
+    },
+
+    toScreenPosition: function(vec3, yOffset = 0) {
+        const container = document.getElementById('game-viewport');
+        const vector = vec3.clone();
+        vector.y += yOffset;
+        vector.project(this.camera);
+        return {
+            x: (vector.x * 0.5 + 0.5) * container.clientWidth,
+            y: (-(vector.y * 0.5) + 0.5) * container.clientHeight
+        };
+    },
+
+    handleResize: function() {
+        const container = document.getElementById('game-viewport');
+        if (!container || !this.renderer) return;
+        const w = container.clientWidth;
+        const h = container.clientHeight;
+        this.camera.aspect = w / h;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(w, h, false);
+    },
+
+    bindEvents: function(container) {
+        window.addEventListener('resize', () => this.handleResize());
+
+        // Phím tắt 1, 2, 3, 4 tung tuyệt kỹ
+        window.addEventListener('keydown', (e) => {
+            if (['1', '2', '3', '4'].includes(e.key)) {
+                CombatSystem.triggerManualSkill(parseInt(e.key) - 1);
+            }
+        });
+
+        // Kéo chuột / vuốt để xoay góc camera Isometric quanh chiến trường
+        container.addEventListener('mousedown', (e) => {
+            if (e.target.id === 'three-canvas') {
+                this.isDragging = true;
+                this.prevMouse = { x: e.clientX, y: e.clientY };
+            }
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (!this.isDragging) return;
+            const dx = e.clientX - this.prevMouse.x;
+            this.cameraAngleOffset -= dx * 0.006;
+            this.cameraAngleOffset = Math.max(-0.85, Math.min(0.85, this.cameraAngleOffset));
+            this.updateCameraPosition();
+            this.prevMouse = { x: e.clientX, y: e.clientY };
+        });
+        window.addEventListener('mouseup', () => { this.isDragging = false; });
+
+        // Hỗ trợ cảm ứng trên điện thoại / máy tính bảng
+        container.addEventListener('touchstart', (e) => {
+            if (e.target.id === 'three-canvas' && e.touches.length === 1) {
+                this.isDragging = true;
+                this.prevMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            }
+        }, { passive: true });
+        container.addEventListener('touchmove', (e) => {
+            if (!this.isDragging || e.touches.length !== 1) return;
+            const dx = e.touches[0].clientX - this.prevMouse.x;
+            this.cameraAngleOffset -= dx * 0.006;
+            this.cameraAngleOffset = Math.max(-0.85, Math.min(0.85, this.cameraAngleOffset));
+            this.updateCameraPosition();
+            this.prevMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        }, { passive: true });
+        container.addEventListener('touchend', () => { this.isDragging = false; });
+    },
+
+    updateUnits: function(dt) {
+        const aliveAllies = this.allies.filter(u => !u.dead);
+        const aliveEnemies = this.enemies.filter(u => !u.dead);
+
+        // Cập nhật hồi chiêu 4 ô tuyệt kỹ
+        VoLam.Database.skills.forEach((sk, idx) => {
+            const overlay = document.getElementById(`cd-overlay-${idx}`);
+            if (sk.currentCd > 0) {
+                sk.currentCd = Math.max(0, sk.currentCd - dt);
+                overlay.classList.remove('hidden');
+                overlay.innerText = Math.ceil(sk.currentCd);
+            } else {
+                overlay.classList.add('hidden');
+                // Tự động tung chiêu nếu bật Auto Skill
+                if (this.isAutoBattle && this.isAutoSkill && aliveEnemies.length > 0 && Math.random() < 0.03) {
+                    CombatSystem.triggerManualSkill(idx);
+                }
+            }
+        });
+
+        // AI & Chuyển động của Phe Ta
+        aliveAllies.forEach((unit) => {
+            unit.animPhase += dt * 6;
+            unit.auraRing.rotation.z += dt * 2;
+            unit.headGroup.position.y = 1.52 + Math.sin(unit.animPhase) * 0.04;
+
+            if (this.isAutoBattle && aliveEnemies.length > 0) {
+                const target = aliveEnemies[0];
+                const dir = new THREE.Vector3().subVectors(target.mesh.position, unit.mesh.position);
+                const dist = dir.length();
+                unit.mesh.lookAt(target.mesh.position.x, 0, target.mesh.position.z);
+
+                if (dist > 2.3) {
+                    dir.normalize();
+                    unit.mesh.position.addScaledVector(dir, dt * 3.8);
+                } else {
+                    unit.attackTimer -= dt;
+                    // Hoạt ảnh vung kiếm chém
+                    unit.weaponGroup.rotation.x = Math.sin(unit.animPhase * 2) * 0.9;
+                    if (unit.attackTimer <= 0) {
+                        unit.attackTimer = 1.1 + Math.random() * 0.4;
+                        ParticleSystem.spawnSlashSpark(this.scene, target.mesh.position, 0x38bdf8);
+                        const dmg = Math.floor(unit.atk * (0.8 + Math.random() * 0.4));
+                        CombatSystem.applyDamage(target, dmg * 0.35, dmg * 4, Math.random() < 0.35 ? 'crit' : 'normal');
+                    }
+                }
+            }
+
+            // Cập nhật vị trí nhãn 2D
+            const pos2d = this.toScreenPosition(unit.mesh.position, 2.35);
+            unit.labelEl.style.left = `${pos2d.x}px`;
+            unit.labelEl.style.top = `${pos2d.y}px`;
+        });
+
+        // AI & Chuyển động của Ma Giáo
+        aliveEnemies.forEach((unit) => {
+            unit.animPhase += dt * 5.5;
+            unit.auraRing.rotation.z -= dt * 2.2;
+            unit.headGroup.position.y = 1.52 + Math.sin(unit.animPhase) * 0.04;
+
+            if (aliveAllies.length > 0) {
+                const target = aliveAllies[0];
+                const dir = new THREE.Vector3().subVectors(target.mesh.position, unit.mesh.position);
+                const dist = dir.length();
+                unit.mesh.lookAt(target.mesh.position.x, 0, target.mesh.position.z);
+
+                if (dist > 2.4) {
+                    dir.normalize();
+                    unit.mesh.position.addScaledVector(dir, dt * 3.2);
+                } else {
+                    unit.attackTimer -= dt;
+                    unit.weaponGroup.rotation.x = Math.cos(unit.animPhase * 2) * 0.85;
+                    if (unit.attackTimer <= 0) {
+                        unit.attackTimer = 1.35 + Math.random() * 0.5;
+                        ParticleSystem.spawnSlashSpark(this.scene, target.mesh.position, 0xf43f5e);
+                        const dmg = Math.floor(unit.atk * (0.7 + Math.random() * 0.3));
+                        // Phe ta nhận sát thương nhẹ và tự hồi khí
+                        const screenPos = this.toScreenPosition(target.mesh.position, 2.1);
+                        GameUI.spawnDamageNumber(screenPos.x, screenPos.y, Math.floor(dmg / 150), 'normal');
+                    }
+                }
+            }
+
+            const pos2d = this.toScreenPosition(unit.mesh.position, 2.45 * (unit.isBoss ? 1.15 : 1));
+            unit.labelEl.style.left = `${pos2d.x}px`;
+            unit.labelEl.style.top = `${pos2d.y}px`;
+        });
+    },
+
+    loop: function(now) {
+        requestAnimationFrame((t) => this.loop(t));
+
+        const rawDt = Math.min(0.05, (now - this.lastTime) / 1000);
+        this.lastTime = now;
+
+        // Đo FPS
+        this.frameCount++;
+        this.fpsTime += rawDt;
+        if (this.fpsTime >= 0.5) {
+            document.getElementById('fps-counter').innerText = `${Math.round(this.frameCount / this.fpsTime)} fps`;
+            this.frameCount = 0;
+            this.fpsTime = 0;
+        }
+
+        if (!this.isPaused) {
+            const simDt = rawDt * this.battleSpeed;
+            this.updateUnits(simDt);
+            ParticleSystem.update(this.scene, simDt);
+
+            // Rung lắc camera khi tung đại chiêu
+            if (this.shakeTime > 0) {
+                this.shakeTime -= rawDt;
+                this.camera.position.x += (Math.random() - 0.5) * 0.35;
+                this.camera.position.y += (Math.random() - 0.5) * 0.35;
+                if (this.shakeTime <= 0) this.updateCameraPosition();
+            }
+        }
+
+        this.renderer.render(this.scene, this.camera);
+    }
+};
+
+// Khởi chạy game khi trang tải xong
+window.onload = function() {
+    GameEngine.init();
+    setTimeout(() => {
+        CombatSystem.triggerManualSkill(1); // Khai màn bằng tuyệt kỹ Đao Chữ Thần Thông
+    }, 800);
+};
+</script>
+</body>
+</html>
