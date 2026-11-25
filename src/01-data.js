@@ -743,7 +743,7 @@ const State = {
   ],
   customProps: [],
   stats: { battles: 0, wins: 0, kills: 0 },
-  settings: { muted: false, autoBattle: true, autoSkill: true, speed: 1, clockSpeed: 1, weatherFx: true },
+  settings: { muted: false, autoBattle: true, autoSkill: true, speed: 1, clockSpeed: 1, weatherFx: true, showFps: false, autoQuality: true },
   /* ENV-BEGIN — Đồng hồ giờ game + thời tiết (lưu cùng save v2).
      worldClock: hour 0–24 (8 = 8h sáng), day = ngày game (1…), season suy ra
      từ day (30 ngày/mùa: Xuân→Hạ→Thu→Đông, lặp 120 ngày). clockSpeed lấy từ
@@ -751,7 +751,7 @@ const State = {
      weather: kind hiện tại + remain = số giây thật còn lại tới lần đổi sau. */
   worldClock: { hour: 8, day: 1, season: 'xuan' },
   weather: { kind: 'nang', remain: 180 },
-  flags: { tutorial: false, createdVia: '', event: { checkin: { lastDate: '', streak: 0, claimed: {} }, daily: {}, weekly: {}, seasonal: {}, boss: {}, arena: {}, redeem: {} }, npc: { met: {}, forgeCount: 0, healCount: 0, loreRead: 0 }, interact: defaultInteractState(), district: defaultDistrictFlags() }
+  flags: { tutorial: false, createdVia: '', event: { checkin: { lastDate: '', streak: 0, claimed: {} }, daily: {}, weekly: {}, seasonal: {}, boss: {}, arena: {}, redeem: {} }, npc: { met: {}, forgeCount: 0, healCount: 0, loreRead: 0 }, interact: defaultInteractState(), district: defaultDistrictFlags(), fbx: { hero: null, props: [] } }
 };
 
 const SaveManager = {
@@ -805,7 +805,14 @@ const SaveManager = {
         FollowPets.ownedPetIds().indexOf(State.activePet) < 0) State.activePet = null;
       if (Array.isArray(d.customProps)) State.customProps = d.customProps;
       if (d.stats) Object.assign(State.stats, d.stats);
-      if (d.settings) Object.assign(State.settings, d.settings);
+      if (d.settings) {
+        Object.assign(State.settings, d.settings);
+        /* QUALITY-BEGIN — 2 setting mới (mặc định: ẩn FPS, bật tự động giảm
+           chất lượng). Save cũ không có 2 key này -> giữ mặc định, không đổi
+           id/behaviour cũ; giá trị lạ (không phải boolean) cũng về mặc định. */
+        State.settings.showFps = d.settings.showFps === true;
+        State.settings.autoQuality = d.settings.autoQuality !== false;
+      }
       /* ENV-BEGIN — hợp nhất worldClock/weather; save cũ (không có 2 field)
          giữ nguyên giá trị mặc định. season luôn tính lại từ day ở Env.init. */
       if (d.worldClock && typeof d.worldClock === 'object') {
@@ -863,6 +870,15 @@ const SaveManager = {
           ['boss_mieu_co', 'boss_hang_dong', 'nam_mon_pass', 'ngo_done', 'thac_done'].forEach(k => {
             State.flags.district[k] = !!State.flags.district[k];
           });
+        }
+        /* FBX-BEGIN — hợp nhất flags.fbx; save cũ (không có fbx) giữ mặc định.
+           hero lạ (không phải object/null) về null; props không phải mảng về [];
+           từng entry props lạ giữ nguyên để bước UI xử lý, không lọc ở đây. */
+        if (d.flags.fbx && typeof d.flags.fbx === 'object') {
+          const fb0 = { hero: null, props: [] };
+          State.flags.fbx = Object.assign(fb0, d.flags.fbx);
+          if (State.flags.fbx.hero !== null && typeof State.flags.fbx.hero !== 'object') State.flags.fbx.hero = null;
+          if (!Array.isArray(State.flags.fbx.props)) State.flags.fbx.props = [];
         }
       }
     } catch (e) { console.warn('[save] load failed', e); }
@@ -1399,6 +1415,34 @@ const DIALOGUE_TREES = {
         { label: '↩️ Nghe chuyện khác', next: 'start' }
       ]
     }
+  },
+  /* FBX-BEGIN — cây thoại Thợ Dựng Cảnh (action 'fbx-builder' mở modal đặt /
+     xem mô hình .fbx, xem World._runDialogueAction + src/12-fbx-ui.js). */
+  scenebuilder: {
+    start: {
+      text: 'Ta là Thợ Dựng Cảnh! Đưa file .fbx cho ta, ta dựng thành đồ trang trí hay NPC đứng ngay chỗ thiếu hiệp đang đứng — tối đa 5 cái trong thành.',
+      options: [
+        { label: '📥 Đặt mô hình FBX', action: 'fbx-builder' },
+        { label: '🗂️ Xem mô hình đã đặt', action: 'fbx-builder' },
+        { label: '❓ Mô hình .fbx là gì?', next: 'about' },
+        { label: '💡 Mẹo đặt mô hình', next: 'tips' },
+        { label: '👋 Đa tạ thợ dựng cảnh', next: null }
+      ]
+    },
+    about: {
+      text: 'File .fbx là mô hình 3D (tải từ Mixamo, Tripo, Blender…). File tối đa 20 MB, chỉ dùng trong thế giới Biện Kinh — trong trận vẫn dùng chibi như cũ. Muốn đổi cả nhân vật chính thì mở Hồ sơ hoặc Cài đặt, bấm "Nhập mô hình FBX".',
+      options: [
+        { label: '📥 Đặt mô hình FBX', action: 'fbx-builder' },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    },
+    tips: {
+      text: 'Mẹo dựng cảnh: đứng ở chỗ đất trống mà đặt — trong nước hay trong nhà thì ta không dựng được đâu! Đặt xong thì mở "Mô hình đã đặt" để xoay 45°, phóng to/thu nhỏ (0.5–3 lần) hay xóa. Nhớ: tối đa 5 cái trong thành thôi nhé!',
+      options: [
+        { label: '📥 Đặt mô hình FBX', action: 'fbx-builder' },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    }
   }
 };
 
@@ -1499,6 +1543,17 @@ const CHESS_NPC_DEF = {
   id: 'chessmaster', name: 'Lão Kỳ Thánh', x: 9, z: -3, robe: '#1e3a8a', belt: '#facc15', hair: '#f8fafc',
   isNpc: true, quest: '♟️', role: 'chess', portrait: '♟️',
   dialogue: 'Bàn cờ đã bày sẵn đây! Thiếu hiệp dám đấu với lão một ván Caro không? Năm quân một hàng là thắng — thắng được thưởng bạc và kinh nghiệm, thua thì không mất gì.'
+};
+/* FBX-BEGIN — Thợ Dựng Cảnh: NPC đặt mô hình .fbx (đạo cụ/NPC) trong thành.
+   Vị trí (-6.5, 3): quảng trường, đi được (Engine.isWalkable), ngoài mọi
+   collider (sạp/lầu/bảng hiệu/cây/cổng), cách NPC gần nhất > 3 ô (xem
+   tools/test-fbx-ui.cjs). Tạo riêng như CHESS_NPC_DEF để không phá đếm
+   5 NPC của Nhiệm vụ 3. Thoại qua DIALOGUE_TREES.scenebuilder (action
+   'fbx-builder' mở modal Thợ Dựng Cảnh, xem src/12-fbx-ui.js). */
+const SCENE_BUILDER_NPC_DEF = {
+  id: 'scenebuilder', name: 'Thợ Dựng Cảnh', x: -6.5, z: 3, robe: '#92400e', belt: '#facc15', hair: '#1e1b18',
+  isNpc: true, quest: '🏗️', role: 'scenebuilder', portrait: '🏗️',
+  dialogue: 'Ta là Thợ Dựng Cảnh! Thiếu hiệp có file mô hình .fbx thì đưa ta — ta dựng thành đồ trang trí hay NPC đứng trong thành đều được, tối đa 5 cái.'
 };
 const BUTTERFLY_ANCHORS = [
   { x: -6, z: 6 }, { x: 0, z: 5 }, { x: 6, z: 6 }, { x: -12, z: -2 }, { x: 3, z: -4.5 }

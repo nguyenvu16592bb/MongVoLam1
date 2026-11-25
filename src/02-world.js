@@ -2,6 +2,48 @@
    PHẦN 1 — THẾ GIỚI: BIỆN KINH THÀNH (từ map scene)
    ========================================================================== */
 
+/* GROUND-BEGIN — Thứ tự lớp nền (mặt trên theo y) chống z-fighting trên GPU
+   điện thoại (depth precision thấp — 2 mặt cùng cao độ sẽ nhấp nháy):
+   nước -0.65 < đá 0.00 < cỏ 0.04 < đỉnh đường mòn 0.09 < đỉnh cầu đá 0.305.
+   Mỗi tầng cách nhau >= 0.02 (mặt đất) để không còn cặp đồng phẳng nào.
+   Bóng/hào quang nhân vật là decal nằm TRÊN mặt đất (shadow 0.07, aura 0.12)
+   + polygonOffset -2 để luôn thắng depth test kể cả khi đứng trên đường mòn
+   (đỉnh 0.09) hay cầu đá (đỉnh 0.305). Vòng điểm câu/sen (0.34) nằm trên mặt
+   cầu đá; vòng đồ rơi (0.08) nằm trên cỏ (0.04); mặt bàn cờ (0.87) nằm trên
+   mặt bàn (0.84); biển chữ "Biện Kinh" (z 0.14) nằm trước mặt bảng gỗ (z 0.08);
+   mặt giếng tối (0.95) nằm trên vành giếng (0.90). Kiểm chứng bằng
+   tools/test-ground.cjs (quy tắc 1/2/3 + camera + chất lượng). */
+const GROUND_LAYERS = {
+  water: -0.65, stone: 0, grass: 0.04, pathTop: 0.09, deckTop: 0.305,
+  shadow: 0.07, aura: 0.12, spotRing: 0.34, dropRing: 0.08,
+  chessBoard: 0.87, signPlateZ: 0.14, wellDark: 0.95
+};
+
+/* WATER-BEGIN — Mặt nước là 1 tấm phẳng 104×104 (y -0.65) phủ toàn bản đồ;
+   chỗ nào không có mặt đất (đá/cỏ/đường/cầu) thì nhìn thấy nước. isWalkable
+   cũ chỉ chặn hồ trong khu thành cũ (z>6.5 / x>9.5) rồi return sớm cho vùng
+   mở rộng nên 5 khoảng nước ngoài khu cũ vẫn đi được — nhân vật đi bộ xuyên
+   qua mặt nước ở đó (trên điện thoại đó là cùng 1 mặt hồ sen, không có ranh
+   giới nhìn thấy được). 6 hình chữ nhật nước dưới đây suy ra đúng từ các
+   mặt đất trong code (buildTown + Env.buildGround): khoảng trống giữa các
+   mặt đất, biên dùng bất đẳng thức nghiêm ngặt như _inCollider để mép đất
+   (cỏ/đá) vẫn đi được. Cầu đá KHÔNG nằm trong các hình này nên vẫn đi được
+   (luật cầu cũ giữ nguyên).
+   - R1 đông-bắc: cỏ bắc hết x=24, cỏ đông bắt đầu z=-14.
+   - R2 rãnh tây: cỏ bắc hết z=-16, cỏ tây bắt đầu z=-12.
+   - R3 tây-nam: cỏ tây hết z=17, cỏ nam bắt đầu x=-20.
+   - R4 đông-nam: cỏ đông hết z=26, cỏ nam hết x=20.
+   - R5 rãnh bắc-đông: bờ đông bắt đầu z=-14, cỏ bắc hết z=-16, cỏ đông bắt đầu x=20.
+   - R6 mép tây hồ sen: quảng trường hết z=6.5, cỏ tây bắt đầu x=-17. */
+const WATER_RECTS = [
+  { minX: 24, maxX: 48, minZ: -40, maxZ: -14 },
+  { minX: -45, maxX: -17, minZ: -16, maxZ: -12 },
+  { minX: -45, maxX: -20, minZ: 17, maxZ: 44 },
+  { minX: 20, maxX: 48, minZ: 26, maxZ: 44 },
+  { minX: 18, maxX: 25, minZ: -16, maxZ: -14 },
+  { minX: -17.5, maxX: -17, minZ: 6.5, maxZ: 10.5 }
+];
+
 const TextureGen = {
   stone() {
     const c = document.createElement('canvas'); c.width = 512; c.height = 512;
@@ -97,7 +139,13 @@ const Engine = {
     const aspect = Math.max(1, window.innerWidth) / Math.max(1, window.innerHeight);
     this.cameraZoom = window.innerWidth < window.innerHeight ? .8 : 1;
     const fs = 26 / this.cameraZoom;
-    this.camera = new THREE.OrthographicCamera(-fs * aspect / 2, fs * aspect / 2, fs / 2, -fs / 2, 0.1, 160);
+    /* GROUND-BEGIN — camera trực giao near 0.5 / far 90 thay cho 0.1 / 160:
+       vùng nhìn thấy có depth tối đa ~63 (tính từ mọi góc bản đồ, kể cả khi
+       player đứng góc xa nhất) nên far 90 vẫn bao hết, còn khoảng depth
+       89.5 thay cho 159.9 giúp depth precision tốt hơn ~1.8× trên điện thoại.
+       near 0.5 vẫn an toàn vì vật gần camera nhất (ngọn cây/cột cờ ngay dưới
+       camera) cũng cách mặt phẳng camera > 5. */
+    this.camera = new THREE.OrthographicCamera(-fs * aspect / 2, fs * aspect / 2, fs / 2, -fs / 2, 0.5, 90);
     this.camera.position.set(16, 18, 16);
     this.camera.lookAt(0, 0, 0);
 
@@ -133,7 +181,8 @@ const Engine = {
 
   /* ENV-BEGIN — Bản đồ mở rộng 2–3×: x∈[-45,48], z∈[-40,44].
      Vùng mở rộng (ngoài hình chữ nhật thành cũ x∈[-17,18], z∈[-16,17]) là
-     đất liền mới (ruộng/khu dân cư) nên đi được, chỉ chặn bởi collider.
+     đất liền mới (ruộng/khu dân cư) nên đi được, chỉ chặn bởi collider —
+     TRỪ các khoảng nước hở (WATER_RECTS) vẫn chặn như hồ sen.
      Luật cầu của khu cũ giữ nguyên: hồ sen z>6.5 chỉ qua được cầu x∈[3.2,7.8],
      bờ đông x>9.5 chỉ qua được cầu z∈[1.5,5.5]. */
   _inCollider(x, z) {
@@ -144,8 +193,21 @@ const Engine = {
     return false;
   },
 
+  /* WATER-BEGIN — điểm có nằm trong mặt nước hở (xem WATER_RECTS) không. */
+  _inWater(x, z) {
+    for (let i = 0; i < WATER_RECTS.length; i++) {
+      const r = WATER_RECTS[i];
+      if (x > r.minX && x < r.maxX && z > r.minZ && z < r.maxZ) return true;
+    }
+    return false;
+  },
+
   isWalkable(x, z) {
     if (x < -45 || x > 48 || z < -40 || z > 44) return false;
+    /* WATER-BEGIN — chặn nước TRƯỚC khi return sớm cho vùng mở rộng:
+       luật cầu + hồ khu cũ ở dưới chỉ chạy trong khu cũ, còn nước vùng
+       mở rộng trước đây lọt qua return sớm nên đi xuyên được. */
+    if (this._inWater(x, z)) return false;
     if (x < -17 || x > 18 || z < -16 || z > 17) return !this._inCollider(x, z);
     if (z > 6.5 && (x < 3.2 || x > 7.8)) return false;
     if (x > 9.5 && (z < 1.5 || z > 5.5)) return false;
@@ -180,8 +242,8 @@ const Engine = {
     const north = new THREE.Mesh(new THREE.BoxGeometry(27.4, .85, .6), trimStoneMat);
     north.position.set(-4, -.3, 6.5); north.receiveShadow = true; this.scene.add(north);
 
-    const east = new THREE.Mesh(new THREE.BoxGeometry(.6, .85, 23.4), trimStoneMat);
-    east.position.set(9.5, -.3, -5); east.receiveShadow = true; this.scene.add(east);
+    const east = new THREE.Mesh(new THREE.BoxGeometry(.6, .85, 22.8), trimStoneMat);
+    east.position.set(9.5, -.3, -5.3); east.receiveShadow = true; this.scene.add(east); /* GROUND-BEGIN — dài 22.8 (z -16.7..6.1) thay cho 23.4 để không chồng góc với viền bắc (z 6.2..6.8): 2 đỉnh cùng y 0.125 trước đây nhấp nháy ở ô góc 0.6×0.6. */
 
     const south = new THREE.Mesh(new THREE.BoxGeometry(28, .7, 12), stoneMat);
     south.position.set(6, -.35, 16.5); south.receiveShadow = true; this.scene.add(south);
@@ -220,7 +282,7 @@ const Engine = {
     this.buildTree(12.5, -10.5);
     this.buildTree(-14.8, 3.5);
     this.buildCrate(-14.2, 5.1);
-    this.buildCrate(-13.4, 5.3);
+    this.buildCrate(-13.3, 5.3); /* GROUND-BEGIN — x -13.3 thay cho -13.4: 2 thùng 0.85³ trước đây chồng nhau 0.05 ở mép nên đỉnh cùng y 0.845 nhấp nháy theo dải hẹp. */
 
     // bảng hiệu thành
     this.buildCitySign(-8.6, 4.6);
@@ -255,7 +317,7 @@ const Engine = {
     ctx.fillText('BIỆN KINH', 256, 86);
     const tex = new THREE.CanvasTexture(c);
     const plate = new THREE.Mesh(new THREE.PlaneGeometry(2.85, .89), new THREE.MeshBasicMaterial({ map: tex }));
-    plate.position.set(0, 2.6, .09);
+    plate.position.set(0, 2.6, GROUND_LAYERS.signPlateZ); /* GROUND-BEGIN — z 0.14, cách mặt trước bảng gỗ (z 0.08) 0.06 thay cho 0.01 trước đây. */
     g.add(plate);
     g.position.set(x, 0, z);
     this.scene.add(g);
@@ -318,7 +380,7 @@ const Engine = {
 
     const trim1 = new THREE.Group();
     [[0, -4.1], [0, 4.1]].forEach(p => {
-      const b = new THREE.Mesh(new THREE.BoxGeometry(16.4, .22, .24), goldTrimMat);
+      const b = new THREE.Mesh(new THREE.BoxGeometry(15.92, .22, .24), goldTrimMat); /* GROUND-BEGIN — dài 15.92 thay cho 16.4 để 2 đầu không chồng lên 2 thanh dọc (x ±8.2): 4 ô góc cùng đỉnh y 4.41 trước đây nhấp nháy. */
       b.position.set(p[0], 4.3, p[1]); trim1.add(b);
     });
     [[-8.2, 0], [8.2, 0]].forEach(p => {
@@ -330,7 +392,7 @@ const Engine = {
 
     const balcony = new THREE.Group();
     [[0, -2.6], [0, 2.6]].forEach(p => {
-      const b = new THREE.Mesh(new THREE.BoxGeometry(11.2, .24, .22), redWoodMat);
+      const b = new THREE.Mesh(new THREE.BoxGeometry(10.98, .24, .22), redWoodMat); /* GROUND-BEGIN — dài 10.98 thay cho 11.2 để 2 đầu chỉ chạm mép 2 thanh dọc (x -6.8/4.4), không chồng đỉnh y 4.62 như trước. */
       b.position.set(p[0] - 1.2, 4.5, p[1] - 10.5); balcony.add(b);
     });
     [[-5.6, 0], [5.6, 0]].forEach(p => {
@@ -417,9 +479,12 @@ const Engine = {
     const g = new THREE.Group();
     const padMat = new THREE.MeshStandardMaterial({ color: '#3b8c47', roughness: .7 });
     const flowerMat = new THREE.MeshStandardMaterial({ color: '#f472b6', emissive: '#be185d', emissiveIntensity: .2 });
-    [[0, 0, .65], [.7, .4, .5], [-.6, .5, .55]].forEach(p => {
+    /* GROUND-BEGIN — 3 lá sen cùng cụm lệch cao độ 0.025/lá (-0.58/-0.555/-0.53)
+       thay cho cùng y -0.58: các lá chồng nhau (tâm cách 0.7–0.8, bán kính
+       0.5–0.65) nên mặt trên đồng phẳng trước đây nhấp nháy. */
+    [[0, 0, .65, -.58], [.7, .4, .5, -.555], [-.6, .5, .55, -.53]].forEach(p => {
       const pad = new THREE.Mesh(new THREE.CylinderGeometry(p[2], p[2], .05, 14), padMat);
-      pad.position.set(p[0], -.58, p[1]); g.add(pad);
+      pad.position.set(p[0], p[3], p[1]); g.add(pad);
     });
     const f = new THREE.Mesh(new THREE.ConeGeometry(.28, .35, 8), flowerMat);
     f.rotation.x = Math.PI; f.position.set(.1, -.42, .1); g.add(f);
@@ -565,15 +630,19 @@ const CharacterManager = {
     if (opt.aura) {
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(.45, .72, 24),
-        new THREE.MeshBasicMaterial({ color: opt.aura, side: THREE.DoubleSide, transparent: true, opacity: .72 })
+        /* GROUND-BEGIN — decal hào quang: y = GROUND_LAYERS.aura + polygonOffset
+           để luôn vẽ trên mặt đất/đường mòn/cầu đá (xem bảng tầng nền đầu file). */
+        new THREE.MeshBasicMaterial({ color: opt.aura, side: THREE.DoubleSide, transparent: true, opacity: .72, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })
       );
-      ring.rotation.x = -Math.PI / 2; ring.position.y = .03; g.add(ring);
+      ring.rotation.x = -Math.PI / 2; ring.position.y = GROUND_LAYERS.aura; g.add(ring);
     }
     const shadow = new THREE.Mesh(
       new THREE.CircleGeometry(.48, 16),
-      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: .33 })
+      /* GROUND-BEGIN — decal bóng: y = GROUND_LAYERS.shadow + polygonOffset
+         (trước đây y 0.02, chỉ cách mặt đá 0.02 và chìm dưới mặt cỏ 0.04). */
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: .33, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })
     );
-    shadow.rotation.x = -Math.PI / 2; shadow.position.y = .02; g.add(shadow);
+    shadow.rotation.x = -Math.PI / 2; shadow.position.y = GROUND_LAYERS.shadow; g.add(shadow);
 
     const bodyMat = new THREE.MeshStandardMaterial({ color: opt.robe || '#334155', roughness: .6 });
     const body = new THREE.Mesh(new THREE.CylinderGeometry(.26, .36, .85, 12), bodyMat);
@@ -691,6 +760,8 @@ const CharacterManager = {
     /* INTERACT-BEGIN — Lão Kỳ Thánh (đấu cờ Caro), def riêng CHESS_NPC_DEF
        (không cho vào NPC_NEW_DEFS để khỏi phá đếm 5 NPC của Nhiệm vụ 3). */
     if (typeof CHESS_NPC_DEF !== 'undefined') this.create(CHESS_NPC_DEF);
+    /* FBX-BEGIN — Thợ Dựng Cảnh (đặt mô hình .fbx), def riêng như Lão Kỳ Thánh. */
+    if (typeof SCENE_BUILDER_NPC_DEF !== 'undefined') this.create(SCENE_BUILDER_NPC_DEF);
     /* NPC-BEGIN — gắn lịch trình/lưu vị trí neo + dựng thú cưng. */
     if (typeof NpcAI !== 'undefined') NpcAI.init();
   },
@@ -1027,15 +1098,35 @@ const Followers = {
 
   /* Bước về phía (tx,tz): lerp nhanh; cách >12 thì dịch chuyển tức thời
      tới gần player (kẹt/lạc sau dịch chuyển cổng). Nhún nhanh hơn khi
-     player đang di chuyển, quay cùng hướng với player. */
+     player đang di chuyển, quay cùng hướng với player.
+     WATER-BEGIN — follower KHÔNG được đi vào nước: mỗi bước lerp đều kiểm
+     Engine.isWalkable như PlayerController (trượt theo trục còn lại khi bị
+     chặn, vd đi dọc mép cầu đá); dịch chuyển tức thời chỉ đáp chỗ đi được,
+     nếu đích ở trong nước thì đáp điểm đi được gần nhất (walkableNear),
+     hết cách thì đứng yên 1 frame chờ player đi tiếp — không bao giờ đáp
+     hay lerp xuyên qua hồ sen. Trước đây _step không kiểm gì nên pet +
+     đội trưởng (lệch phải ~1 ô so với player) thường xuyên đi trên mặt
+     nước khi player qua cầu đá hẹp. */
   _step(ent, tx, tz, dt, time, moving) {
     const pos = ent.mesh.position;
     const dx = tx - pos.x, dz = tz - pos.z;
     const dist = Math.hypot(dx, dz);
-    if (dist > 12) { pos.x = tx; pos.z = tz; }
-    else if (dist > 0.05) {
+    const walkable = (typeof Engine !== 'undefined' && Engine.isWalkable)
+      ? (x, z) => Engine.isWalkable(x, z) : () => true;
+    if (dist > 12) {
+      if (walkable(tx, tz)) { pos.x = tx; pos.z = tz; }
+      else if (typeof Engine !== 'undefined' && Engine.walkableNear) {
+        const spot = Engine.walkableNear(tx, tz, 2);
+        if (walkable(spot.x, spot.z)) { pos.x = spot.x; pos.z = spot.z; }
+        /* walkableNear hết vòng mà vẫn không đi được thì đứng yên chờ player. */
+      }
+    } else if (dist > 0.05) {
       const k = Math.min(1, dt * 6);
-      pos.x += dx * k; pos.z += dz * k;
+      const nx = pos.x + dx * k, nz = pos.z + dz * k;
+      if (walkable(nx, nz)) { pos.x = nx; pos.z = nz; }
+      else if (walkable(nx, pos.z)) { pos.x = nx; }
+      else if (walkable(pos.x, nz)) { pos.z = nz; }
+      /* cả 2 trục đều chặn (vd mép cầu) thì đứng yên 1 frame. */
     }
     if (PlayerController.entity) ent.mesh.rotation.y = PlayerController.entity.mesh.rotation.y;
     const sp = moving ? 10 : 3.2, amp = moving ? 0.09 : 0.03;
@@ -1181,13 +1272,15 @@ const InteractWorld = {
     this._chestMeshes[def.id] = g;
   },
 
-  /* Vòng tròn sáng + cọc nhỏ đánh dấu điểm câu / hái sen trên cầu đá. */
+  /* Vòng tròn sáng + cọc nhỏ đánh dấu điểm câu / hái sen trên cầu đá.
+     GROUND-BEGIN — vòng ở y = GROUND_LAYERS.spotRing (0.34), trên mặt cầu đá
+     (đỉnh 0.305); trước đây y 0.06 nên chìm hẳn trong mặt cầu (vô hình). */
   buildSpotRing(x, z, color) {
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(.55, .75, 24),
       new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: .8 })
     );
-    ring.rotation.x = -Math.PI / 2; ring.position.set(x, .06, z);
+    ring.rotation.x = -Math.PI / 2; ring.position.set(x, GROUND_LAYERS.spotRing, z);
     Engine.scene.add(ring);
     const post = new THREE.Mesh(new THREE.CylinderGeometry(.05, .06, 1.1, 8),
       new THREE.MeshStandardMaterial({ color: '#4a2e1b', roughness: .8 }));
@@ -1208,7 +1301,9 @@ const InteractWorld = {
     const flower = new THREE.Mesh(new THREE.ConeGeometry(.3, .4, 8),
       new THREE.MeshStandardMaterial({ color: '#f472b6', emissive: '#be185d', emissiveIntensity: .3 }));
     flower.rotation.x = Math.PI;
-    flower.position.set(LOTUS_SPOT.x - .6, .25, LOTUS_SPOT.z);
+    /* GROUND-BEGIN — hoa sen y 0.52: đáy nón (0.52 - 0.2 = 0.32) vừa trên mặt
+       cầu đá (đỉnh 0.305); trước đây y 0.25 nên nửa dưới chìm trong cầu. */
+    flower.position.set(LOTUS_SPOT.x - .6, .52, LOTUS_SPOT.z);
     Engine.scene.add(flower);
   },
 
@@ -1235,11 +1330,13 @@ const InteractWorld = {
     const tex = new THREE.CanvasTexture(c);
     const board = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 1.7),
       new THREE.MeshStandardMaterial({ map: tex, roughness: .85 }));
-    board.rotation.x = -Math.PI / 2; board.position.y = .85; g.add(board);
+    /* GROUND-BEGIN — mặt bàn cờ y = GROUND_LAYERS.chessBoard (0.87), cách mặt
+       bàn (đỉnh 0.84) 0.03 thay cho 0.01 trước đây. */
+    board.rotation.x = -Math.PI / 2; board.position.y = GROUND_LAYERS.chessBoard; g.add(board);
     [[-.5, -.5, 0x111827], [.4, .3, 0xf8fafc], [0, .55, 0x111827]].forEach(s => {
       const st = new THREE.Mesh(new THREE.CylinderGeometry(.14, .14, .07, 16),
         new THREE.MeshStandardMaterial({ color: s[2], roughness: .35 }));
-      st.position.set(s[0], .9, s[1]); g.add(st);
+      st.position.set(s[0], .93, s[1]); g.add(st); /* GROUND-BEGIN — quân cờ y 0.93: đáy (0.895) vừa trên mặt bàn cờ 0.87. */
     });
     g.position.set(CHESS_BOARD.x, 0, CHESS_BOARD.z);
     Engine.scene.add(g);
@@ -1282,7 +1379,9 @@ const InteractWorld = {
       orb.position.y = .5; g.add(orb);
       const ring = new THREE.Mesh(new THREE.RingGeometry(.3, .45, 20),
         new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: .75 }));
-      ring.rotation.x = -Math.PI / 2; ring.position.y = .05; g.add(ring);
+      /* GROUND-BEGIN — vòng đồ rơi y = GROUND_LAYERS.dropRing (0.08), cách mặt
+         cỏ (0.04) 0.04 thay cho 0.01 trước đây. */
+      ring.rotation.x = -Math.PI / 2; ring.position.y = GROUND_LAYERS.dropRing; g.add(ring);
       g.position.set(d.x, 0, d.z);
       Engine.scene.add(g);
       this._dropMeshes[d.id] = g;
@@ -1837,6 +1936,8 @@ const World = {
       case 'forge': NpcService.forge(); return 'stay';
       case 'heal': NpcService.heal(); return 'stay';
       case 'train': gainExp(30); UI.toast('Lĩnh ngộ thành công! +30 EXP', 'green'); return 'stay';
+      /* FBX-BEGIN — mở modal Thợ Dựng Cảnh (đặt / xem mô hình .fbx). */
+      case 'fbx-builder': if (typeof FbxUI !== 'undefined') FbxUI.openBuilder(); return true;
       default: return true;
     }
   },
@@ -1844,6 +1945,10 @@ const World = {
   update(dt, time) {
     PlayerController.update(dt);
     CharacterManager.update(dt, time);
+    /* FBX-BEGIN — AnimationMixer của model FBX hero (nếu có) + bảng tên của
+       prop NPC .fbx; chạy ngay sau CharacterManager.update như chibi. */
+    if (typeof HeroFBX !== 'undefined') HeroFBX.update(dt);
+    if (typeof FbxProps !== 'undefined') FbxProps.update();
     /* NPC-BEGIN — lịch trình NPC, dân thường đi lại, thú cưng lang thang. */
     if (typeof NpcAI !== 'undefined') NpcAI.update(dt);
     /* INTERACT-BEGIN — bướm bay, đồ rơi sinh theo giờ game, nút tương tác gần. */

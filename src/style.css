@@ -703,3 +703,23 @@ h1,h2,h3,p{margin:0}
 .district-card.locked .mt{color:#d8cdb8}
 .district-card.here{cursor:default;border-color:rgba(74,222,128,.6)}
 /* DISTRICT-END */
+
+/* ============================== MÔ HÌNH .FBX ==============================
+   FBX-BEGIN (BƯỚC 2) — khối nhập hero trong Hồ sơ + form/modal Thợ Dựng Cảnh.
+   Nút tối thiểu 40–48px để bấm được trên điện thoại; modal cuộn sẵn
+   (.modal-body overflow-y:auto) nên vừa màn hình hẹp. */
+.fbx-hero-box{margin-top:8px;padding:10px 12px;border:1px solid rgba(240,184,80,.5);border-radius:12px;background:rgba(43,28,8,.55);text-align:left}
+.fbx-hero-title{font-weight:900;color:#ffe3ac;font-size:clamp(11px,1vw,14px)}
+.fbx-hero-name{color:#e8dcc0;font-size:clamp(10px,.9vw,13px);margin:5px 0 8px;line-height:1.5;word-break:break-word}
+.fbx-hero-btns{display:flex;gap:8px;flex-wrap:wrap}
+.fbx-hero-btns .btn-gold,.fbx-hero-btns .btn-ghost2{min-height:44px}
+.fbx-hero-btns button:disabled{opacity:.55}
+.fbx-hero-note{margin-top:7px;font-size:clamp(9px,.8vw,11px);color:#c9b795;line-height:1.5}
+.fbx-type-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.fbx-type-row .btn.on{outline:2px solid #ffd76b;outline-offset:1px}
+.fbx-prop-row{flex-wrap:wrap}
+.fbx-row-btns{display:flex;gap:6px;flex-wrap:wrap}
+.fbx-row-btns .btn{min-height:40px}
+#fbx-npc-name{width:100%;padding:10px 12px;font-size:15px;border-radius:10px;border:1px solid #8a6d3b;background:#1b140d;color:#ffe3ac}
+#fbx-npc-name::placeholder{color:#8a7a5c}
+/* FBX-END */

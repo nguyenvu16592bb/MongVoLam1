@@ -2,6 +2,81 @@
    PHẦN 4 — GIAO DIỆN HỢP NHẤT, ĐIỀU KHIỂN, KHỞI CHẠY
    ========================================================================== */
 
+/* QUALITY-BEGIN — Đo FPS thật + tự động giảm chất lượng theo nấc.
+   - FPS đo thật trong Game.loop (đếm frame / 0.5 giây), hiện ở pill #fps
+     dạng "42 fps · 516 draw" khi settings.showFps bật (mặc định TẮT).
+   - Tự động giảm (settings.autoQuality, mặc định BẬT): FPS < 28 trong 2 giây
+     (4 lần đo liên tiếp) thì xuống 1 nấc; FPS > 50 trong 3 giây (6 lần đo)
+     thì lên lại 1 nấc. Các nấc xem Env.QUALITY_RUNGS (src/02b-env.js):
+     nấc 0 Đầy đủ | nấc 1 Giảm nét (pixelRatio ×0.8) | nấc 2 Tắt hạt mưa/tuyết
+     | nấc 3 Tĩnh gió/nước (cây/cờ/bạt + lá sen/cá/gợn sóng đứng yên).
+     Tắt "Tự động" thì về ngay nấc 0 (chất lượng đầy đủ). Toàn bộ chỉ là
+     trạng thái phiên chạy, không lưu save, không đổi id/setting cũ. */
+const Quality = {
+  level: 0,
+  _lowStreak: 0,
+  _highStreak: 0,
+  baseCap: 1.75,
+
+  /* Cap pixelRatio theo máy (điện thoại <= 1.25, máy bàn <= 1.75). */
+  deviceCap() {
+    if (typeof Env !== 'undefined' && Env.qualityForDevice) {
+      const coarse = (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || false;
+      const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 8;
+      return Env.qualityForDevice({
+        w: window.innerWidth, h: window.innerHeight,
+        dpr: window.devicePixelRatio || 1, coarse, cores
+      }).pixelRatioCap;
+    }
+    return Math.min(window.devicePixelRatio || 1, 1.75);
+  },
+
+  pixelRatioFor(level) {
+    const rung = (typeof Env !== 'undefined' && Env.QUALITY_RUNGS) ? Env.QUALITY_RUNGS[level] : null;
+    const mul = rung ? rung.pixelRatioMul : 1;
+    return Math.max(1, this.baseCap * mul); /* pixelRatio tối thiểu 1.0 */
+  },
+
+  applyLevel(level, silent) {
+    const rung = (typeof Env !== 'undefined' && Env.QUALITY_RUNGS) ? Env.QUALITY_RUNGS[level] : null;
+    this.level = level;
+    if (typeof Game !== 'undefined' && Game.renderer) Game.renderer.setPixelRatio(this.pixelRatioFor(level));
+    if (typeof Env !== 'undefined') {
+      Env._particlesOff = rung ? !rung.particles : false;
+      Env._calm = rung ? !!rung.calm : false;
+    }
+    if (!silent && typeof UI !== 'undefined') {
+      if (level === 0) UI.toast('📈 FPS đã ổn định — chất lượng trở lại đầy đủ', 'green');
+      else UI.toast('📉 FPS thấp — đã giảm chất lượng (nấc ' + level + '/3: ' + (rung ? rung.name : '') + ')', 'gold');
+    }
+  },
+
+  /* Nhận 1 mẫu FPS mỗi 0.5 giây (từ Game.loop); đổi nấc khi đủ streak. */
+  sample(fps) {
+    if (typeof State === 'undefined' || !State.settings) return;
+    if (State.settings.autoQuality === false) {
+      if (this.level !== 0) this.applyLevel(0, true);
+      return;
+    }
+    if (fps < 28) { this._lowStreak++; this._highStreak = 0; }
+    else if (fps > 50) { this._highStreak++; this._lowStreak = 0; }
+    else { this._lowStreak = 0; this._highStreak = 0; }
+    if (this._lowStreak >= 4 && this.level < 3) {
+      this._lowStreak = 0; this._highStreak = 0;
+      this.applyLevel(this.level + 1);
+    } else if (this._highStreak >= 6 && this.level > 0) {
+      this._highStreak = 0; this._lowStreak = 0;
+      this.applyLevel(this.level - 1);
+    }
+  },
+
+  /* Ẩn/hiện pill FPS theo settings.showFps (mặc định ẩn). */
+  applyFpsVisibility() {
+    const el = $('#fps');
+    if (el) el.classList.toggle('hidden', !(typeof State !== 'undefined' && State.settings && State.settings.showFps));
+  }
+};
+
 const Game = {
   mode: 'world',
   renderer: null,
@@ -13,7 +88,11 @@ const Game = {
   createRenderer() {
     const canvas = $('#three-canvas');
     const r = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+    /* QUALITY-BEGIN — cap pixelRatio theo máy thay cho cứng 1.75: điện thoại
+       (màn hẹp/cảm ứng) <= 1.25, máy bàn <= 1.75; nấc tự động giảm còn nhân
+       thêm hệ số (xem Quality.pixelRatioFor). */
+    Quality.baseCap = Quality.deviceCap();
+    r.setPixelRatio(Quality.baseCap);
     r.setSize(window.innerWidth, window.innerHeight, false);
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -44,8 +123,18 @@ const Game = {
     this.fpsFrames++;
     if (this.fpsAcc >= .5) {
       const fps = Math.round(this.fpsFrames / this.fpsAcc);
-      const el = $('#fps');
-      if (el) el.textContent = fps + ' fps';
+      /* QUALITY-BEGIN — đo FPS thật: chỉ ghi lên pill khi settings.showFps
+         bật (mặc định TẮT), kèm số draw call của frame vừa render để chẩn
+         đoán ("42 fps · 516 draw"); luôn đưa mẫu FPS cho Quality.sample để
+         tự động giảm/tăng chất lượng khi settings.autoQuality bật. */
+      if (State.settings.showFps) {
+        const el = $('#fps');
+        if (el) {
+          const calls = (this.renderer && this.renderer.info && this.renderer.info.render) ? this.renderer.info.render.calls : 0;
+          el.textContent = fps + ' fps · ' + calls + ' draw';
+        }
+      }
+      Quality.sample(fps);
       this.fpsAcc = 0;
       this.fpsFrames = 0;
     }
@@ -89,6 +178,10 @@ const Game = {
     await step(54, 'Triệu hồi giang hồ nhân sĩ…');
     CharacterManager.initPopulation();
     PlayerController.initInput();
+    /* FBX-BEGIN — nạp lại model .fbx hero + đạo cụ/NPC đã lưu (lỗi từng cái
+       chỉ toast, không chặn game, không xóa flag/file của người chơi). */
+    if (typeof HeroFBX !== 'undefined') HeroFBX.restoreFromSave();
+    if (typeof FbxProps !== 'undefined') FbxProps.restoreAll();
 
     await step(74, 'Nạp bí kíp võ học & chiến trường…');
     SKILLS.forEach(s => { s.lvl = s.lvl || 10; s.currentCd = 0; });
@@ -281,7 +374,7 @@ Object.assign(UI, {
       </div>
 
       <div class="world-tools">
-        <span class="fps" id="fps">60 fps</span>
+        <span class="fps${State.settings.showFps ? '' : ' hidden'}" id="fps">60 fps</span>
         <span class="env-pill" id="env-pill" title="Giờ game · thời tiết · mùa">☀️ Nắng · ☀️ 08:00 · Ngày 1 · Mùa Xuân</span>
         <button class="mini-btn" data-act="open-battle">⚔️ Tỷ Võ Đài</button>
         <button class="mini-btn" data-act="open-skills">🐉 Tuyệt học</button>
@@ -811,13 +904,21 @@ Object.assign(UI, {
       /* ENV-BEGIN — tốc độ đồng hồ (0 tắt / 1 thường / 2 nhanh) + tắt/bật hiệu
          ứng thời tiết. Nhãn tốc độ trận đấu vẫn lấy từ settings.speed cũ. */
       const clockLabel = State.settings.clockSpeed === 0 ? 'Tắt' : State.settings.clockSpeed === 2 ? 'Nhanh ×2' : 'Bình thường (1 giờ ≈ 75 giây)';
+      /* FBX-BEGIN — tên file .fbx hero đang dùng (nếu có). */
+      const fbxHero = (State.flags && State.flags.fbx && State.flags.fbx.hero) || null;
       const body = `
         <div class="mrow"><span>Âm thanh & hiệu ứng</span><button class="btn sm" data-act="toggle-mute">${Sfx.muted ? 'Đang tắt' : 'Đang bật'}</button></div>
         <div class="mrow"><span>Đồng hồ giờ game</span><button class="btn sm" data-act="cycle-clock">${clockLabel}</button></div>
         <div class="mrow"><span>Hiệu ứng thời tiết (mưa/tuyết/sương)</span><button class="btn sm" data-act="toggle-weatherfx">${State.settings.weatherFx === false ? 'TẮT' : 'BẬT'}</button></div>
+        <div class="mrow"><span>Hiện FPS trên màn hình</span><button class="btn sm" data-act="toggle-show-fps">${State.settings.showFps ? 'BẬT' : 'TẮT'}</button></div>
+        <div class="mrow"><span>Tự động giảm chất lượng khi FPS thấp</span><button class="btn sm" data-act="toggle-auto-quality">${State.settings.autoQuality === false ? 'TẮT' : 'BẬT'}</button></div>
+        <p class="muted tiny">Tự động giảm theo nấc khi FPS &lt; 28 trong 2 giây: nấc 1 giảm độ nét → nấc 2 tắt hạt mưa/tuyết → nấc 3 đứng yên gió/nước. FPS &gt; 50 trong 3 giây thì tăng lại 1 nấc. Tắt "Tự động" thì về ngay chất lượng đầy đủ.</p>
         <div class="mrow"><span>Tự động đánh</span><button class="btn sm" data-act="toggle-auto">${State.settings.autoBattle ? 'BẬT' : 'TẮT'}</button></div>
         <div class="mrow"><span>Tự tung chiêu</span><button class="btn sm" data-act="toggle-auto-skill">${State.settings.autoSkill ? 'BẬT' : 'TẮT'}</button></div>
         <div class="mrow"><span>Lưu tiến trình</span><button class="btn sm" data-act="save-now">Lưu ngay</button></div>
+        <div class="mrow"><span>Mô hình nhân vật (.fbx)<br><span class="muted tiny">${fbxHero ? 'Đang dùng: ' + esc(fbxHero.name) : 'Chưa dùng — đang dùng chibi mặc định'}</span></span><button class="btn sm" data-act="fbx-hero-pick">📥 Nhập mô hình FBX</button></div>
+        ${fbxHero ? '<div class="mrow"><span>Về chibi mặc định</span><button class="btn sm" data-act="fbx-hero-clear">↩️ Về chibi</button></div>' : ''}
+        <p class="muted tiny">Mô hình .fbx chỉ đổi trong thế giới — trong trận vẫn dùng chibi. File tối đa 20 MB, lưu trong máy.</p>
         <div class="mrow"><span>Về màn hình chính</span><button class="btn sm" data-act="open-newgame">Mở Newgame</button></div>
         <div class="mrow"><span>Khôi phục dữ liệu ban đầu</span><button class="btn sm red" data-act="reset-ask">Đặt lại</button></div>
         <p class="muted tiny">Mộng Võ Lâm 3D · Soha · Three.js + PixiJS · lưu cục bộ trong trình duyệt.</p>`;
@@ -925,6 +1026,59 @@ Object.assign(UI, {
         </div>
         ${d.locked ? `<p class="muted" style="margin-top:8px">🔒 ${esc(d.lockReason || 'Khu vực đang khóa.')}</p>` : ''}`;
       return { icon: '🚪', title: d.gateName || 'Cổng dịch chuyển', body };
+    }
+    /* FBX-BEGIN — modal Thợ Dựng Cảnh: đặt mô hình + danh sách đã đặt.
+       Xoay +45°, To/Nhỏ ×1.2 (kẹp 0.5–3), Xóa. Đủ 5 thì nút Đặt bị khóa. */
+    if (kind === 'fbx-builder') {
+      const props = (typeof FBXSupport !== 'undefined') ? FBXSupport.listProps() : [];
+      const max = (typeof FBXSupport !== 'undefined') ? FBXSupport.MAX_PROPS : 5;
+      const full = props.length >= max;
+      const rows = props.map(prop => {
+        const typeLabel = prop.type === 'npc' ? '🧍 NPC' : '🪑 Trang trí';
+        const deg = Math.round(((Number(prop.rotY) || 0) * 180 / Math.PI) % 360);
+        const label = prop.type === 'npc' ? (prop.npcName || prop.name) : prop.name;
+        return `<div class="mrow fbx-prop-row">
+          <div style="flex:1;min-width:140px">
+            <div class="mt">${esc(label)} <span class="tag">${typeLabel}</span></div>
+            <div class="ms">Tọa độ: (${Number(prop.x).toFixed(1)}, ${Number(prop.z).toFixed(1)}) · Xoay ${deg}° · Cỡ ${Number(prop.scale || 1).toFixed(1)}×</div>
+          </div>
+          <div class="fbx-row-btns">
+            <button class="btn sm" data-act="fbx-prop-rotate" data-id="${esc(prop.id)}">↻ Xoay</button>
+            <button class="btn sm" data-act="fbx-prop-bigger" data-id="${esc(prop.id)}">To +</button>
+            <button class="btn sm" data-act="fbx-prop-smaller" data-id="${esc(prop.id)}">Nhỏ −</button>
+            <button class="btn sm red" data-act="fbx-prop-delete" data-id="${esc(prop.id)}">✕ Xóa</button>
+          </div>
+        </div>`;
+      }).join('');
+      const body = `<p class="muted" style="margin-bottom:8px">Thợ Dựng Cảnh dựng mô hình .fbx thành đồ trang trí hoặc NPC trong thành. Đã đặt <b>${props.length}/${max}</b>.</p>
+        <div style="display:flex;gap:8px;margin:8px 0;flex-wrap:wrap">
+          <button class="btn btn-lg" data-act="fbx-place-pick"${full ? ' disabled style="opacity:.55"' : ''}>📥 Đặt mô hình FBX</button>
+        </div>
+        ${full ? '<p class="muted tiny">Đã đủ ' + max + ' mô hình — xóa bớt một cái để đặt thêm.</p>' : ''}
+        <div class="fbx-prop-list">${rows || '<p class="muted">Chưa đặt mô hình nào — bấm "Đặt mô hình FBX", chọn file .fbx rồi chọn loại, mô hình sẽ dựng ngay chỗ thiếu hiệp đang đứng.</p>'}</div>
+        <p class="muted tiny" style="margin-top:8px">Mô hình chỉ hiện trong thế giới Biện Kinh, không vào trận. File lưu trong máy (IndexedDB), tối đa 20 MB/file.</p>
+        <div style="display:flex;gap:8px;margin-top:12px"><button class="btn dark btn-lg" data-act="close-modal">← Quay lại</button></div>`;
+      return { icon: '🏗️', title: 'Thợ Dựng Cảnh · Mô hình FBX', body };
+    }
+    /* FBX-BEGIN — form đặt mô hình: chọn loại + tên NPC (mặc định tên file). */
+    if (kind === 'fbx-place-form') {
+      const sizeMb = d.fileSize ? (Number(d.fileSize) / 1048576).toFixed(1) + ' MB' : '';
+      const isNpc = d.placeType === 'npc';
+      const body = `<p class="muted">File: <b style="color:#ffe3ac">${esc(d.fileName || '')}</b>${sizeMb ? ' (' + sizeMb + ')' : ''} — sẽ đặt tại vị trí thiếu hiệp đang đứng.</p>
+        <div class="fbx-type-row">
+          <button class="btn btn-lg${isNpc ? '' : ' on'}" data-act="fbx-place-type" data-type="decor">🪑 Vật trang trí (đứng yên)</button>
+          <button class="btn btn-lg${isNpc ? ' on' : ''}" data-act="fbx-place-type" data-type="npc">🧍 NPC đứng yên (có bảng tên)</button>
+        </div>
+        <div id="fbx-npc-name-row" class="${isNpc ? '' : 'hidden'}" style="margin-top:10px">
+          <label class="muted tiny" for="fbx-npc-name">Tên hiển thị của NPC:</label>
+          <input id="fbx-npc-name" maxlength="24" value="${esc(d.placeName || '')}" placeholder="Tên NPC">
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+          <button class="btn red btn-lg" data-act="fbx-place-confirm">✅ Đặt tại chỗ đang đứng</button>
+          <button class="btn dark btn-lg" data-act="fbx-builder-open">← Quay lại</button>
+        </div>
+        <p class="muted tiny" style="margin-top:8px">Chỉ đặt được ở chỗ đi được — nếu đang đứng trong nước hay trong nhà thì hãy đứng chỗ khác.</p>`;
+      return { icon: '📥', title: 'Đặt mô hình FBX', body };
     }
     if (kind === 'exit-battle') {
       return {
@@ -1162,6 +1316,47 @@ Object.assign(UI, {
         case 'open-mail': this.openModal('mail'); break;
         case 'open-chat': this.openModal('chat'); break;
         case 'open-settings': this.openModal('settings'); break;
+        /* FBX-BEGIN — nhập hero (.fbx) từ Hồ sơ / Cài đặt; đặt + quản lý
+           mô hình trong thành qua Thợ Dựng Cảnh. */
+        case 'fbx-hero-pick':
+          if (typeof FbxUI !== 'undefined' && FbxUI._busy) { this.toast('Đang đọc file .fbx, đợi một lát nhé!', 'gold'); break; }
+          if (typeof FbxUI !== 'undefined') FbxUI.pickFile(f => FbxUI.importHeroFile(f));
+          break;
+        case 'fbx-hero-clear':
+          if (typeof HeroFBX !== 'undefined') {
+            HeroFBX.clear().then(() => {
+              if (typeof Info !== 'undefined' && Info.syncFbxHero) Info.syncFbxHero();
+              if (typeof FbxUI !== 'undefined') FbxUI.refreshSettingsModal();
+            }).catch(() => {});
+          }
+          break;
+        case 'fbx-place-pick': if (typeof FbxUI !== 'undefined') FbxUI.startPlace(); break;
+        case 'fbx-place-type': if (typeof FbxUI !== 'undefined') FbxUI.setPlaceType(el.dataset.type); break;
+        case 'fbx-place-confirm': if (typeof FbxUI !== 'undefined') FbxUI.confirmPlace(); break;
+        case 'fbx-builder-open': if (typeof FbxUI !== 'undefined') FbxUI.openBuilder(); break;
+        case 'fbx-prop-rotate':
+          if (typeof FbxProps !== 'undefined' && FbxProps.rotate(el.dataset.id)) {
+            this.toast('Đã xoay mô hình +45°!', 'gold');
+            this.openModal('fbx-builder');
+          }
+          break;
+        case 'fbx-prop-bigger': case 'fbx-prop-smaller': {
+          if (typeof FbxProps === 'undefined') break;
+          const res = FbxProps.scaleBy(el.dataset.id, act === 'fbx-prop-bigger' ? 1 : -1);
+          if (!res) break;
+          if (res.atLimit) this.toast(act === 'fbx-prop-bigger' ? 'Đã to nhất (3×) rồi!' : 'Đã nhỏ nhất (0.5×) rồi!', 'gold');
+          else this.toast('Cỡ mô hình: ' + res.scale.toFixed(1) + '×', 'gold');
+          this.openModal('fbx-builder');
+          break;
+        }
+        case 'fbx-prop-delete':
+          if (typeof FbxProps !== 'undefined') {
+            FbxProps.remove(el.dataset.id).then(() => {
+              this.toast('Đã xóa mô hình.', 'gold');
+              this.openModal('fbx-builder');
+            }).catch(() => {});
+          }
+          break;
         case 'close-modal': this.closeModal(); break;
         case 'buy': this.buy(el.dataset.id); break;
         case 'use-item': this.useItem(+el.dataset.i); break;
@@ -1185,6 +1380,19 @@ Object.assign(UI, {
           State.settings.weatherFx = State.settings.weatherFx === false;
           SaveManager.save();
           this.toast(State.settings.weatherFx ? 'Đã bật hiệu ứng thời tiết' : 'Đã tắt hiệu ứng thời tiết', 'gold');
+          this.openModal('settings'); break;
+        /* QUALITY-BEGIN — hiện/ẩn FPS + tự động giảm chất lượng (xem Quality). */
+        case 'toggle-show-fps':
+          State.settings.showFps = !State.settings.showFps;
+          SaveManager.save();
+          Quality.applyFpsVisibility();
+          this.toast(State.settings.showFps ? 'Đã hiện FPS trên màn hình' : 'Đã ẩn FPS', 'gold');
+          this.openModal('settings'); break;
+        case 'toggle-auto-quality':
+          State.settings.autoQuality = State.settings.autoQuality === false;
+          SaveManager.save();
+          if (!State.settings.autoQuality) Quality.applyLevel(0, true);
+          this.toast(State.settings.autoQuality ? 'Đã bật tự động giảm chất lượng khi FPS thấp' : 'Đã tắt tự động giảm chất lượng (chất lượng đầy đủ)', 'gold');
           this.openModal('settings'); break;
         /* DISTRICT-BEGIN — nút 🚪 Dịch chuyển khi đứng gần cổng: mở lựa chọn
            cổng (đi vòng như cũ / vào khu vực) thay vì dịch chuyển ngay. */

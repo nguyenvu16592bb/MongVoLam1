@@ -156,6 +156,16 @@ const Info = {
           <button class="btn-gold" data-act="cultivate">Bồi Dưỡng</button>
           <button class="btn-ghost2" data-act="deploy">Xuất Chiến</button>
         </div>
+
+        <div class="fbx-hero-box" id="ii-fbx">
+          <div class="fbx-hero-title">🧍 Mô hình nhân vật (.fbx)</div>
+          <div class="fbx-hero-name" id="ii-fbx-name">Chưa dùng mô hình .fbx — đang dùng chibi mặc định.</div>
+          <div class="fbx-hero-btns">
+            <button class="btn-gold" data-act="fbx-hero-pick" id="ii-fbx-pick">📥 Nhập mô hình FBX</button>
+            <button class="btn-ghost2 hidden" data-act="fbx-hero-clear" id="ii-fbx-clear">↩️ Về chibi mặc định</button>
+          </div>
+          <div class="fbx-hero-note">Chỉ đổi trong thế giới — trong trận vẫn dùng chibi. File .fbx tối đa 20 MB, lưu trong máy.</div>
+        </div>
       </div>`;
 
     this.buildSquad();
@@ -293,7 +303,22 @@ const Info = {
     $('#ii-stam').textContent = State.player.capacity + '/' + State.player.maxCapacity;
 
     this.applyHeroColors(h);
+    this.syncFbxHero();
     SaveManager.save();
+  },
+
+  /* FBX-BEGIN — hiện tên file .fbx hero đang dùng + nút về chibi (hiện chỉ
+     khi đã nhập model). Gọi mỗi lần chọn đệ tử / mở Hồ sơ / nhập/xóa xong. */
+  syncFbxHero() {
+    const hero = (typeof FBXSupport !== 'undefined' && State.flags && State.flags.fbx) ? State.flags.fbx.hero : null;
+    const nameEl = $('#ii-fbx-name');
+    if (nameEl) {
+      nameEl.textContent = hero
+        ? 'Đang dùng: ' + hero.name + ' (' + (Number(hero.size) / 1048576).toFixed(1) + ' MB)'
+        : 'Chưa dùng mô hình .fbx — đang dùng chibi mặc định.';
+    }
+    const clearBtn = $('#ii-fbx-clear');
+    if (clearBtn) clearBtn.classList.toggle('hidden', !hero);
   },
 
   /* ---------- 3D ---------- */

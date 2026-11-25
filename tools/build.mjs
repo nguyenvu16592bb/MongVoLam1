@@ -24,17 +24,24 @@ const style = readText(path.join(src, 'style.css'));
 const districtDataFile = '10b-districts.js';
 const hasDistrictData = existsSync(path.join(src, districtDataFile));
 if (!hasDistrictData) console.warn(`WARN: ${districtDataFile} chua co (nhom A) — mongvolam.html build tam khong co DISTRICTS/canEnterDistrict, chay lai build khi file da co.`);
-const parts = ['01-data.js', '02-world.js', '02b-env.js', '03-battle.js', '03b-arenas.js', '04-info.js', '05-ui.js', ...(hasDistrictData ? [districtDataFile] : []), '06-boot.js'];
+const parts = ['01-data.js', '02-world.js', '02b-env.js', '03-battle.js', '03b-arenas.js', '04-info.js', '05-ui.js', ...(hasDistrictData ? [districtDataFile] : []), '11-fbx.js', '12-fbx-ui.js', '06-boot.js'];
 const jsParts = parts.map((f) => readText(path.join(src, f)));
 const js = '(function(){\n' + jsParts.join('\n') + '\n})();';
 
 const three = readText(path.join(lib, 'three.min.js'));
 const pixi = readText(path.join(lib, 'pixi.min.js'));
+/* FBX-BEGIN — chỉ trang mongvolam.html mới inline fflate + FBXLoader
+   (Shop/Newgame/Event/map không đổi dung lượng). */
+const fflate = readText(path.join(lib, 'fflate.min.js'));
+const fbxLoader = readText(path.join(lib, 'FBXLoader.js'));
+/* FBX-END */
 const tpl = readText(path.join(src, 'index.template.html'));
 
 // Kiểm tra giống bản ps1: lib không được chứa chuỗi '</script' (sẽ phá thẻ <script>).
 if (three.includes('</script')) throw new Error('three.min.js chua </script');
 if (pixi.includes('</script')) throw new Error('pixi.min.js chua </script');
+if (fflate.includes('</script')) throw new Error('fflate.min.js chua </script');
+if (fbxLoader.includes('</script')) throw new Error('FBXLoader.js chua </script');
 
 // Thay placeholder theo đúng thứ tự của ps1 (String.Replace thay tất cả lần xuất hiện).
 // QUAN TRỌNG: dùng hàm thay thế () => ... để chuỗi chèn được giữ nguyên từng byte.
@@ -44,6 +51,8 @@ const out = tpl
   .replaceAll('__STYLE__', () => style)
   .replaceAll('__THREE__', () => three)
   .replaceAll('__PIXI__', () => pixi)
+  .replaceAll('__FFLATE__', () => fflate)
+  .replaceAll('__FBXLOADER__', () => fbxLoader)
   .replaceAll('__GAME__', () => js);
 
 const dest = path.join(root, 'mongvolam.html');

@@ -85,6 +85,50 @@ const Env = {
   _koi: null,
   _glare: null,
 
+  /* ============================== CHẤT LƯỢNG / FPS ==============================
+     QUALITY-BEGIN — logic thuần (không chạm DOM/renderer) để Quality ở
+     src/05-ui.js áp dụng + tools/test-ground.cjs kiểm chứng được.
+     - qualityForDevice(info): cap pixelRatio + ngân sách hạt theo máy.
+       Điện thoại (màn hẹp <= 500px hoặc cảm ứng) cap 1.25; máy bàn cap 1.75.
+       Máy yếu (cảm ứng + <= 4 nhân) chỉ dùng 1/2 số hạt mưa/tuyết.
+     - QUALITY_RUNGS: 4 nấc tự động giảm chất lượng khi FPS thấp (Quality ở
+       05-ui.js đo FPS thật rồi gọi Env._particlesOff / Env._calm):
+       nấc 0 Đầy đủ: pixelRatio ×1.0, hạt đầy, gió/nước đầy.
+       nấc 1 Giảm nét: pixelRatio ×0.8 (tối thiểu 1.0), hạt đầy, gió/nước đầy.
+       nấc 2 Tắt hạt: pixelRatio ×0.8, TẮT hạt mưa/tuyết (thời tiết vẫn đổi,
+       chỉ không vẽ hạt), gió/nước đầy.
+       nấc 3 Tĩnh gió/nước: pixelRatio ×0.7 (tối thiểu 1.0), tắt hạt, cây/cờ/
+       bạt ngừng đung đưa + lá sen/cá/gợn sóng đứng yên (vẫn nhìn thấy, chỉ
+       không chuyển động). Hồi phục: FPS > 50 trong 3 giây thì lên 1 nấc.
+     - _particleBudget (1 | 0.5) và _particlesOff / _calm chỉ là trạng thái
+       phiên chạy, KHÔNG lưu save (save cũ không bị ảnh hưởng). */
+  QUALITY_RUNGS: [
+    { level: 0, name: 'Đầy đủ', pixelRatioMul: 1, particles: true, calm: false },
+    { level: 1, name: 'Giảm nét', pixelRatioMul: 0.8, particles: true, calm: false },
+    { level: 2, name: 'Tắt hạt thời tiết', pixelRatioMul: 0.8, particles: false, calm: false },
+    { level: 3, name: 'Tĩnh gió/nước', pixelRatioMul: 0.7, particles: false, calm: true }
+  ],
+
+  qualityForDevice(info) {
+    const i = info || {};
+    const w = i.w || 1024, h = i.h || 768;
+    const dpr = i.dpr || 1;
+    const coarse = !!i.coarse;
+    const cores = i.cores || 8;
+    const small = Math.min(w, h) <= 500 || coarse;
+    return {
+      pixelRatioCap: small ? Math.min(dpr, 1.25) : Math.min(dpr, 1.75),
+      particleBudget: (coarse && cores <= 4) ? 0.5 : 1
+    };
+  },
+
+  /* Số hạt mưa/tuyết được vẽ (đã trừ ngân sách máy yếu + nấc tắt hạt). */
+  particleCountFor(kind) {
+    if (this._particlesOff) return 0;
+    const base = kind === 'mua' ? 400 : 300;
+    return Math.round(base * (this._particleBudget || 1));
+  },
+
   /* ============================== MÙA ============================== */
   seasonForDay(day) {
     const idx = Math.floor((((Math.max(1, day) - 1) % 120) / this.DAYS_PER_SEASON));
@@ -208,9 +252,10 @@ const Env = {
     const pts = this._points;
     if (!pts) return;
     const active = State.settings.weatherFx && (kind === 'mua' || kind === 'tuyet');
-    pts.visible = !!active;
-    if (!active) return;
-    const count = kind === 'mua' ? 400 : 300;
+    /* QUALITY-BEGIN — số hạt theo ngân sách máy + nấc tắt hạt (0 = ẩn). */
+    const count = this.particleCountFor(kind);
+    pts.visible = !!active && count > 0;
+    if (!active || count <= 0) return;
     pts.geometry.setDrawRange(0, count);
     pts.material.color.set(kind === 'mua' ? 0x9fc8e8 : 0xffffff);
     pts.material.size = kind === 'mua' ? .3 : .42;
@@ -306,20 +351,27 @@ const Env = {
     const grass = new THREE.MeshStandardMaterial({ color: '#5d8a4a', roughness: .95 });
     const grass2 = new THREE.MeshStandardMaterial({ color: '#6f9a52', roughness: .95 });
     const dirt = new THREE.MeshStandardMaterial({ color: '#8a6b45', roughness: .95 });
+    /* GROUND-BEGIN — mặt cỏ y = GROUND_LAYERS.grass (0.04): box dày 0.7, tâm
+       y -0.31. Trước đây cỏ và đá quảng trường cùng đỉnh y = 0 nên nhấp nháy
+       trên cả vùng chồng lấn lớn (cỏ đông × bờ đông 7×24, cỏ nam × nền nam
+       28×5.5, cộng 2 dải 0.5 ở rìa quảng trường). Xem GROUND_LAYERS. */
     const add = (mat, w, d, x, z) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, .7, d), mat);
-      m.position.set(x, -.35, z);
+      m.position.set(x, -.31, z);
       m.receiveShadow = true;
       Engine.scene.add(m);
     };
-    add(grass, 28, 34, -31, 5); /* ruộng lúa phía tây */
+    add(grass, 28, 29, -31, 2.5); /* ruộng lúa phía tây — sâu 29 (z -12..17) thay cho 34 để mép nam chỉ chạm mép ruộng nam (z 17), không chồng đỉnh y 0.04 với ruộng nam (15 m²) như trước; luống lúa tây cao nhất z 16 nên vẫn nằm trên cỏ. */
     add(grass2, 69, 24, -10.5, -28); /* khu dân cư phía bắc */
-    add(grass, 30, 40, 33, 6); /* khu dân cư phía đông */
+    add(grass, 28, 40, 34, 6); /* khu dân cư phía đông — rộng 28 (x 20..48) thay cho 30 để mép tây chỉ chạm mép ruộng nam (x 20), không chồng đỉnh y 0.04 với ruộng nam (18 m²) như trước. */
     add(grass2, 40, 27, 0, 30.5); /* ruộng phía nam */
-    /* Đường mòn đất nâu nối thành cũ với các khu mới. */
+    /* Đường mòn đất nâu nối thành cũ với các khu mới.
+       GROUND-BEGIN — đường dày 0.06, tâm y 0.06: đỉnh 0.09 (cách mặt cỏ 0.04
+       là 0.05), đáy 0.03 chìm 0.01 trong mặt cỏ nên không còn mặt đáy đồng
+       phẳng với mặt cỏ như trước (tâm 0.03, đáy đúng 0.00 = đỉnh cỏ cũ). */
     const path = (w, d, x, z) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, .06, d), dirt);
-      m.position.set(x, .03, z);
+      m.position.set(x, .06, z);
       m.receiveShadow = true;
       Engine.scene.add(m);
     };
@@ -451,7 +503,7 @@ const Env = {
       const rim = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.15, .9, 12), stone);
       rim.position.y = .45; rim.castShadow = true; g.add(rim);
       const dark = new THREE.Mesh(new THREE.CircleGeometry(.85, 12), new THREE.MeshBasicMaterial({ color: '#0a0f14' }));
-      dark.rotation.x = -Math.PI / 2; dark.position.y = .92; g.add(dark);
+      dark.rotation.x = -Math.PI / 2; dark.position.y = GROUND_LAYERS.wellDark; g.add(dark); /* GROUND-BEGIN — mặt giếng tối 0.95, cách vành giếng (đỉnh 0.90) 0.05 thay cho 0.02. */
       [-.9, .9].forEach(px => {
         const post = new THREE.Mesh(new THREE.BoxGeometry(.16, 2.4, .16), red);
         post.position.set(px, 1.2, 0); g.add(post);
@@ -563,6 +615,19 @@ const Env = {
   buildExpansion() {
     if (this._built) return;
     this._built = true;
+    /* QUALITY-BEGIN — ngân sách hạt mưa/tuyết theo máy ngay từ đầu (máy yếu
+       chỉ dùng 1/2 số hạt); pixelRatio cap theo máy do Quality ở 05-ui.js
+       tính khi tạo renderer (chạy trước createWorld). */
+    try {
+      const coarse = (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || false;
+      const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 8;
+      this._particleBudget = this.qualityForDevice({
+        w: (typeof window !== 'undefined' && window.innerWidth) || 1024,
+        h: (typeof window !== 'undefined' && window.innerHeight) || 768,
+        dpr: (typeof window !== 'undefined' && window.devicePixelRatio) || 1,
+        coarse, cores
+      }).particleBudget;
+    } catch (e) { this._particleBudget = 1; }
     /* Save cũ có thể thiếu/khác mùa — tính lại từ ngày game. */
     State.worldClock.season = this.seasonForDay(State.worldClock.day);
     this.buildGround();
@@ -591,10 +656,14 @@ const Env = {
     const wdef = this.WEATHER[State.settings.weatherFx === false ? 'nang' : State.weather.kind] || this.WEATHER.nang;
     this._wind = wdef.wind;
     this.applySky(preset, wdef);
-    this.updateLotus(time);
-    this.updateRipples(time);
-    this.updateKoi(time);
-    this.updateSway(time);
+    /* QUALITY-BEGIN — nấc 3 (tĩnh gió/nước): đóng băng lá sen/cá/gợn sóng/
+       đung đưa, chỉ giữ đồng hồ + thời tiết + bầu trời chạy. */
+    if (!this._calm) {
+      this.updateLotus(time);
+      this.updateRipples(time);
+      this.updateKoi(time);
+      this.updateSway(time);
+    }
     this.updateParticles(dt, State.weather.kind);
     if (this._glare) this._glare.style.opacity = String(wdef.glare || 0);
     this._hudAcc += dt;

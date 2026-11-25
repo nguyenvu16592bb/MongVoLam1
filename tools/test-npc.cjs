@@ -137,7 +137,7 @@ check('NPC di bo toi quan tra (khong dich chuyen)', !merchEnt._walk &&
 check('NPC di bo cham (can >10 buoc 0.1s cho ~2 don vi)', steps > 10, 'steps=' + steps);
 
 /* ---- 4. Cây thoại: cấu trúc (mỗi NPC >=3 node, nhánh tồn tại, action hợp lệ) ---- */
-const ACTIONS = ['shop', 'battle', 'info', 'recruit', 'event', 'forge', 'heal', 'lore', 'train'];
+const ACTIONS = ['shop', 'battle', 'info', 'recruit', 'event', 'forge', 'heal', 'lore', 'train', 'fbx-builder'];
 let totalNodes = 0;
 Object.keys(DIALOGUE_TREES).forEach(id => {
   const tree = DIALOGUE_TREES[id];
@@ -156,7 +156,7 @@ Object.keys(DIALOGUE_TREES).forEach(id => {
   });
 });
 check('tong so node cay thoai >=24 (8 NPC x >=3)', totalNodes >= 24, 'tong=' + totalNodes);
-check('du 8 cay thoai (5 cu + 3 moi)', Object.keys(DIALOGUE_TREES).length === 8, Object.keys(DIALOGUE_TREES).join(','));
+check('du 9 cay thoai (5 cu + 3 moi + 1 FBX)', Object.keys(DIALOGUE_TREES).length === 9, Object.keys(DIALOGUE_TREES).join(','));
 
 /* ---- 5. Cây thoại: render + rẽ nhánh đặt flag ---- */
 CharacterManager.entities.push(
