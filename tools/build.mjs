@@ -58,6 +58,19 @@ const out = tpl
 const dest = path.join(root, 'mongvolam.html');
 writeFileSync(dest, out, 'utf8'); // Node ghi UTF-8 không BOM theo mặc định.
 
+/* ITCH-BEGIN */
+// itch.io cần index.html làm entry — bản sao y hệt mongvolam.html vừa build
+// (đọc lại file vừa ghi rồi ghi ra, cùng 1 nguồn build, không viết tay 2 bản).
+// GIỮ NGUYÊN mongvolam.html. Deterministic: cùng nội dung, không timestamp.
+// Lý do cần cả 2 file: các trang game link về file chính bằng
+// location.href = 'mongvolam.html' (Shop/Newgame/Event) và '../mongvolam.html'
+// (11 trang map/), nên gói itch.io phải chứa cả index.html (entry) VÀ
+// mongvolam.html (byte-identical) thì link nội bộ mới chạy.
+const indexDest = path.join(root, 'index.html');
+writeFileSync(indexDest, readFileSync(dest, 'utf8'), 'utf8');
+console.log(`OK -> ${indexDest} (ban sao y het mongvolam.html, ${Math.round(statSync(indexDest).size / 1024)} KB)`);
+/* ITCH-END */
+
 const chkDir = path.join(root, '.zwork', 'build');
 mkdirSync(chkDir, { recursive: true });
 writeFileSync(path.join(chkDir, 'game.js'), js, 'utf8');

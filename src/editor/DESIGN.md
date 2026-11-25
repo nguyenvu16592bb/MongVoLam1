@@ -196,3 +196,48 @@
   ED.Terrain.getMesh() chỉ trả chunk đầu (tương thích cũ); code mới dùng
   getChunkMeshes()/getChunkInfo(). ED.Viewport.getTerrainMesh() delegate
   ED.Terrain.getMesh() rồi mới tới mesh riêng của Viewport.
+
+## Đợt 5 — ownership bổ sung (coordinator tích hợp)
+- Terrain: 04-terrain.js (chỉ 1 file: LOD 3 mức/chunk + erosion dòng chảy
+  tích lũy) — UI tự tạo trong init của module, không sửa 02-ui.js.
+- Environment: 05-environment.js + 01-viewport.js (area light + fog layers)
+  + vendor lib/RectAreaLightUniformsLib.js r128.
+- Building: 14-building.js (chỉ 1 file: param cửa sổ/cầu thang/ban công/
+  cột + mái tileRows).
+- Character+AI: 07-character.js (import GLB + morph sliders) +
+  08-npc-ai.js (utility scoring + panel debug điểm).
+- Physics+Audio: 17-physics.js (crate xoay/quán tính/chồng/rơi) +
+  15-export.js (chỉ phần audio: nhạc theo preset/khu vực).
+- Itch: tools/build.mjs (chỉ thêm khối index.html sau khi ghi
+  mongvolam.html) + tools/build-itch.mjs (mới, ráp dist-itch/ + ZIP bằng
+  JSZip Node) + tools/test-itch.cjs (mới) + src/editor/18-itch.js (mới,
+  nút xuất gói itch.io trong editor) + README.md (chỉ mục Itch.io).
+- Tích hợp (coordinator, không worker nào được sửa): tools/build-editor.mjs
+  (thêm 18-itch.js vào ORDERED + placeholder __RECTAREALIGHT__),
+  editor.template.html (khối __RECTAREALIGHT__ sau __REFLECTOR__),
+  99-boot.js (_callInit('Itch') sau Export), 01-viewport.js (gọi
+  ED.Terrain.updateLod mỗi 0.25s trong render loop + LOD vào perf payload),
+  02-ui.js (setPerf hiện LOD), 05-environment.js (applyPreset gọi
+  ED.Export.applyPresetMusic qua guard typeof), 09-play.js (hero đẩy
+  thùng qua crateStep với pushPoint = vị trí hero; _updatePhysicsVertical
+  bước mọi thùng đẩy được qua crateStep + đồng bộ obj.rot[1]; helper
+  _crateSupportList; panel Vật lý dùng ED.Physics.LITE_LABEL; utility
+  flee trong _updateAggressiveNpc khi pickBehavior chọn 'flee'),
+  DESIGN.md, README.md (mục đợt 5), tools/test-mapeditor5.cjs
+  (harness đợt 5).
+- Quy tắc đợt 5: KHÔNG sửa src/original/, KHÔNG sửa mongvolam.html hay
+  các trang game khác — game giữ nguyên (hash mongvolam.html vẫn
+  8792425df06eca92538eba790eaf4dec798a0c8c, commit 4634940f); build.mjs
+  chỉ thêm index.html = bản sao y hệt mongvolam.html (không đổi nội dung
+  game). Project JSON v1 mở rộng field (project cũ vẫn mở được):
+  env.areaLight {enabled,color,intensity,width,height,preset},
+  env.fogLayers {enabled,count,height,opacity},
+  env.musicByPreset {preset: trackId},
+  characters[].extra.morphValues {tên: giá trị},
+  npcs[].utility.weights {idle,patrol,chase,attack,flee,search},
+  objects[].extra.buildingParams thêm window {width,height,panes,color},
+  stairs {steps,stepHeight,width}, balcony {width,depth,railing},
+  pillar {height,radius,shape}, roof.tileRows.
+  ED.Terrain.updateLod(cameraPos {x,y,z}) + getLodInfo() {levels:[n0,n1,n2],
+  total:16}; ED.Physics.crateStep(crate, dt, boxes, crates, opts) với
+  opts {dir, pushPoint/offset, heights, size, segments, gravity}.
