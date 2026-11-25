@@ -24,7 +24,7 @@ const style = readText(path.join(src, 'style.css'));
 const districtDataFile = '10b-districts.js';
 const hasDistrictData = existsSync(path.join(src, districtDataFile));
 if (!hasDistrictData) console.warn(`WARN: ${districtDataFile} chua co (nhom A) — mongvolam.html build tam khong co DISTRICTS/canEnterDistrict, chay lai build khi file da co.`);
-const parts = ['01-data.js', '02-world.js', '02b-env.js', '03-battle.js', '03b-arenas.js', '04-info.js', '05-ui.js', ...(hasDistrictData ? [districtDataFile] : []), '11-fbx.js', '12-fbx-ui.js', '06-boot.js'];
+const parts = ['01-data.js', '02-world.js', '02b-env.js', '03-battle.js', '03b-arenas.js', '04-info.js', '05-ui.js', ...(hasDistrictData ? [districtDataFile] : []), '11-fbx.js', '12-fbx-ui.js', '13-editor-patch.js', '06-boot.js'];
 const jsParts = parts.map((f) => readText(path.join(src, f)));
 const js = '(function(){\n' + jsParts.join('\n') + '\n})();';
 

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#17191c">
+<title>Map Editor — Mộng Võ Lâm 3D</title>
+<style>
+__EDITOR_STYLE__
+</style>
+</head>
+<body>
+<div id="editor">
+  <!-- ============ TOOLBAR TRÊN ============ -->
+  <header id="toolbar">
+    <span class="tb-title">🗺️ Map Editor</span>
+    <div class="tb-group">
+      <button class="tb-btn" data-act="new" title="Project mới">📄 Mới</button>
+      <button class="tb-btn" data-act="open" title="Mở project đã lưu">📂 Mở</button>
+      <button class="tb-btn" data-act="save" title="Lưu project (IndexedDB)">💾 Lưu</button>
+      <button class="tb-btn" data-act="save-as" title="Lưu thành tên mới">💾 Lưu thành…</button>
+      <button class="tb-btn" data-act="export" title="Export project ra file JSON">⬇️ Export JSON</button>
+      <button class="tb-btn" data-act="import" title="Import project từ file JSON">⬆️ Import</button>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-group">
+      <button class="tb-btn small" data-act="undo" title="Hoàn tác (Ctrl+Z)">↩️</button>
+      <button class="tb-btn small" data-act="redo" title="Làm lại (Ctrl+Y)">↪️</button>
+      <button class="tb-btn" data-act="duplicate" title="Nhân bản object (Ctrl+D)">📋 Nhân bản</button>
+      <button class="tb-btn" data-act="group" title="Nhóm object đang chọn (Ctrl+G)">🗂️ Nhóm</button>
+      <button class="tb-btn" data-act="delete" title="Xoá object (Delete)">🗑️ Xoá</button>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-group">
+      <button class="tb-btn small" data-act="gizmo-move" title="Gizmo: di chuyển (W)">↔️</button>
+      <button class="tb-btn small" data-act="gizmo-rotate" title="Gizmo: xoay (E)">🔄</button>
+      <button class="tb-btn small" data-act="gizmo-scale" title="Gizmo: tỉ lệ (R)">🔍</button>
+      <button class="tb-btn" data-act="focus" title="Focus object đang chọn (F)">🎯 Focus</button>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-group">
+      <button class="tb-btn small" data-act="camera-persp" title="Camera phối cảnh">3D</button>
+      <button class="tb-btn small" data-act="camera-ortho" title="Camera trực giao">2D</button>
+      <button class="tb-btn small" data-act="camera-iso" title="Góc isometric">Iso</button>
+      <button class="tb-btn small" data-act="camera-top" title="Nhìn từ trên">⬆️</button>
+      <button class="tb-btn small" data-act="camera-front" title="Nhìn từ trước">⬇️</button>
+      <button class="tb-btn small" data-act="camera-side" title="Nhìn từ bên">➡️</button>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-group">
+      <button class="tb-btn" data-act="play" title="Chạy thử (nhóm C)">▶️ Play</button>
+      <button class="tb-btn small" data-act="pause" title="Tạm dừng (nhóm C)">⏸️</button>
+      <button class="tb-btn small" data-act="stop" title="Dừng (nhóm C)">⏹️</button>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-group">
+      <button class="tb-btn small" data-act="toggle-left" title="Ẩn/hiện panel trái">◀️</button>
+      <button class="tb-btn small" data-act="toggle-right" title="Ẩn/hiện panel phải">▶️</button>
+      <button class="tb-btn small" data-act="toggle-bottom" title="Ẩn/hiện panel dưới">🔽</button>
+    </div>
+  </header>
+
+  <!-- ============ KHUNG CHÍNH ============ -->
+  <div id="main">
+    <!-- Panel trái: Asset Library + Hierarchy -->
+    <aside id="panel-left">
+      <div class="panel-head">Asset Library</div>
+      <div class="panel-section" id="asset-library"></div>
+      <div class="panel-head">Hierarchy — WORLD</div>
+      <input id="hierarchy-search" type="search" placeholder="🔍 Tìm object…" aria-label="Tìm object">
+      <div id="hierarchy-tree"></div>
+    </aside>
+
+    <!-- Viewport giữa -->
+    <div id="center">
+      <div id="viewport-wrap">
+        <div id="viewport"></div>
+        <div id="perf-hud">FPS — · Draw — · Tri — · Vert —</div>
+        <div id="viewport-hint">Chuột phải: xoay · Giữa: pan · Lăn: zoom · Click: chọn · W/E/R: gizmo · F: focus · 1 ngón: xoay · 2 ngón: zoom</div>
+      </div>
+
+      <!-- Panel dưới: Character Editor / Timeline / Console -->
+      <section id="panel-bottom">
+        <div id="bottom-tabs">
+          <button class="tab" data-bottom-tab="character">🧍 Character Editor</button>
+          <button class="tab" data-bottom-tab="timeline">🎬 Timeline</button>
+          <button class="tab active" data-bottom-tab="console">💻 Console</button>
+        </div>
+        <div class="bottom-pane hidden" id="tab-character">
+          <div class="empty-note">Character Editor — nhóm C điền nội dung qua JS (07-character.js). Khung tab đã sẵn sàng.</div>
+        </div>
+        <div class="bottom-pane hidden" id="tab-timeline">
+          <div class="empty-note">Timeline — nhóm C điền nội dung qua JS (07-character.js / 09-play.js). Khung tab đã sẵn sàng.</div>
+        </div>
+        <div class="bottom-pane" id="tab-console">
+          <div id="console-log"></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Panel phải: Inspector -->
+    <aside id="panel-right">
+      <div class="panel-head">Inspector</div>
+      <div id="inspector-body"></div>
+    </aside>
+  </div>
+</div>
+
+<div id="toasts"></div>
+<input type="file" id="file-import" accept=".json,application/json" hidden>
+
+<script>
+__THREE__
+</script>
+<script>
+__FFLATE__
+</script>
+<script>
+__FBXLOADER__
+</script>
+<script>
+__GLTFLOADER__
+</script>
+<script>
+__OBJLOADER__
+</script>
+<script>
+__GLTFEXPORTER__
+</script>
+<script>
+__EDITOR_JS__
+</script>
+</body>
+</html>

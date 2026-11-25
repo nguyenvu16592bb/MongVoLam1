@@ -1,0 +1,325 @@
+/* Map Editor — editor.css (worker A)
+   Dark charcoal, panel mỏng, chữ nhỏ rõ, phone-first.
+   Màn hẹp: panel trái/phải thành drawer trượt (class .collapsed). */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: #17191c;
+  color: #d7dae0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+button, input, select { font-family: inherit; font-size: 13px; color: #d7dae0; }
+button {
+  min-height: 40px;
+  min-width: 40px;
+  background: #2a2e33;
+  border: 1px solid #3a3f46;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+button:hover { background: #353a41; }
+button.active { background: #8a6d2b; border-color: #ffd76b; color: #fff; }
+button:disabled { opacity: 0.45; cursor: default; }
+input[type="number"], input[type="text"], input[type="search"], select {
+  background: #202329;
+  border: 1px solid #3a3f46;
+  border-radius: 5px;
+  padding: 6px 8px;
+  min-height: 36px;
+  width: 100%;
+}
+input[type="color"] { padding: 2px; height: 36px; background: #202329; border: 1px solid #3a3f46; }
+input[type="range"] { flex: 1; min-width: 0; }
+input[type="checkbox"] { width: 20px; height: 20px; }
+
+#editor { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+
+/* ---------- Toolbar trên ---------- */
+#toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #202329;
+  border-bottom: 1px solid #33383f;
+  flex: 0 0 auto;
+  z-index: 30;
+}
+#toolbar .tb-title { font-weight: 700; color: #ffd76b; margin-right: 8px; white-space: nowrap; }
+#toolbar .tb-sep { width: 1px; height: 26px; background: #3a3f46; margin: 0 4px; }
+#toolbar .tb-group { display: flex; gap: 4px; align-items: center; }
+#toolbar .tb-btn { min-height: 40px; padding: 6px 9px; white-space: nowrap; }
+#toolbar .tb-btn.small { min-width: 40px; padding: 6px 7px; }
+
+/* ---------- Khung chính ---------- */
+#main { display: flex; flex: 1; min-height: 0; }
+#panel-left, #panel-right {
+  display: flex;
+  flex-direction: column;
+  background: #1e2125;
+  overflow-y: auto;
+  transition: transform 0.2s ease, margin 0.2s ease;
+}
+#panel-left { width: 260px; border-right: 1px solid #33383f; }
+#panel-right { width: 280px; border-left: 1px solid #33383f; }
+.panel-head {
+  padding: 8px 10px;
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #9aa0a6;
+  border-bottom: 1px solid #2d3138;
+  position: sticky;
+  top: 0;
+  background: #1e2125;
+  z-index: 2;
+}
+.panel-section { padding: 8px 10px; border-bottom: 1px solid #2d3138; }
+.empty-note { color: #8a8f98; font-size: 12px; line-height: 1.5; padding: 8px 4px; }
+
+/* ---------- Viewport giữa ---------- */
+#center { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+#viewport-wrap { position: relative; flex: 1; min-height: 0; background: #1a1d21; }
+#viewport { position: absolute; inset: 0; }
+#viewport canvas { display: block; }
+#perf-hud {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #a7f3d0;
+  font-size: 12px;
+  font-family: ui-monospace, Consolas, monospace;
+  padding: 4px 8px;
+  border-radius: 5px;
+  pointer-events: none;
+  z-index: 5;
+}
+#viewport-hint {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #9aa0a6;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* ---------- Panel dưới ---------- */
+#panel-bottom {
+  flex: 0 0 190px;
+  display: flex;
+  flex-direction: column;
+  background: #1e2125;
+  border-top: 1px solid #33383f;
+  min-height: 0;
+}
+#bottom-tabs { display: flex; gap: 2px; padding: 4px 8px 0; }
+#bottom-tabs .tab {
+  min-height: 40px;
+  border-radius: 6px 6px 0 0;
+  border-bottom: none;
+  background: #26292e;
+}
+#bottom-tabs .tab.active { background: #2f3339; color: #ffd76b; }
+.bottom-pane { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px; background: #2f3339; }
+.bottom-pane.hidden { display: none; }
+#console-log { font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.5; }
+#console-log .log-line { white-space: pre-wrap; word-break: break-word; color: #c9cdd4; }
+
+/* ---------- Hierarchy ---------- */
+#hierarchy-search { margin: 8px 10px 4px; }
+#hierarchy-tree { padding: 4px 6px 12px; }
+.h-group { margin-bottom: 6px; }
+.h-group-head { font-weight: 700; font-size: 12px; color: #9aa0a6; padding: 6px 4px 3px; }
+.h-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px;
+  border-radius: 5px;
+  min-height: 36px;
+  cursor: pointer;
+}
+.h-row:hover { background: #2a2e33; }
+.h-row.selected { background: #3a3220; outline: 1px solid #8a6d2b; }
+.h-row.child { margin-left: 14px; }
+.h-row.drop-target { outline: 2px dashed #ffd76b; }
+.h-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-btn { min-width: 32px; min-height: 32px; padding: 2px 4px; background: transparent; border: none; font-size: 14px; }
+.h-btn:hover { background: #353a41; }
+
+/* ---------- Inspector ---------- */
+#inspector-body { padding: 8px 10px 16px; }
+.insp-title { font-weight: 700; margin-bottom: 8px; word-break: break-word; }
+.insp-section { margin-bottom: 12px; }
+.insp-section-head {
+  font-weight: 700;
+  font-size: 12px;
+  color: #9aa0a6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+  border-bottom: 1px solid #2d3138;
+  padding-bottom: 4px;
+}
+.field-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.field-label { flex: 0 0 64px; color: #9aa0a6; font-size: 12px; }
+.field-row input[type="number"] { min-width: 0; flex: 1; }
+.field-val { flex: 0 0 34px; text-align: right; font-size: 12px; color: #9aa0a6; }
+
+/* ---------- Toast ---------- */
+#toasts {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 100;
+  align-items: center;
+  pointer-events: none;
+}
+.toast {
+  background: #2f3339;
+  border: 1px solid #4a4f57;
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* ---------- Responsive: màn hẹp -> drawer ---------- */
+@media (max-width: 900px) {
+  #panel-left, #panel-right {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    z-index: 50;
+    width: min(300px, 85vw);
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.6);
+  }
+  #panel-left { left: 0; }
+  #panel-right { right: 0; }
+  #panel-left.collapsed { transform: translateX(-105%); }
+  #panel-right.collapsed { transform: translateX(105%); }
+  #panel-bottom { flex-basis: 160px; }
+  #toolbar .tb-title { display: none; }
+  #viewport-hint { display: none; }
+}
+@media (min-width: 901px) {
+  #panel-left.collapsed, #panel-right.collapsed { display: none; }
+  #panel-bottom.collapsed { display: none; }
+}
+
+/* Play Mode: ẩn toàn bộ panel edit, chỉ để lại viewport + thanh Play
+   (thanh Play của ED.Play là position:fixed ngoài các panel nên không bị ẩn). */
+body.playing #toolbar,
+body.playing #panel-left,
+body.playing #panel-right,
+body.playing #panel-bottom { display: none !important; }
+body.playing #main { top: 0; }
+
+/* ============ Đợt 2 ============ */
+
+/* Nút bật/tắt lưới tìm đường (ED.Nav) — góc trên-phải viewport. */
+.ed-nav-debug-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 50;
+  min-height: 40px;
+  min-width: 40px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #e5e7eb;
+  background: rgba(26, 29, 33, 0.85);
+  border: 1px solid #4b5563;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.ed-nav-debug-btn:hover { border-color: #facc15; }
+.ed-nav-debug-btn.ed-nav-debug-on {
+  color: #111827;
+  background: #4ade80;
+  border-color: #4ade80;
+}
+
+/* Đợt 2 — panel Export + class dùng chung .ed-panel-title/.ed-row/.ed-hint
+   (04-terrain.js / 05-environment.js đã dùng các class này từ đợt 1
+   nhưng editor.css chưa định nghĩa). */
+#export-panel.ed-export-panel { padding: 8px 10px 16px; border-top: 1px solid #2d3138; }
+body > #export-panel { position: fixed; right: 8px; bottom: 8px; width: min(320px, 90vw); max-height: 50vh; overflow-y: auto; background: #1e2125; border: 1px solid #3a3f46; border-radius: 8px; z-index: 60; padding: 8px 10px 16px; }
+.ed-panel-title { font-weight: 700; font-size: 12px; color: #9aa0a6; text-transform: uppercase; letter-spacing: 0.04em; margin: 12px 0 6px; border-bottom: 1px solid #2d3138; padding-bottom: 4px; }
+.ed-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.ed-row label { flex: 0 0 auto; color: #9aa0a6; font-size: 12px; }
+.ed-row button { flex: 1; min-height: 40px; }
+.ed-row input[type="range"] { flex: 1; min-width: 0; }
+.ed-hint { color: #8a8f98; font-size: 12px; line-height: 1.5; }
+
+/* Vật liệu & Texture (13-material.js) */
+.ed-mat-uv { display: block; width: 100%; max-width: 220px; height: auto; margin: 0 auto 8px; border: 1px solid #3a3f46; border-radius: 6px; background: #202329; }
+.ed-mat-sub { font-weight: 700; font-size: 12px; color: #9aa0a6; margin: 8px 0 4px; }
+.ed-mat-slot-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: #c9cdd4; }
+.ed-mat-slot-btn { flex: 0 0 auto; }
+.ed-mat-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; }
+.ed-mat-preset { min-height: 40px; }
+
+/* ---------- Nhà lắp ghép (14-building.js) ---------- */
+#building-panel { padding: 8px 10px; border-top: 1px solid #2d3138; }
+.ed-bldg-title { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #ffd76b; margin-bottom: 6px; }
+.ed-bldg-hint { color: #8a8f98; font-size: 12px; line-height: 1.5; margin-bottom: 8px; }
+.ed-bldg-sub { font-weight: 700; font-size: 12px; color: #9aa0a6; text-transform: uppercase; letter-spacing: .04em; margin: 10px 0 6px; border-bottom: 1px solid #2d3138; padding-bottom: 4px; }
+.ed-bldg-row { display: flex; gap: 6px; margin-bottom: 6px; }
+.ed-bldg-row input { flex: 1; min-width: 0; }
+.ed-bldg-row button { flex: 0 0 auto; }
+.ed-bldg-list { display: flex; flex-direction: column; gap: 4px; }
+.ed-bldg-item { display: flex; align-items: center; gap: 6px; background: #26292e; border: 1px solid #3a3f46; border-radius: 6px; padding: 4px 6px; min-height: 40px; }
+.ed-bldg-item.selected { outline: 1px solid #ffd76b; background: #3a3220; }
+.ed-bldg-item .ed-bldg-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-bldg-item .ed-bldg-count { color: #9aa0a6; font-size: 12px; white-space: nowrap; }
+.ed-bldg-item button { min-width: 40px; min-height: 40px; padding: 6px 8px; }
+.ed-bldg-nudge { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.ed-bldg-nudge button { min-height: 40px; }
+.ed-bldg-empty { color: #8a8f98; font-size: 12px; line-height: 1.5; padding: 4px 2px; }
+#building-panel > button { width: 100%; margin-bottom: 6px; }
+#building-panel > button.active { background: #8a6d2b; border-color: #ffd76b; color: #fff; }
+
+/* ---------- Animation Editor (11-animation.js) ---------- */
+.ed-anim-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
+.ed-anim-title { font-weight: 700; color: #ffd76b; }
+.ed-anim-body { display: flex; flex-direction: column; gap: 2px; }
+.ed-anim-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.ed-anim-target { flex: 1; min-width: 160px; color: #9aa0a6; font-size: 12px; }
+.ed-anim-select { min-width: 0; }
+.ed-anim-time { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: #a7f3d0; white-space: nowrap; }
+.ed-anim-fade-label { font-size: 12px; color: #9aa0a6; white-space: nowrap; }
+.ed-anim-ruler { position: relative; height: 44px; background: #202329; border: 1px solid #3a3f46; border-radius: 6px; cursor: pointer; touch-action: none; margin-bottom: 6px; }
+.ed-anim-playhead { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; background: #ffd76b; pointer-events: none; }
+.ed-anim-section-title { font-weight: 700; font-size: 12px; color: #9aa0a6; margin: 8px 0 6px; border-bottom: 1px solid #2d3138; padding-bottom: 4px; }
+.ed-anim-tracks { display: flex; flex-direction: column; gap: 4px; }
+.ed-anim-track { display: flex; align-items: center; gap: 6px; }
+.ed-anim-track-label { flex: 0 0 64px; font-size: 12px; color: #9aa0a6; }
+.ed-anim-lane { position: relative; flex: 1; min-width: 0; height: 40px; background: #202329; border: 1px solid #3a3f46; border-radius: 6px; }
+.ed-anim-key { position: absolute; top: 0; width: 28px; height: 40px; min-width: 28px; padding: 0; background: transparent; border: none; transform: translateX(-50%); cursor: pointer; }
+.ed-anim-key-dot { display: block; width: 14px; height: 14px; margin: auto; background: #ffd76b; border-radius: 50%; border: 2px solid #17191c; }
+.ed-anim-key.selected .ed-anim-key-dot { background: #f97316; outline: 2px solid #fff; }
+.ed-anim-track-val { flex: 0 0 44px; text-align: right; font-size: 12px; color: #9aa0a6; font-family: ui-monospace, Consolas, monospace; }
+.ed-anim-keyinfo { flex: 1; min-width: 160px; font-size: 12px; color: #9aa0a6; }
+.ed-anim-hint { font-size: 12px; color: #8a8f98; line-height: 1.5; }
+.ed-anim-sm-current { font-weight: 700; color: #ffd76b; margin-bottom: 6px; }
+.ed-anim-sm-states { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.ed-anim-sm-state-label { flex: 0 0 80px; font-size: 12px; color: #9aa0a6; }
+.ed-anim-sm-trans { flex: 1; min-width: 160px; font-size: 12px; }
+.ed-anim-fallback { padding: 8px 10px; background: #2f3339; }
