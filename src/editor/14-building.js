@@ -1,6 +1,7 @@
 /* ============================================================================
    Map Editor — 14-building.js (đợt 2, MODULAR BUILDING EDITOR; đợt 4: CHI
-   TIẾT PART — mái/tường/cửa có tham số, builder dựng lại mesh từ tham số)
+   TIẾT PART — mái/tường/cửa có tham số, builder dựng lại mesh từ tham số;
+   đợt 5: tham số cửa sổ/cầu thang/ban công/cột + số hàng ngói mái)
    ED.Building — nhà lắp ghép từ part primitive (đăng ký ở 03-assets.js):
    gộp nhiều part thành "toà nhà" (parent = 'bldg:<n>', KHÔNG tạo object
    giả trong scene), lưu/đặt lại nguyên toà nhà qua Prefab
@@ -12,8 +13,17 @@
    Đợt 4 — tham số chi tiết (lưu ở obj.extra.buildingParams, JSON thuần):
    mái {curvature 0-1, slope 0.5-2, tileColor {front,back,left,right}},
    tường {height 1-6, thickness 0.1-1, color}, cửa {height 1-3.5,
-   width 0.6-2}. Builder mái/tường/cửa trong file này DỰNG LẠI mesh từ
-   tham số (mái = 4 mặt tam giác riêng màu, không chỉ scale mesh cũ);
+   width 0.6-2}. Đợt 5 — thêm: cửa sổ {width 0.4-2, height 0.4-2,
+   panes 1-6, color}, cầu thang {steps 2-12, stepHeight 0.1-0.4,
+   width 0.5-3}, ban công {width 1-5, depth 0.5-2, railing bool},
+   cột {height 1-6, radius 0.1-0.8, shape 'round'|'square'},
+   mái thêm tileRows 1-12 (số hàng ngói từng mặt). Builder mái/tường/cửa
+   trong file này DỰNG LẠI mesh từ tham số (mái = 4 mặt tam giác riêng
+   màu, không chỉ scale mesh cũ); đợt 5 builder cửa sổ/cầu thang/ban
+   công/cột cũng dựng lại từ tham số (thanh chia ô cửa sổ, đúng số bậc,
+   lan can bật/tắt, trụ tròn/vuông). Hàng ngói (tileRows) trên mái chóp
+   vẽ bằng các gờ ngang mỏng ôm quanh chóp (gợi ý trực quan, không phải
+   từng viên ngói); mái bằng vẽ các rãnh ngang trên tấm mái.
    init() bọc ED.Assets.buildMesh để Viewport.syncObject() dùng builder
    này cho part nhà, và rebuildPartMesh() đổi con của group tại chỗ
    (giữ nguyên Group trong scene nên không mất chọn/gizmo).
@@ -61,6 +71,15 @@ ED.Building = (function () {
     if (v > max) return max;
     return v;
   }
+  /* Kẹp số nguyên (panes, steps, tileRows): làm tròn rồi kẹp miền. */
+  function clampInt(v, min, max, def) {
+    v = Number(v);
+    if (!isFinite(v)) return def;
+    v = Math.round(v);
+    if (v < min) return min;
+    if (v > max) return max;
+    return v;
+  }
   function isHexColor(s) {
     return typeof s === 'string' && /^#[0-9a-fA-F]{6}$/.test(s);
   }
@@ -71,20 +90,32 @@ ED.Building = (function () {
     }
     return def;
   }
-  /* Part nào có tham số chi tiết đợt 4 (mái/tường/cửa). Các part khác
-     (cửa sổ, cầu thang, ban công, cột) chưa có — UI ghi rõ, không vẽ
-     slider giả. */
+  /* Đợt 4+5: mọi part nhà đều có tham số chi tiết (mái/tường/cửa đợt 4;
+     cửa sổ/cầu thang/ban công/cột đợt 5). Part cũ không có field này
+     -> getParams() trả mặc định cũ (backward compatible). */
   function hasDetailParams(type) {
-    return isRoofType(type) || type === 'wall' || type === 'door';
+    return isRoofType(type) || type === 'wall' || type === 'door' ||
+      type === 'window' || type === 'stairs' || type === 'balcony' ||
+      type === 'pillar' || type === 'pillar-square';
   }
+  function isColumnType(type) { return type === 'pillar' || type === 'pillar-square'; }
   function defaultParams(type, obj) {
     var base = (obj && obj.color) || PART_DEFAULT_COLOR[type] || '#d8d1c2';
     if (isRoofType(type)) {
-      return { curvature: 0.5, slope: 1,
+      return { curvature: 0.5, slope: 1, tileRows: 4,
         tileColor: { front: base, back: base, left: base, right: base } };
     }
     if (type === 'wall') return { height: WALL_HEIGHT, thickness: 0.3, color: base };
     if (type === 'door') return { height: 2.2, width: 1.2 };
+    /* Đợt 5 — mặc định trùng kích thước builder gốc 03-assets: cửa sổ
+       1.0×1.2, 4 ô (1 thanh dọc + 1 thanh ngang như cũ); cầu thang 6
+       bậc × 0.15, rộng 1.2 (cao tổng 0.9); ban công 2.4×1.2 có lan can;
+       cột cao 2.4, trụ tròn r 0.12 / trụ vuông nửa cạnh 0.15. */
+    if (type === 'window') return { width: 1.0, height: 1.2, panes: 4, color: base };
+    if (type === 'stairs') return { steps: 6, stepHeight: 0.15, width: 1.2 };
+    if (type === 'balcony') return { width: 2.4, depth: 1.2, railing: true };
+    if (type === 'pillar') return { height: 2.4, radius: 0.12, shape: 'round' };
+    if (type === 'pillar-square') return { height: 2.4, radius: 0.15, shape: 'square' };
     return null;
   }
   /* Tham số đã chuẩn hoá (kẹp miền + màu hợp lệ), không sửa obj. Trả
@@ -101,12 +132,34 @@ ED.Building = (function () {
         out[f] = normColor(tc[f], def.tileColor[f]);
       }
       return { curvature: clampNum(raw.curvature, 0, 1, 0.5),
-        slope: clampNum(raw.slope, 0.5, 2, 1), tileColor: out };
+        slope: clampNum(raw.slope, 0.5, 2, 1),
+        tileRows: clampInt(raw.tileRows, 1, 12, 4), tileColor: out };
     }
     if (obj.type === 'wall') {
       return { height: clampNum(raw.height, 1, 6, WALL_HEIGHT),
         thickness: clampNum(raw.thickness, 0.1, 1, 0.3),
         color: normColor(raw.color, def.color) };
+    }
+    if (obj.type === 'window') {
+      return { width: clampNum(raw.width, 0.4, 2, 1.0),
+        height: clampNum(raw.height, 0.4, 2, 1.2),
+        panes: clampInt(raw.panes, 1, 6, 4),
+        color: normColor(raw.color, def.color) };
+    }
+    if (obj.type === 'stairs') {
+      return { steps: clampInt(raw.steps, 2, 12, 6),
+        stepHeight: clampNum(raw.stepHeight, 0.1, 0.4, 0.15),
+        width: clampNum(raw.width, 0.5, 3, 1.2) };
+    }
+    if (obj.type === 'balcony') {
+      return { width: clampNum(raw.width, 1, 5, 2.4),
+        depth: clampNum(raw.depth, 0.5, 2, 1.2),
+        railing: raw.railing === undefined ? true : !!raw.railing };
+    }
+    if (isColumnType(obj.type)) {
+      return { height: clampNum(raw.height, 1, 6, 2.4),
+        radius: clampNum(raw.radius, 0.1, 0.8, def.radius),
+        shape: (raw.shape === 'square' || raw.shape === 'round') ? raw.shape : def.shape };
     }
     return { height: clampNum(raw.height, 1, 3.5, 2.2),
       width: clampNum(raw.width, 0.6, 2, 1.2) };
@@ -129,6 +182,8 @@ ED.Building = (function () {
       cur.curvature = clampNum(value, 0, 1, cur.curvature);
     } else if (key === 'slope' && isRoofType(obj.type)) {
       cur.slope = clampNum(value, 0.5, 2, cur.slope);
+    } else if (key === 'tileRows' && isRoofType(obj.type)) {
+      cur.tileRows = clampInt(value, 1, 12, cur.tileRows);
     } else if (obj.type === 'wall' && key === 'height') {
       cur.height = clampNum(value, 1, 6, cur.height);
     } else if (obj.type === 'wall' && key === 'thickness') {
@@ -140,6 +195,33 @@ ED.Building = (function () {
       cur.height = clampNum(value, 1, 3.5, cur.height);
     } else if (obj.type === 'door' && key === 'width') {
       cur.width = clampNum(value, 0.6, 2, cur.width);
+    } else if (obj.type === 'window' && key === 'width') {
+      cur.width = clampNum(value, 0.4, 2, cur.width);
+    } else if (obj.type === 'window' && key === 'height') {
+      cur.height = clampNum(value, 0.4, 2, cur.height);
+    } else if (obj.type === 'window' && key === 'panes') {
+      cur.panes = clampInt(value, 1, 6, cur.panes);
+    } else if (obj.type === 'window' && key === 'color') {
+      cur.color = normColor(value, cur.color);
+      obj.color = cur.color;
+    } else if (obj.type === 'stairs' && key === 'steps') {
+      cur.steps = clampInt(value, 2, 12, cur.steps);
+    } else if (obj.type === 'stairs' && key === 'stepHeight') {
+      cur.stepHeight = clampNum(value, 0.1, 0.4, cur.stepHeight);
+    } else if (obj.type === 'stairs' && key === 'width') {
+      cur.width = clampNum(value, 0.5, 3, cur.width);
+    } else if (obj.type === 'balcony' && key === 'width') {
+      cur.width = clampNum(value, 1, 5, cur.width);
+    } else if (obj.type === 'balcony' && key === 'depth') {
+      cur.depth = clampNum(value, 0.5, 2, cur.depth);
+    } else if (obj.type === 'balcony' && key === 'railing') {
+      cur.railing = (value === 'false' || value === '0') ? false : !!value;
+    } else if (isColumnType(obj.type) && key === 'height') {
+      cur.height = clampNum(value, 1, 6, cur.height);
+    } else if (isColumnType(obj.type) && key === 'radius') {
+      cur.radius = clampNum(value, 0.1, 0.8, cur.radius);
+    } else if (isColumnType(obj.type) && key === 'shape') {
+      if (value === 'round' || value === 'square') cur.shape = value;
     } else {
       return cur; // key lạ/không thuộc type này: không đổi gì
     }
@@ -191,6 +273,69 @@ ED.Building = (function () {
   function doorDims(params) {
     return { w: params.width, h: params.height,
       leafW: params.width - 0.24, leafH: params.height - 0.2 };
+  }
+  /* ---- Đợt 5: hình học thuần cửa sổ/cầu thang/ban công/cột/mái ngói. ---- */
+  /* Chia panes ô thành lưới cột×hàng có đúng panes ô (tìm ước gần vuông
+     nhất; không có ước thì 1 hàng dài, vd 5 -> 5×1, 3 -> 3×1). */
+  function windowPaneGrid(panes) {
+    panes = clampInt(panes, 1, 6, 4);
+    var best = null;
+    for (var r = Math.floor(Math.sqrt(panes)); r >= 1; r--) {
+      if (panes % r === 0) { best = { cols: panes / r, rows: r }; break; }
+    }
+    if (!best) best = { cols: panes, rows: 1 };
+    return best;
+  }
+  function windowDims(params) {
+    var grid = windowPaneGrid(params.panes);
+    return { w: params.width, h: params.height,
+      paneW: params.width - 0.16, paneH: params.height - 0.16,
+      cols: grid.cols, rows: grid.rows,
+      vBars: grid.cols - 1, hBars: grid.rows - 1 };
+  }
+  /* Cầu thang: mỗi bậc sâu 0.34 (như builder gốc), cao stepHeight,
+     tổng cao = steps × stepHeight, tổng sâu = steps × 0.34. */
+  function stairsDims(params) {
+    return { steps: params.steps, stepH: params.stepHeight,
+      width: params.width, depth: 0.34,
+      totalH: params.steps * params.stepHeight,
+      totalD: params.steps * 0.34 };
+  }
+  /* Ban công: số trụ lan can dọc mép trước/sau, cách nhau ~0.55
+     (rộng 2.4 -> 5 trụ như builder gốc). */
+  function balconyDims(params) {
+    return { w: params.width, d: params.depth, railing: !!params.railing,
+      posts: Math.max(2, Math.round(params.width / 0.55) + 1) };
+  }
+  /* Cột: thân cao = tổng cao - đế 0.15 - đầu 0.12; đế/đầu rộng hơn thân
+     0.23/0.18 (r 0.12 -> đế 0.47, khớp builder gốc 0.45). */
+  function columnDims(params) {
+    return { h: params.height, radius: params.radius, shape: params.shape,
+      shaftH: Math.max(0.1, params.height - 0.27),
+      baseW: params.radius * 2 + 0.23, capW: params.radius * 2 + 0.18 };
+  }
+  /* Gờ ngang theo số hàng ngói trên mái chóp: vòng i (1..tileRows-1)
+     ở cao độ nội suy giữa mép mái (cornerY) và đỉnh (apexH), bề rộng
+     thu hẹp tuyến tính theo chiều cao — builder vẽ mỗi vòng 1 tấm mỏng
+     nhô ra 0.03 quanh chóp (gợi ý trực quan, không phải từng viên ngói).
+     tileRows = 1 -> không có gờ nào. */
+  function roofTileRowsGeom(tileRows, w, d, apexH, cornerY) {
+    tileRows = clampInt(tileRows, 1, 12, 4);
+    var rows = [];
+    for (var i = 1; i < tileRows; i++) {
+      var t = i / tileRows;
+      rows.push({ y: cornerY + (apexH - cornerY) * t,
+        w: w * (1 - t) + 0.06, d: d * (1 - t) + 0.06 });
+    }
+    return rows;
+  }
+  /* Mái bằng: rãnh ngang trên tấm mái, chia chiều sâu thành tileRows
+     hàng; trả về các vị trí z của rãnh (tileRows = 1 -> không rãnh). */
+  function roofFlatTileRowsGeom(tileRows) {
+    tileRows = clampInt(tileRows, 1, 12, 4);
+    var zs = [];
+    for (var i = 1; i < tileRows; i++) zs.push(-ROOF_D / 2 + ROOF_D * i / tileRows);
+    return zs;
   }
 
   function isPartType(t) { return PART_TYPES.indexOf(t) >= 0; }
@@ -685,10 +830,10 @@ ED.Building = (function () {
     return true;
   }
 
-  /* ---- Đợt 4: builder dựng lại mesh từ tham số (chỉ gọi lúc chạy,
+  /* ---- Đợt 4+5: builder dựng lại mesh từ tham số (chỉ gọi lúc chạy,
      khi THREE đã có). KHÔNG sửa 03-assets.js: init() bọc
      ED.Assets.buildMesh để Viewport.syncObject() dùng builder này cho
-     part mái/tường/cửa; type khác hoặc lỗi thì rơi về builder gốc.
+     mọi part nhà; type khác hoặc lỗi thì rơi về builder gốc.
      Mặt ngói từng mặt + gờ vàng/diềm gỗ đánh dấu keepColor để
      Viewport.syncObject() không tô đè bằng obj.color (nó tô mọi mesh
      không keepColor); thân tường/cánh cửa giữ nguyên cơ chế tô theo
@@ -717,6 +862,11 @@ ED.Building = (function () {
   }
   function _bCone(r, h, m, x, y, z, seg) {
     var ms = new THREE.Mesh(new THREE.ConeGeometry(r, h, seg || 4), m);
+    ms.position.set(x || 0, y || 0, z || 0); ms.castShadow = true; ms.receiveShadow = true;
+    return ms;
+  }
+  function _bCyl(rTop, rBot, h, m, x, y, z, seg) {
+    var ms = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBot, h, seg || 12), m);
     ms.position.set(x || 0, y || 0, z || 0); ms.castShadow = true; ms.receiveShadow = true;
     return ms;
   }
@@ -750,6 +900,16 @@ ED.Building = (function () {
     }
     return g;
   }
+  /* Gờ ngang theo số hàng ngói (đợt 5, gợi ý trực quan): mỗi vòng 1 tấm
+     mỏng nhô ra quanh chóp, màu ngói mặt trước, giữ màu. */
+  function _roofTileRings(g, w, d, apexH, cornerY, tileRows, tileColor, y0) {
+    var rows = roofTileRowsGeom(tileRows, w, d, apexH, cornerY);
+    for (var i = 0; i < rows.length; i++) {
+      g.add(_keep(_bBox(rows[i].w, 0.035, rows[i].d,
+        _bMat(tileColor.front, { roughness: 0.7 }), 0, (y0 || 0) + rows[i].y, 0)));
+    }
+    return g;
+  }
   function buildRoofMesh(type, obj, params) {
     var g = new THREE.Group();
     var gold = _bMat('#d8a53c', { metalness: 0.55, roughness: 0.35 });
@@ -761,6 +921,11 @@ ED.Building = (function () {
       var slab = _bBox(ROOF_W, 0.18, ROOF_D, _bMat(tc.front, { roughness: 0.75 }), 0, 0.09, 0);
       slab.rotation.x = fg.slabTilt;
       g.add(_keep(slab));
+      /* Đợt 5: rãnh ngang theo tileRows trên tấm mái (gợi ý trực quan). */
+      roofFlatTileRowsGeom(params.tileRows).forEach(function (z) {
+        g.add(_keep(_bBox(ROOF_W - 0.1, 0.025, 0.06,
+          _bMat(tc.front, { roughness: 0.75 }), 0, 0.19, z)));
+      });
       g.add(_keep(_bBox(ROOF_W, fg.frontH, 0.12, _bMat(tc.front, { roughness: 0.75 }), 0, 0.18 + fg.frontH / 2, 1.24)));
       g.add(_keep(_bBox(ROOF_W, fg.backH, 0.12, _bMat(tc.back, { roughness: 0.75 }), 0, 0.18 + fg.backH / 2, -1.24)));
       g.add(_keep(_bBox(0.12, fg.sideH, ROOF_D, _bMat(tc.left, { roughness: 0.75 }), 1.74, 0.18 + fg.sideH / 2, 0)));
@@ -772,6 +937,8 @@ ED.Building = (function () {
       for (var f = 0; f < 3; f++) {
         g.add(_bBox(w * 0.8, 0.5, w * 0.8, _bMat('#d8d1c2'), 0, y + 0.25, 0));
         _roofFacesGroup(g, w, w, 0.7 * params.slope, cornerY * 0.7, tc, y + 0.5);
+        /* Đợt 5: gờ ngang theo tileRows cho từng tầng tháp. */
+        _roofTileRings(g, w, w, 0.7 * params.slope, cornerY * 0.7, params.tileRows, tc, y + 0.5);
         y += 1.2; w *= 0.78;
       }
       g.add(_keep(_bSph(0.22, gold, 0, y + 0.25, 0)));
@@ -780,6 +947,8 @@ ED.Building = (function () {
     /* roof-curved: 4 mặt tam giác + sống mái vàng + diềm gỗ vểnh + sừng. */
     var apexH = ROOF_H * params.slope;
     _roofFacesGroup(g, ROOF_W, ROOF_D, apexH, cornerY, tc, 0);
+    /* Đợt 5: gờ ngang theo tileRows (gợi ý trực quan, xem roofTileRowsGeom). */
+    _roofTileRings(g, ROOF_W, ROOF_D, apexH, cornerY, params.tileRows, tc, 0);
     g.add(_keep(_bBox(3.7, 0.12, 0.18, gold, 0, apexH + 0.02, 0)));
     var tilt = 0.05 + params.curvature * 0.35;
     var e1 = _bBox(3.9, 0.1, 0.28, wood, 0, cornerY, 1.32);
@@ -820,8 +989,80 @@ ED.Building = (function () {
     g.add(_bBox(d.w + 0.1, 0.12, 0.4, _bMat('#8b9793'), 0, 0.06, 0.18));
     return g;
   }
-  /* Dựng Group cho part mái/tường/cửa theo tham số; trả null cho part
-     khác (để buildMesh gốc xử lý) hoặc khi chưa có THREE. */
+  /* ---- Đợt 5: builder cửa sổ/cầu thang/ban công/cột theo tham số. ----
+     Kích thước ở mặc định trùng builder gốc 03-assets (cửa sổ 1.0×1.2,
+     cầu thang 6×0.15, ban công 2.4×1.2, cột cao 2.4) nên project cũ mở
+     ra không đổi hình. Khung cửa sổ/cánh cửa tô theo params.color
+     (= obj.color, xem setParam); ô sáng giữ màu phát sáng (keepColor). */
+  function buildWindowMesh(obj, params) {
+    var g = new THREE.Group();
+    var d = windowDims(params);
+    var wood = _bMat(params.color, { roughness: 0.75 });
+    var glow = _bMat('#ffe9a8', { emissive: 0xffdf9a, emissiveIntensity: 0.4 });
+    var cy = d.h / 2, ft = 0.08; // tâm khung, dày khung
+    g.add(_keep(_bBox(d.paneW, d.paneH, 0.06, glow, 0, cy, 0))); // ô sáng
+    g.add(_bBox(ft, d.h, 0.14, wood, -(d.w / 2 - ft / 2), cy, 0)); // khung 2 bên
+    g.add(_bBox(ft, d.h, 0.14, wood, d.w / 2 - ft / 2, cy, 0));
+    g.add(_bBox(d.w, ft, 0.14, wood, 0, d.h - ft / 2, 0)); // khung trên/dưới
+    g.add(_bBox(d.w, ft, 0.14, wood, 0, ft / 2, 0));
+    var i, x, z; // thanh chia ô thật: (cols-1) dọc + (rows-1) ngang
+    for (i = 1; i < d.cols; i++) {
+      x = -d.paneW / 2 + d.paneW * i / d.cols;
+      g.add(_bBox(0.06, d.paneH, 0.08, wood, x, cy, 0.02));
+    }
+    for (i = 1; i < d.rows; i++) {
+      z = cy - d.paneH / 2 + d.paneH * i / d.rows;
+      g.add(_bBox(d.paneW, 0.06, 0.08, wood, 0, z, 0.02));
+    }
+    return g;
+  }
+  function buildStairsMesh(obj, params) {
+    var g = new THREE.Group();
+    var d = stairsDims(params);
+    var stone = _bMat(obj.color || PART_DEFAULT_COLOR.stairs, { roughness: 0.85 });
+    for (var i = 0; i < d.steps; i++) {
+      g.add(_bBox(d.width, d.stepH, d.depth, stone, 0,
+        d.stepH * (i + 0.5), d.totalD / 2 - d.depth * (i + 0.5)));
+    }
+    return g;
+  }
+  function buildBalconyMesh(obj, params) {
+    var g = new THREE.Group();
+    var d = balconyDims(params);
+    var wood = _bMat(obj.color || PART_DEFAULT_COLOR.balcony, { roughness: 0.75 });
+    g.add(_bBox(d.w, 0.12, d.d, wood, 0, 0.06, 0)); // sàn
+    if (!d.railing) return g;
+    var railY = 1.08, postH = 0.96, ze = d.d / 2 - 0.05, xe = d.w / 2 - 0.1;
+    var i, x;
+    for (i = 0; i < d.posts; i++) { // trụ dọc 2 mép trước/sau
+      x = -xe + (2 * xe) * i / (d.posts - 1);
+      g.add(_bBox(0.07, postH, 0.07, wood, x, 0.12 + postH / 2, ze));
+      g.add(_bBox(0.07, postH, 0.07, wood, x, 0.12 + postH / 2, -ze));
+    }
+    g.add(_bBox(d.w, 0.08, 0.08, wood, 0, railY, ze)); // tay vịn trước/sau
+    g.add(_bBox(d.w, 0.08, 0.08, wood, 0, railY, -ze));
+    g.add(_bBox(0.08, 0.08, d.d, wood, -xe, railY, 0)); // tay vịn 2 bên
+    g.add(_bBox(0.08, 0.08, d.d, wood, xe, railY, 0));
+    return g;
+  }
+  function buildColumnMesh(obj, params) {
+    var g = new THREE.Group();
+    var d = columnDims(params);
+    var m = _bMat(obj.color || PART_DEFAULT_COLOR[obj.type] || '#3b2414',
+      { roughness: obj.type === 'pillar-square' ? 0.85 : 0.75 });
+    var stone = _bMat('#8b9793');
+    g.add(_bBox(d.baseW, 0.15, d.baseW, stone, 0, 0.075, 0)); // đế
+    if (d.shape === 'square') {
+      g.add(_bBox(d.radius * 2, d.shaftH, d.radius * 2, m, 0, 0.15 + d.shaftH / 2, 0));
+    } else {
+      g.add(_bCyl(d.radius * 0.92, d.radius, d.shaftH, m, 0, 0.15 + d.shaftH / 2, 0, 12));
+    }
+    g.add(_bBox(d.capW, 0.12, d.capW, m, 0, d.h - 0.06, 0)); // đầu cột
+    return g;
+  }
+  /* Dựng Group cho mọi part nhà theo tham số (đợt 4 mái/tường/cửa,
+     đợt 5 thêm cửa sổ/cầu thang/ban công/cột); trả null khi chưa có
+     THREE (để buildMesh gốc xử lý). */
   function buildPartMesh(obj) {
     if (!obj || !hasDetailParams(obj.type)) return null;
     if (typeof THREE === 'undefined') return null;
@@ -831,6 +1072,10 @@ ED.Building = (function () {
     if (isRoofType(obj.type)) g = buildRoofMesh(obj.type, obj, p);
     else if (obj.type === 'wall') g = buildWallMesh(obj, p);
     else if (obj.type === 'door') g = buildDoorMesh(obj, p);
+    else if (obj.type === 'window') g = buildWindowMesh(obj, p);
+    else if (obj.type === 'stairs') g = buildStairsMesh(obj, p);
+    else if (obj.type === 'balcony') g = buildBalconyMesh(obj, p);
+    else if (isColumnType(obj.type)) g = buildColumnMesh(obj, p);
     else return null;
     if (g) {
       g.userData.assetType = obj.type;
@@ -1017,13 +1262,13 @@ ED.Building = (function () {
     _renderParams();
   }
 
-  /* ---- Đợt 4: panel chỉnh tham số part đang chọn. ----
-     Chỉ hiện khi object đang chọn là part nhà; mái/tường/cửa có slider +
-     ô màu, part khác chỉ hiện ghi chú (không vẽ slider giả). Kéo slider
-     thì rebuild mesh ngay + markDirty; pushHistory 1 lần/lần kéo (lúc
-     bắt đầu chạm/phím, trước khi giá trị đổi) để Undo trả về 1 bước.
-     Không vẽ lại cả panel trong lúc kéo (chỉ cập nhật số hiển thị) để
-     không mất slider đang kéo. */
+  /* ---- Đợt 4+5: panel chỉnh tham số part đang chọn. ----
+     Chỉ hiện khi object đang chọn là part nhà; đợt 5 mọi part nhà đều
+     có tham số (mái/tường/cửa đợt 4, cửa sổ/cầu thang/ban công/cột
+     đợt 5). Kéo slider thì rebuild mesh ngay + markDirty; pushHistory
+     1 lần/lần kéo (lúc bắt đầu chạm/phím, trước khi giá trị đổi) để
+     Undo trả về 1 bước. Không vẽ lại cả panel trong lúc kéo (chỉ cập
+     nhật số hiển thị) để không mất slider đang kéo. */
   function _selectedPart() {
     var o = (ED.Core && typeof ED.Core.selectedObject === 'function')
       ? ED.Core.selectedObject() : null;
@@ -1041,6 +1286,20 @@ ED.Building = (function () {
       '<input type="color" data-param="' + key + '" value="' + value +
       '" style="min-height:40px;min-width:48px"></label>';
   }
+  function _checkboxRow(key, label, checked) {
+    return '<label class="ed-bldg-param"><span class="ed-bldg-param-label">' + label + '</span>' +
+      '<input type="checkbox" data-param="' + key + '"' + (checked ? ' checked' : '') +
+      ' style="min-height:40px;min-width:40px"></label>';
+  }
+  function _selectRow(key, label, value, options) {
+    var h = '<label class="ed-bldg-param"><span class="ed-bldg-param-label">' + label + '</span>' +
+      '<select data-param="' + key + '" style="min-height:40px">';
+    for (var i = 0; i < options.length; i++) {
+      h += '<option value="' + options[i][0] + '"' +
+        (options[i][0] === value ? ' selected' : '') + '>' + options[i][1] + '</option>';
+    }
+    return h + '</select></label>';
+  }
   function _renderParams() {
     if (!_paramsEl || typeof document === 'undefined') return;
     var obj = _selectedPart();
@@ -1052,7 +1311,7 @@ ED.Building = (function () {
     _paramsEl.style.display = '';
     if (!hasDetailParams(obj.type)) {
       _paramsEl.innerHTML = '<div class="ed-bldg-empty">Part “' + _esc(obj.name) +
-        '” chưa có tham số chỉnh chi tiết (mới có cho mái / tường / cửa).</div>';
+        '” chưa có tham số chỉnh chi tiết.</div>';
       return;
     }
     var p = getParams(obj);
@@ -1060,12 +1319,13 @@ ED.Building = (function () {
     if (isRoofType(obj.type)) {
       h += _sliderRow('curvature', 'Độ cong mái', p.curvature, 0, 1, 0.05, '');
       h += _sliderRow('slope', 'Độ dốc mái', p.slope, 0.5, 2, 0.1, '×');
+      h += _sliderRow('tileRows', 'Số hàng ngói', p.tileRows, 1, 12, 1, ' hàng');
       h += '<div class="ed-bldg-sub2">Màu ngói từng mặt</div>';
       h += _colorRow('tileFront', 'Mặt trước', p.tileColor.front);
       h += _colorRow('tileBack', 'Mặt sau', p.tileColor.back);
       h += _colorRow('tileLeft', 'Mặt trái', p.tileColor.left);
       h += _colorRow('tileRight', 'Mặt phải', p.tileColor.right);
-      h += '<div class="ed-bldg-empty">Độ cong càng lớn, mép mái càng vểnh cao. Mái được dựng lại từ tham số (không chỉ co kéo mesh cũ).</div>';
+      h += '<div class="ed-bldg-empty">Độ cong càng lớn, mép mái càng vểnh cao. Mái được dựng lại từ tham số (không chỉ co kéo mesh cũ). Số hàng ngói vẽ bằng gờ ngang ôm quanh mái — gợi ý trực quan, không phải từng viên ngói.</div>';
     } else if (obj.type === 'wall') {
       h += _sliderRow('height', 'Cao tường', p.height, 1, 6, 0.1, ' m');
       h += _sliderRow('thickness', 'Dày tường', p.thickness, 0.1, 1, 0.05, ' m');
@@ -1073,6 +1333,26 @@ ED.Building = (function () {
     } else if (obj.type === 'door') {
       h += _sliderRow('height', 'Cao cửa', p.height, 1, 3.5, 0.1, ' m');
       h += _sliderRow('width', 'Rộng cửa', p.width, 0.6, 2, 0.1, ' m');
+    } else if (obj.type === 'window') {
+      h += _sliderRow('width', 'Rộng cửa sổ', p.width, 0.4, 2, 0.1, ' m');
+      h += _sliderRow('height', 'Cao cửa sổ', p.height, 0.4, 2, 0.1, ' m');
+      h += _sliderRow('panes', 'Số ô kính', p.panes, 1, 6, 1, ' ô');
+      h += _colorRow('color', 'Màu khung', p.color);
+      h += '<div class="ed-bldg-empty">Số ô kính chia khung thành ô bằng thanh gỗ thật (vd 4 ô = 2×2, 6 ô = 3×2).</div>';
+    } else if (obj.type === 'stairs') {
+      h += _sliderRow('steps', 'Số bậc', p.steps, 2, 12, 1, ' bậc');
+      h += _sliderRow('stepHeight', 'Cao mỗi bậc', p.stepHeight, 0.1, 0.4, 0.05, ' m');
+      h += _sliderRow('width', 'Rộng cầu thang', p.width, 0.5, 3, 0.1, ' m');
+      h += '<div class="ed-bldg-empty">Tổng cao = số bậc × cao mỗi bậc (vd 6 × 0.15 m = 0.9 m).</div>';
+    } else if (obj.type === 'balcony') {
+      h += _sliderRow('width', 'Rộng ban công', p.width, 1, 5, 0.1, ' m');
+      h += _sliderRow('depth', 'Sâu ban công', p.depth, 0.5, 2, 0.1, ' m');
+      h += _checkboxRow('railing', 'Có lan can', p.railing);
+    } else if (obj.type === 'pillar' || obj.type === 'pillar-square') {
+      h += _sliderRow('height', 'Cao cột', p.height, 1, 6, 0.1, ' m');
+      h += _sliderRow('radius', 'Bán kính / nửa cạnh', p.radius, 0.1, 0.8, 0.05, ' m');
+      h += _selectRow('shape', 'Kiểu cột', p.shape,
+        [['round', 'Tròn'], ['square', 'Vuông']]);
     }
     _paramsEl.innerHTML = h;
     _bindParamInputs(obj);
@@ -1095,6 +1375,13 @@ ED.Building = (function () {
       (function (el) {
         var key = el.getAttribute('data-param');
         var isColor = el.type === 'color';
+        var isCheck = el.type === 'checkbox';
+        var isSelect = el.tagName === 'SELECT';
+        var readVal = function () {
+          if (isCheck) return el.checked;
+          if (isSelect || isColor) return el.value;
+          return Number(el.value);
+        };
         var arm = function () {
           if (!_paramHistArmed) {
             _pushHistory('Chỉnh chi tiết ' + (obj.name || obj.type));
@@ -1105,14 +1392,17 @@ ED.Building = (function () {
         el.addEventListener('focus', arm);
         el.addEventListener('input', function () {
           arm();
-          var v = isColor ? el.value : Number(el.value);
-          _applyParam(obj, key, v);
-          if (!isColor) {
+          _applyParam(obj, key, readVal());
+          if (!isColor && !isCheck && !isSelect) {
             var lab = _paramsEl.querySelector('[data-val="' + key + '"]');
             if (lab) lab.textContent = el.value + (el.getAttribute('data-unit') || '');
           }
         });
-        el.addEventListener('change', function () { _paramHistArmed = false; });
+        el.addEventListener('change', function () {
+          /* select/checkbox chỉ chắc chắn kích hoạt ở 'change'. */
+          if (isCheck || isSelect) { arm(); _applyParam(obj, key, readVal()); }
+          _paramHistArmed = false;
+        });
       })(inputs[i]);
     }
   }
@@ -1224,14 +1514,20 @@ ED.Building = (function () {
     ROOF_W: ROOF_W, ROOF_D: ROOF_D, ROOF_H: ROOF_H,
     TILE_FACES: TILE_FACES,
     isPartType: isPartType, isRoofType: isRoofType,
-    hasDetailParams: hasDetailParams,
+    hasDetailParams: hasDetailParams, isColumnType: isColumnType,
     defaultParams: defaultParams, getParams: getParams,
     setParam: setParam, ensureParams: ensureParams,
-    clampNum: clampNum, normColor: normColor,
+    clampNum: clampNum, clampInt: clampInt, normColor: normColor,
     eaveCornerY: eaveCornerY, roofPyramidFaces: roofPyramidFaces,
     roofFlatGeom: roofFlatGeom, wallDims: wallDims, doorDims: doorDims,
+    windowPaneGrid: windowPaneGrid, windowDims: windowDims,
+    stairsDims: stairsDims, balconyDims: balconyDims,
+    columnDims: columnDims, roofTileRowsGeom: roofTileRowsGeom,
+    roofFlatTileRowsGeom: roofFlatTileRowsGeom,
     buildPartMesh: buildPartMesh, buildRoofMesh: buildRoofMesh,
     buildWallMesh: buildWallMesh, buildDoorMesh: buildDoorMesh,
+    buildWindowMesh: buildWindowMesh, buildStairsMesh: buildStairsMesh,
+    buildBalconyMesh: buildBalconyMesh, buildColumnMesh: buildColumnMesh,
     wrapBuildMesh: wrapBuildMesh, rebuildPartMesh: rebuildPartMesh,
     resyncParamMeshes: resyncParamMeshes,
     edBuildSnap: edBuildSnap, snapXZ: snapXZ,

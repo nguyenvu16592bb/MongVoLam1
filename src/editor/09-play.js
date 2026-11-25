@@ -930,18 +930,42 @@ ED.Play = {
           }
           if (!obj) continue;
           var crate = {
+            id: cb.id,
             pos: [Number(obj.pos[0]) || 0, Number(obj.pos[1]) || 0, Number(obj.pos[2]) || 0],
-            vel: [0, 0], size: [cb.hx * 2, cb.hz * 2]
+            vel: [0, 0], size: [cb.hx * 2, cb.hz * 2],
+            height: (Array.isArray(obj.scale) && Number(obj.scale[1]) > 0) ? Number(obj.scale[1]) : 1
           };
           var st = this._crateVel[cb.id];
-          if (st) crate.vel = [st.vel[0], st.vel[1]];
-          var pr = P.pushCrate(crate, dir, dt, statics, {});
-          this._crateVel[cb.id] = { vel: pr.crate.vel };
-          if (pr.moved) {
-            obj.pos = [pr.crate.pos[0], pr.crate.pos[1], pr.crate.pos[2]];
-            this._syncObjPos(obj);
+          if (st) {
+            crate.vel = [st.vel[0], st.vel[1]];
+            crate.rotY = (typeof st.rotY === 'number') ? st.rotY : 0;
+            crate.angVel = (typeof st.angVel === 'number') ? st.angVel : 0;
+            crate.velY = (typeof st.velY === 'number') ? st.velY : 0;
+          } else if (Array.isArray(obj.rot)) crate.rotY = Number(obj.rot[1]) || 0;
+          var pr;
+          if (typeof P.crateStep === 'function') {
+            /* Đợt 5 — đẩy lệch tâm thì thùng xoay (pushPoint = vị trí hero). */
+            pr = P.crateStep(crate, dt, statics, this._crateSupportList(cb.id),
+              { dir: dir, pushPoint: [cur[0], cur[1]], heights: terrain.heights, size: terrain.size, segments: terrain.segments });
+            this._crateVel[cb.id] = { vel: pr.crate.vel, rotY: pr.crate.rotY, angVel: pr.crate.angVel, velY: pr.crate.velY };
+            if (pr.moved) {
+              obj.pos = [pr.crate.pos[0], pr.crate.pos[1], pr.crate.pos[2]];
+              if (typeof pr.crate.rotY === 'number') {
+                if (!Array.isArray(obj.rot)) obj.rot = [0, 0, 0];
+                obj.rot[1] = pr.crate.rotY;
+              }
+              this._syncObjPos(obj);
+            }
+            if (pr.crate.vel[0] === 0 && pr.crate.vel[1] === 0 && (!pr.crate.angVel || pr.crate.angVel === 0) && !pr.supportedBy) delete this._crateVel[cb.id];
+          } else {
+            pr = P.pushCrate(crate, dir, dt, statics, {});
+            this._crateVel[cb.id] = { vel: pr.crate.vel };
+            if (pr.moved) {
+              obj.pos = [pr.crate.pos[0], pr.crate.pos[1], pr.crate.pos[2]];
+              this._syncObjPos(obj);
+            }
+            if (pr.crate.vel[0] === 0 && pr.crate.vel[1] === 0) delete this._crateVel[cb.id];
           }
-          if (pr.crate.vel[0] === 0 && pr.crate.vel[1] === 0) delete this._crateVel[cb.id];
         }
         boxes = this._physBoxes(); /* vị trí thùng mới nhất */
       }
@@ -1080,6 +1104,34 @@ ED.Play = {
     if (visible) {
       st.lastSeenPos = [this._heroPos[0], this._heroPos[1]];
       st.lastSeenAt = nowMs;
+    }
+    /* Đợt 5 — utility AI: HP thấp thì bỏ chạy (flee) thay vì đuổi/đánh.
+       Chỉ override khi pickBehavior chọn 'flee'; các behavior khác vẫn
+       theo state machine trí nhớ đợt 4 (nextAiState bên dưới). */
+    if (visible && typeof ED !== 'undefined' && ED.NpcAi && typeof ED.NpcAi.pickBehavior === 'function') {
+      try {
+        var _allies = 0;
+        var _plist = (this.project() && this.project().npcs) || [];
+        for (var _ai = 0; _ai < _plist.length; _ai++) {
+          var _on = _plist[_ai];
+          if (!_on || _on.id === npc.id || !Array.isArray(_on.pos)) continue;
+          var _adx = Number(_on.pos[0]) - st.pos[0], _adz = Number(_on.pos[1]) - st.pos[1];
+          if (Math.sqrt(_adx * _adx + _adz * _adz) <= 8) _allies++;
+        }
+        var _hpPct = 100;
+        if (typeof npc.hpPct === 'number') _hpPct = npc.hpPct;
+        else if (typeof npc.hp === 'number' && typeof npc.maxHp === 'number' && npc.maxHp > 0) _hpPct = npc.hp / npc.maxHp * 100;
+        var _best = ED.NpcAi.pickBehavior(npc, { enemyDist: dist, hpPct: _hpPct, alliesNear: _allies, hasMemory: !!st.lastSeenPos });
+        if (_best === 'flee') {
+          st.aiState = 'flee';
+          var _fx = st.pos[0] - this._heroPos[0], _fz = st.pos[1] - this._heroPos[1];
+          var _fl = Math.sqrt(_fx * _fx + _fz * _fz) || 1;
+          var _ft = [st.pos[0] + _fx / _fl * 5, st.pos[1] + _fz / _fl * 5];
+          var _fp = this._aiWalkTo(st, _ft, speed * 1.2, dt, nowMs);
+          this._faceMesh(npc.id, st.pos, _ft);
+          return { pos: _fp, wpIndex: st.wpIndex, target: st.target, state: 'flee' };
+        }
+      } catch (e) {}
     }
     var lastSeen = st.lastSeenPos || null;
     var dLast = lastSeen
@@ -2202,30 +2254,64 @@ ED.Play = {
     this._heroVy = res.vel[1];
     this._heroGrounded = res.grounded;
     if (yChanged) this._applyHeroPos();
-    /* Thùng đang trượt (hết lực đẩy): ma sát làm chậm dần rồi dừng. */
+    /* Thùng đang trượt/xoay/chồng (hết lực đẩy): ma sát làm chậm dần rồi
+       dừng; thùng chồng thì đứng trên mặt thùng dưới, mất đỡ thì rơi.
+       Đợt 5: bước qua ED.Physics.crateStep (xoay/quán tính/chồng/rơi);
+       không có thì fallback pushCrate cũ (chỉ trượt). Bước mọi thùng
+       đẩy được mỗi frame (không chỉ thùng đang trượt) để thùng chồng
+       rơi đúng lúc thùng dưới bị đẩy đi. */
     var self = this;
     var statics = [];
     for (var i = 0; i < boxes.length; i++) if (!boxes[i].pushable) statics.push(boxes[i]);
+    var crateObjs = [];
+    for (var k = 0; k < project.objects.length; k++) {
+      var co = project.objects[k];
+      if (co && ((co.type === 'crate') || (co.extra && co.extra.pushable === true))) crateObjs.push(co);
+    }
+    /* Dọn state của object đã bị xoá khỏi project. */
     Object.keys(this._crateVel || {}).forEach(function (id) {
-      var st = self._crateVel[id];
-      if (!st) return;
-      var obj = null;
-      for (var k = 0; k < project.objects.length; k++) {
-        if (project.objects[k] && project.objects[k].id === id) { obj = project.objects[k]; break; }
-      }
-      if (!obj) { delete self._crateVel[id]; return; }
+      var gone = true;
+      for (var g = 0; g < crateObjs.length; g++) if (crateObjs[g].id === id) { gone = false; break; }
+      if (gone) delete self._crateVel[id];
+    });
+    crateObjs.forEach(function (obj) {
+      var st = self._crateVel[obj.id] || { vel: [0, 0], rotY: 0, angVel: 0, velY: 0 };
       var crate = {
+        id: obj.id,
         pos: [Number(obj.pos[0]) || 0, Number(obj.pos[1]) || 0, Number(obj.pos[2]) || 0],
-        vel: [st.vel[0], st.vel[1]],
-        size: (Array.isArray(obj.scale) ? [obj.scale[0], obj.scale[2]] : [1, 1])
+        vel: [st.vel[0] || 0, st.vel[1] || 0],
+        rotY: (typeof st.rotY === 'number') ? st.rotY : ((Array.isArray(obj.rot) && typeof obj.rot[1] === 'number') ? obj.rot[1] : 0),
+        angVel: (typeof st.angVel === 'number') ? st.angVel : 0,
+        velY: (typeof st.velY === 'number') ? st.velY : 0,
+        size: (Array.isArray(obj.scale) ? [Number(obj.scale[0]) || 1, Number(obj.scale[2]) || 1] : [1, 1]),
+        height: (Array.isArray(obj.scale) && Number(obj.scale[1]) > 0) ? Number(obj.scale[1]) : 1
       };
-      var r = ED.Physics.pushCrate(crate, null, dt, statics, {});
-      st.vel = r.crate.vel;
-      if (r.moved) {
-        obj.pos = [r.crate.pos[0], r.crate.pos[1], r.crate.pos[2]];
-        self._syncObjPos(obj);
+      var r;
+      if (typeof ED.Physics.crateStep === 'function') {
+        r = ED.Physics.crateStep(crate, dt, statics, self._crateSupportList(obj.id),
+          { heights: t.heights, size: t.size, segments: t.segments });
+        self._crateVel[obj.id] = { vel: r.crate.vel, rotY: r.crate.rotY, angVel: r.crate.angVel, velY: r.crate.velY };
+        if (r.moved) {
+          obj.pos = [r.crate.pos[0], r.crate.pos[1], r.crate.pos[2]];
+          if (typeof r.crate.rotY === 'number') {
+            if (!Array.isArray(obj.rot)) obj.rot = [0, 0, 0];
+            obj.rot[1] = r.crate.rotY;
+          }
+          self._syncObjPos(obj);
+        }
+        if (r.crate.vel[0] === 0 && r.crate.vel[1] === 0 &&
+            (!r.crate.angVel || r.crate.angVel === 0) && r.crate.velY === 0 && !r.supportedBy) {
+          delete self._crateVel[obj.id];
+        }
+      } else {
+        var r2 = ED.Physics.pushCrate(crate, null, dt, statics, {});
+        self._crateVel[obj.id] = { vel: r2.crate.vel, rotY: 0, angVel: 0, velY: 0 };
+        if (r2.moved) {
+          obj.pos = [r2.crate.pos[0], r2.crate.pos[1], r2.crate.pos[2]];
+          self._syncObjPos(obj);
+        }
+        if (r2.crate.vel[0] === 0 && r2.crate.vel[1] === 0) delete self._crateVel[obj.id];
       }
-      if (r.crate.vel[0] === 0 && r.crate.vel[1] === 0) delete self._crateVel[id];
     });
     /* Vật rơi: prop trên cao rơi xuống đất, chạm đất thì nằm lại. */
     (this._fallingProps || []).forEach(function (fp) {
@@ -2256,6 +2342,25 @@ ED.Play = {
         ED.Viewport.meshes[obj.id].position.set(obj.pos[0], obj.pos[1], obj.pos[2]);
       }
     } catch (e) {}
+  },
+
+  /* Danh sách thùng khác (để crateStep tính mặt đỡ khi chồng thùng).
+     Trả [{id, pos:[x,y,z], size:[sx,sz], height}]. Đợt 5. */
+  _crateSupportList: function (excludeId) {
+    var project = this.project();
+    var out = [];
+    (project.objects || []).forEach(function (o) {
+      if (!o || o.id === excludeId) return;
+      var pushable = (o.type === 'crate') || !!(o.extra && o.extra.pushable === true);
+      if (!pushable) return;
+      out.push({
+        id: o.id,
+        pos: [Number(o.pos[0]) || 0, Number(o.pos[1]) || 0, Number(o.pos[2]) || 0],
+        size: (Array.isArray(o.scale) ? [Number(o.scale[0]) || 1, Number(o.scale[2]) || 1] : [1, 1]),
+        height: (Array.isArray(o.scale) && Number(o.scale[1]) > 0) ? Number(o.scale[1]) : 1
+      });
+    });
+    return out;
   },
 
   /* Bật/tắt flag đẩy được cho object đang chọn (nút trong panel Vật lý).
@@ -2312,7 +2417,10 @@ ED.Play = {
     p.appendChild(title);
     var note = document.createElement('div');
     note.className = 'ed-play-quest-line';
-    note.textContent = 'Physics-lite — KHÔNG phải rigid-body đầy đủ: chỉ trọng lực + nhảy, chặn tường (capsule-vs-box), đẩy thùng, vật rơi. Không xoay, không mô-men.';
+    /* Đợt 5 — dùng label physics-lite mới (có xoay/quán tính thùng). */
+    note.textContent = (typeof ED !== 'undefined' && ED.Physics && ED.Physics.LITE_LABEL)
+      ? ED.Physics.LITE_LABEL
+      : 'Physics-lite — KHÔNG phải rigid-body đầy đủ: chỉ trọng lực + nhảy, chặn tường (capsule-vs-box), đẩy thùng, vật rơi. Không xoay, không mô-men.';
     p.appendChild(note);
     var toggle = document.createElement('button');
     toggle.className = 'ed-btn';

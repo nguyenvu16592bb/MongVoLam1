@@ -34,6 +34,26 @@
        thêm 3 field: contextMusic, exploreTrackId, combatTrackId).
        API cho coordinator nối vào 09-play.js: ED.Export.setCombatMode(bool),
        ED.Export.playPositionalSfx(name, sourcePos, cameraState).
+   Đợt 5 (chỉ sửa PHẦN AUDIO của file này — GLB/.gltf/PNG/ZIP không đổi):
+   (h) Nhạc theo khu vực: mỗi preset môi trường (5 preset của
+       05-environment.js: thanh-co / rung-truc / nui-tuyet / chua /
+       vo-dai) gán 1 track ambient riêng — project.env.musicByPreset
+       {preset: trackId} (field mới của project JSON v1, project cũ
+       không có thì mặc định rỗng). Chưa gán thì dùng track explore mặc
+       định (_exploreTrackId, rồi tới bài đang phát). Đổi preset thì đổi
+       nhạc theo map, fade 1.5 giây như nhạc combat đợt 4 (dùng chung
+       _fadeAudioTo/_switchTrackWithFade). Panel trong init của module:
+       1 dropdown/preset (lấy từ playlist hiện có) + nút phát nhạc khu
+       vực hiện tại. Map lưu vào localStorage cùng key cũ
+       (thêm field musicByPreset) và write-through vào project.env khi
+       người dùng đổi trong panel. API thuần: edAudioTrackForPreset
+       (preset, musicByPreset, fallbackTrackId); API chạy:
+       ED.Export.applyPresetMusic(preset) — coordinator nối
+       ED.Environment.applyPreset -> applyPresetMusic(preset) (file này
+       không sửa 05-environment.js nên không tự hook được).
+       Giới hạn đợt 5: đổi preset chỉ đổi nhạc khi coordinator đã nối
+       wiring (hoặc người dùng bấm nút trong panel); track trong map mà
+       đã bị xoá khỏi playlist thì rơi về track explore.
    Quy tắc DESIGN.md: KHÔNG truy cập document/window/THREE ở top-level;
    mọi khởi tạo trong init(). Logic thuần viết thành hàm edExport* / edAudio*
    để test Node bằng vm.
@@ -96,6 +116,8 @@ ED.Export = (function () {
   var _contextMusic = true;     // toggle nhạc theo ngữ cảnh (mặc định bật)
   var _exploreTrackId = null;   // id track nhạc khám phá (null = chưa chọn)
   var _combatTrackId = null;    // id track nhạc chiến đấu (null = chưa chọn)
+  /* Đợt 5: nhạc theo khu vực {preset: trackId} (project.env.musicByPreset). */
+  var _musicByPreset = {};
   var _exploreTrackIndex = 0;   // index track đang phát lúc vào combat (để quay về)
   var _lastCombatAt = 0;        // ms (Date.now) lần cuối có hoạt động combat
   var _fadeTimer = null;        // id setInterval của lần fade đang chạy
@@ -376,7 +398,8 @@ ED.Export = (function () {
      mặc định: contextMusic true, exploreTrackId/combatTrackId null). */
   function edAudioSettingsParse(text) {
     var d = { volume: 0.5, muted: false, currentIndex: 0, tracks: [],
-      contextMusic: true, exploreTrackId: null, combatTrackId: null };
+      contextMusic: true, exploreTrackId: null, combatTrackId: null,
+      musicByPreset: {} };
     var obj = null;
     try { obj = (typeof text === 'string' && text) ? JSON.parse(text) : null; } catch (e) { obj = null; }
     if (!obj || typeof obj !== 'object') return d;
@@ -404,6 +427,14 @@ ED.Export = (function () {
     d.contextMusic = obj.contextMusic !== false;
     d.exploreTrackId = (typeof obj.exploreTrackId === 'string' && obj.exploreTrackId) ? obj.exploreTrackId : null;
     d.combatTrackId = (typeof obj.combatTrackId === 'string' && obj.combatTrackId) ? obj.combatTrackId : null;
+    /* Đợt 5: map nhạc theo khu vực {preset: trackId} — chỉ nhận chuỗi
+       không rỗng, settings cũ không có thì {}. */
+    if (obj.musicByPreset && typeof obj.musicByPreset === 'object' && !Array.isArray(obj.musicByPreset)) {
+      Object.keys(obj.musicByPreset).forEach(function (k) {
+        var v = obj.musicByPreset[k];
+        if (typeof v === 'string' && v) d.musicByPreset[k] = v;
+      });
+    }
     return d;
   }
   function edAudioSettingsStringify(settings) {
@@ -554,6 +585,48 @@ ED.Export = (function () {
     return out;
   }
 
+  /* ---- Đợt 5 — hàm thuần: nhạc theo khu vực (preset môi trường). ---- */
+  /* 5 preset môi trường (tên khớp 05-environment.js PRESETS — chỉ dùng
+     để vẽ panel dropdown; runtime ưu tiên ED.Environment.getPresets()
+     nếu có). */
+  var ED_AUDIO_ENV_PRESETS = [
+    { id: 'thanh-co', name: 'Thành cổ' },
+    { id: 'rung-truc', name: 'Rừng trúc' },
+    { id: 'nui-tuyet', name: 'Núi tuyết' },
+    { id: 'chua', name: 'Chùa' },
+    { id: 'vo-dai', name: 'Võ đài' }
+  ];
+  /* Track ambient của 1 preset: map[preset] nếu đã gán (chuỗi không
+     rỗng), chưa gán thì fallbackTrackId (track explore mặc định), cả
+     hai đều trống -> null. Thuần — map có thể là project.env.
+     musicByPreset hoặc musicByPreset trong audio settings. */
+  function edAudioTrackForPreset(preset, musicByPreset, fallbackTrackId) {
+    var p = String(preset || '').trim();
+    if (p && musicByPreset && typeof musicByPreset === 'object') {
+      var t = musicByPreset[p];
+      if (typeof t === 'string' && t) return t;
+    }
+    if (typeof fallbackTrackId === 'string' && fallbackTrackId) return fallbackTrackId;
+    return null;
+  }
+  /* Trả map MỚI với preset gán trackId (không sửa map cũ). trackId
+     rỗng/null -> xoá gán của preset đó. preset rỗng -> trả bản sao
+     nguyên vẹn. Thuần. */
+  function edAudioSetPresetTrack(musicByPreset, preset, trackId) {
+    var out = {};
+    if (musicByPreset && typeof musicByPreset === 'object') {
+      Object.keys(musicByPreset).forEach(function (k) {
+        var v = musicByPreset[k];
+        if (typeof v === 'string' && v) out[k] = v;
+      });
+    }
+    var p = String(preset || '').trim();
+    if (!p) return out;
+    if (typeof trackId === 'string' && trackId) out[p] = trackId;
+    else delete out[p];
+    return out;
+  }
+
   function toast(msg) {
     if (ED.UI && typeof ED.UI.toast === 'function') { try { ED.UI.toast(msg); } catch (e) {} }
   }
@@ -636,6 +709,7 @@ ED.Export = (function () {
     _contextMusic = s.contextMusic;
     _exploreTrackId = s.exploreTrackId;
     _combatTrackId = s.combatTrackId;
+    _musicByPreset = s.musicByPreset || {};
     if (_audioEl) {
       try { _audioEl.volume = _volume; _audioEl.muted = _muted; } catch (e) {}
     }
@@ -647,7 +721,8 @@ ED.Export = (function () {
       if (typeof localStorage === 'undefined') return false;
       localStorage.setItem(AUDIO_SETTINGS_KEY, edAudioSettingsStringify({
         volume: _volume, muted: _muted, currentIndex: _trackIndex, tracks: _tracks,
-        contextMusic: _contextMusic, exploreTrackId: _exploreTrackId, combatTrackId: _combatTrackId
+        contextMusic: _contextMusic, exploreTrackId: _exploreTrackId, combatTrackId: _combatTrackId,
+        musicByPreset: _musicByPreset
       }));
       return true;
     } catch (e) { return false; }
@@ -663,6 +738,8 @@ ED.Export = (function () {
     s.contextMusic = _contextMusic;
     s.exploreTrackId = _exploreTrackId;
     s.combatTrackId = _combatTrackId;
+    s.musicByPreset = {};
+    Object.keys(_musicByPreset).forEach(function (k) { s.musicByPreset[k] = _musicByPreset[k]; });
     return s;
   }
 
@@ -1140,6 +1217,7 @@ ED.Export = (function () {
     if (muteBtn) muteBtn.textContent = _muted ? '🔇 Đang tắt tiếng' : '🔊 Bật tiếng';
     _refreshPlaylistUI();
     _refreshMusicModeUI();
+    _refreshPresetMusicUI();
   }
   function _refreshPlaylistUI() {
     if (!_panel || typeof document === 'undefined') return;
@@ -1260,6 +1338,15 @@ ED.Export = (function () {
     return idbDel(key).then(function () {
       _tracks.splice(idx, 1);
       if (_trackIndex >= _tracks.length) _trackIndex = Math.max(0, _tracks.length - 1);
+      /* Đợt 5: track bị xoá thì gỡ luôn các gán nhạc theo khu vực /
+         explore / combat đang trỏ tới nó (không để map treo id chết). */
+      var changed = false;
+      Object.keys(_musicByPreset).forEach(function (p) {
+        if (_musicByPreset[p] === id) { delete _musicByPreset[p]; changed = true; }
+      });
+      if (_exploreTrackId === id) { _exploreTrackId = null; changed = true; }
+      if (_combatTrackId === id) { _combatTrackId = null; changed = true; }
+      if (changed) _saveSettings();
       if (wasCurrent) {
         _audioTrackId = null;
         if (_audioUrl) { try { URL.revokeObjectURL(_audioUrl); } catch (e) {} _audioUrl = null; }
@@ -1690,10 +1777,28 @@ ED.Export = (function () {
     if (_exploreTrackIndex >= 0 && _exploreTrackIndex < _tracks.length) return _exploreTrackIndex;
     return 0;
   }
-  /* Đổi bài theo chế độ nhạc hiện tại (chỉ gọi khi chế độ vừa đổi).
+  /* Đợt 5 — đổi sang track targetIdx với fade 1.5s (dùng chung cho
+     nhạc ngữ cảnh đợt 4 và nhạc theo khu vực đợt 5; đúng 1 chỗ fade
+     để 2 tính năng không lệch nhau).
      Đang phát: fade-out 1.5s -> đổi track -> fade-in về âm lượng hiệu
-     dụng. Đang dừng: chỉ đổi _trackIndex (phát sau sẽ dùng bài đó).
-     1 track hoặc trùng bài hiện tại thì không làm gì. */
+     dụng. Đang dừng/chưa có thẻ audio: chỉ đổi _trackIndex (phát sau
+     sẽ dùng bài đó). targetIdx không hợp lệ hoặc trùng bài hiện tại
+     thì không làm gì, trả false; đổi được thì trả true. */
+  function _switchTrackWithFade(targetIdx) {
+    if (!_tracks.length) return false;
+    if (targetIdx < 0 || targetIdx >= _tracks.length || targetIdx === _trackIndex) return false;
+    if (!_audioEl) { _trackIndex = targetIdx; _saveSettings(); _refreshAudioUI(); return true; }
+    var paused = true;
+    try { paused = !!_audioEl.paused; } catch (e) { paused = true; }
+    if (paused) { _trackIndex = targetIdx; _saveSettings(); _refreshAudioUI(); return true; }
+    _fadeAudioTo(0, function () {
+      playTrack(targetIdx).then(function () {
+        _fadeAudioTo(_effectiveVolume(), null);
+      });
+    });
+    return true;
+  }
+  /* Đổi bài theo chế độ nhạc hiện tại (chỉ gọi khi chế độ vừa đổi). */
   function _applyMusicMode() {
     if (!_tracks.length) return;
     var targetIdx = -1;
@@ -1703,15 +1808,142 @@ ED.Export = (function () {
     } else {
       targetIdx = _exploreTrackIndexForReturn();
     }
-    if (targetIdx < 0 || targetIdx >= _tracks.length || targetIdx === _trackIndex) return;
-    if (!_audioEl) { _trackIndex = targetIdx; _saveSettings(); _refreshAudioUI(); return; }
-    var paused = true;
-    try { paused = !!_audioEl.paused; } catch (e) { paused = true; }
-    if (paused) { _trackIndex = targetIdx; _saveSettings(); _refreshAudioUI(); return; }
-    _fadeAudioTo(0, function () {
-      playTrack(targetIdx).then(function () {
-        _fadeAudioTo(_effectiveVolume(), null);
+    _switchTrackWithFade(targetIdx);
+  }
+
+  /* ---- Đợt 5 — nhạc theo khu vực (preset môi trường). ---- */
+  function _trackIndexById(id) {
+    for (var i = 0; i < _tracks.length; i++) {
+      if (_tracks[i].id === id) return i;
+    }
+    return -1;
+  }
+  function _envPresetList() {
+    try {
+      if (typeof ED !== 'undefined' && ED.Environment &&
+          typeof ED.Environment.getPresets === 'function') {
+        var list = ED.Environment.getPresets();
+        if (Array.isArray(list) && list.length) return list;
+      }
+    } catch (e) {}
+    return ED_AUDIO_ENV_PRESETS.slice();
+  }
+  /* Preset môi trường hiện tại: ED.Environment.getEnv().preset, rồi
+     project.env.preset, cuối cùng mặc định 'thanh-co'. Không throw. */
+  function _currentEnvPreset() {
+    try {
+      if (typeof ED !== 'undefined' && ED.Environment &&
+          typeof ED.Environment.getEnv === 'function') {
+        var env = ED.Environment.getEnv();
+        if (env && typeof env.preset === 'string' && env.preset) return env.preset;
+      }
+    } catch (e) {}
+    try {
+      var p = ED.Core && typeof ED.Core.getProject === 'function' ? ED.Core.getProject() : null;
+      if (p && p.env && typeof p.env.preset === 'string' && p.env.preset) return p.env.preset;
+    } catch (e) {}
+    return 'thanh-co';
+  }
+  function getMusicByPreset() {
+    var out = {};
+    Object.keys(_musicByPreset).forEach(function (k) { out[k] = _musicByPreset[k]; });
+    return out;
+  }
+  /* Gán track cho 1 preset (trackId rỗng/null = gỡ gán, về mặc định).
+     Lưu localStorage + write-through vào project.env.musicByPreset để
+     lưu project thì map đi theo project (project JSON v1 mở rộng field,
+     project cũ không có field vẫn mở được). Trả trackId đã gán hoặc null. */
+  function setMusicForPreset(preset, trackId) {
+    _musicByPreset = edAudioSetPresetTrack(_musicByPreset, preset, trackId);
+    try {
+      var p = ED.Core && typeof ED.Core.getProject === 'function' ? ED.Core.getProject() : null;
+      if (p) {
+        if (!p.env || typeof p.env !== 'object') p.env = {};
+        p.env.musicByPreset = getMusicByPreset();
+      }
+    } catch (e) {}
+    _saveSettings();
+    _refreshPresetMusicUI();
+    var key = String(preset || '').trim();
+    return (key && _musicByPreset[key]) ? _musicByPreset[key] : null;
+  }
+  /* Đọc map nhạc theo khu vực từ project hiện tại vào settings (ghi đè
+     map đang có). Dùng khi mở/load project khác: project nào thì nhạc
+     khu vực theo project đó. Trả map sau khi đồng bộ. */
+  function syncPresetMusicFromProject() {
+    try {
+      var p = ED.Core && typeof ED.Core.getProject === 'function' ? ED.Core.getProject() : null;
+      if (p && p.env && p.env.musicByPreset && typeof p.env.musicByPreset === 'object') {
+        _musicByPreset = edAudioSetPresetTrack({}, '', null);
+        Object.keys(p.env.musicByPreset).forEach(function (k) {
+          _musicByPreset = edAudioSetPresetTrack(_musicByPreset, k, p.env.musicByPreset[k]);
+        });
+        _saveSettings();
+        _refreshPresetMusicUI();
+      }
+    } catch (e) {}
+    return getMusicByPreset();
+  }
+  /* API cho coordinator nối vào ED.Environment.applyPreset (file này
+     không sửa 05-environment.js nên không tự hook được):
+     applyPresetMusic(preset) — đổi nhạc theo map của preset đó, fade
+     1.5s như nhạc combat. musicByPresetOpt (optional): map khác để
+     dùng cho lần gọi này (vd project.env.musicByPreset vừa load).
+     Chưa gán -> track explore mặc định; track trong map đã bị xoá khỏi
+     playlist -> rơi về track explore; không có track nào -> không đổi,
+     trả null. Track của preset thành baseline explore để khi hết combat
+     thì nhạc về đúng track khu vực. Trả trackId đã áp dụng hoặc null. */
+  function applyPresetMusic(preset, musicByPresetOpt) {
+    if (!_tracks.length) return null;
+    var map = (musicByPresetOpt && typeof musicByPresetOpt === 'object') ? musicByPresetOpt : _musicByPreset;
+    var trackId = edAudioTrackForPreset(preset, map, _exploreTrackId);
+    var idx = (trackId != null) ? _trackIndexById(trackId) : -1;
+    if (idx < 0 && _exploreTrackId) idx = _trackIndexById(_exploreTrackId);
+    if (idx < 0) return null;
+    _exploreTrackIndex = idx;
+    if (idx === _trackIndex) {
+      _refreshAudioUI();
+      return _tracks[idx].id;
+    }
+    _switchTrackWithFade(idx);
+    return _tracks[idx].id;
+  }
+  /* Vẽ lại các dropdown chọn track theo preset (panel Export). Gọi sau
+     mỗi lần đổi playlist / settings / map. Không có panel thì thôi. */
+  function _refreshPresetMusicUI() {
+    if (!_panel || typeof document === 'undefined') return;
+    var box = _panel.querySelector('#ed-preset-music');
+    if (!box) return;
+    while (box.firstChild) box.removeChild(box.firstChild);
+    var presets = _envPresetList();
+    presets.forEach(function (pr) {
+      var row = document.createElement('div');
+      row.className = 'ed-row';
+      var label = document.createElement('label');
+      label.textContent = pr.name;
+      var sel = document.createElement('select');
+      sel.id = 'ed-pm-' + pr.id;
+      sel.setAttribute('data-preset', pr.id);
+      var def = document.createElement('option');
+      def.value = '';
+      def.textContent = '(mặc định — nhạc khám phá)';
+      sel.appendChild(def);
+      _tracks.forEach(function (t) {
+        var op = document.createElement('option');
+        op.value = t.id;
+        op.textContent = t.name;
+        if (_musicByPreset[pr.id] === t.id) op.selected = true;
+        sel.appendChild(op);
       });
+      if (!_musicByPreset[pr.id]) def.selected = true;
+      sel.addEventListener('change', function () {
+        var v = sel.value || null;
+        setMusicForPreset(pr.id, v);
+        toast(v ? ('🎵 ' + pr.name + ': đã gán track nhạc riêng.') : ('🎵 ' + pr.name + ': về nhạc khám phá mặc định.'));
+      });
+      label.appendChild(sel);
+      row.appendChild(label);
+      box.appendChild(row);
     });
   }
   /* Ghi nhận 1 hoạt động combat (hero đánh/trúng đòn): cập nhật mốc
@@ -1984,6 +2216,13 @@ ED.Export = (function () {
     setContextMusic: setContextMusic,
     isContextMusic: isContextMusic,
     toggleContextMusic: toggleContextMusic,
+    /* Đợt 5 — nhạc theo khu vực (preset môi trường). */
+    trackForPreset: edAudioTrackForPreset,
+    setPresetTrack: setMusicForPreset,
+    getMusicByPreset: getMusicByPreset,
+    applyPresetMusic: applyPresetMusic,
+    syncPresetMusicFromProject: syncPresetMusicFromProject,
+    currentEnvPreset: _currentEnvPreset,
     kinds: SFX_KINDS.slice(),
     setMuted: setMuted,
     isMuted: isMuted,
@@ -2000,6 +2239,12 @@ ED.Export = (function () {
      (cùng pattern 04-terrain.js / 05-environment.js). ---- */
   function init() {
     _loadSettings();
+    /* Đợt 5: project đang mở đã có env.musicByPreset mà settings chưa
+       có map thì nhận map của project (mở project khác thì nhạc khu vực
+       theo project đó). */
+    try {
+      if (!Object.keys(_musicByPreset).length) syncPresetMusicFromProject();
+    } catch (e) {}
     /* Khôi phục nhạc đã lưu (không tự phát — trình duyệt chặn autoplay). */
     loadAmbient().catch(function () {});
     if (typeof document === 'undefined') return;
@@ -2076,7 +2321,11 @@ ED.Export = (function () {
       '<div class="ed-row"><button id="ed-music-ctx">🎼 Nhạc theo ngữ cảnh: Bật</button></div>' +
       '<div class="ed-row"><label>Nhạc khám phá<select id="ed-music-explore"></select></label></div>' +
       '<div class="ed-row"><label>Nhạc chiến đấu<select id="ed-music-combat"></select></label></div>' +
-      '<div class="ed-hint">Vào combat (có quái gần hoặc vừa đánh/trúng đòn) thì chuyển sang track chiến đấu, hết combat 5 giây thì về track khám phá, chuyển mượt (fade 1.5 giây). Chưa chọn track thì combat dùng bài kế tiếp trong playlist; playlist chỉ 1 bài thì vẫn phát bài đó.</div>';
+      '<div class="ed-hint">Vào combat (có quái gần hoặc vừa đánh/trúng đòn) thì chuyển sang track chiến đấu, hết combat 5 giây thì về track khám phá, chuyển mượt (fade 1.5 giây). Chưa chọn track thì combat dùng bài kế tiếp trong playlist; playlist chỉ 1 bài thì vẫn phát bài đó.</div>' +
+      '<div class="ed-panel-title">🎵 Nhạc theo khu vực</div>' +
+      '<div class="ed-hint">Mỗi preset môi trường gán 1 track ambient riêng (lưu vào project.env.musicByPreset + audio settings). Đổi preset trong tab Môi trường thì nhạc đổi theo, chuyển mượt (fade 1.5 giây). Chưa gán thì dùng track nhạc khám phá. Lưu ý: cần nối ED.Environment.applyPreset → ED.Export.applyPresetMusic(preset) thì đổi preset mới tự đổi nhạc; chưa nối thì bấm nút dưới để phát nhạc khu vực hiện tại.</div>' +
+      '<div id="ed-preset-music"></div>' +
+      '<div class="ed-row"><button id="ed-preset-music-apply">▶️ Phát nhạc khu vực hiện tại</button></div>';
     panel.innerHTML = h;
     if (glbReady) {
       var glbBtn = panel.querySelector('#ed-export-glb');
@@ -2206,6 +2455,23 @@ ED.Export = (function () {
       _saveSettings();
       toast(_combatTrackId ? '🎵 Đã chọn track nhạc chiến đấu.' : '🎵 Nhạc chiến đấu: tự động (bài kế tiếp trong playlist).');
     });
+    /* Đợt 5 — nhạc theo khu vực: phát nhạc của preset môi trường hiện tại. */
+    var pmApply = panel.querySelector('#ed-preset-music-apply');
+    if (pmApply) pmApply.addEventListener('click', function () {
+      var preset = _currentEnvPreset();
+      var applied = applyPresetMusic(preset);
+      if (applied) {
+        var tr = null;
+        for (var i = 0; i < _tracks.length; i++) {
+          if (_tracks[i].id === applied) { tr = _tracks[i]; break; }
+        }
+        playAmbient().then(function (ok) {
+          toast(ok ? ('🎵 Đang phát nhạc khu vực: ' + (tr ? tr.name : applied) + '.') : '🎵 Đã chọn track khu vực — bấm Phát để nghe.');
+        });
+      } else {
+        toast('Chưa có track nhạc cho khu vực này — thêm nhạc vào playlist rồi gán ở trên.');
+      }
+    });
     _refreshAudioUI();
     _refreshMusicModeUI();
     /* Đợt 3 — hook SFX vào sự kiện Play (bọc ED.Play, không sửa 09-play.js).
@@ -2257,6 +2523,11 @@ ED.Export = (function () {
     edAudioPanFor: edAudioPanFor,
     edAudioCombatNext: edAudioCombatNext,
     edAudioFadePlan: edAudioFadePlan,
+    /* Đợt 5 — hàm thuần mới: nhạc theo khu vực. */
+    edAudioTrackForPreset: edAudioTrackForPreset,
+    edAudioSetPresetTrack: edAudioSetPresetTrack,
+    trackForPreset: edAudioTrackForPreset,
+    setPresetTrack: edAudioSetPresetTrack,
     buildZipName: edExportBuildZipName,
     buildZipFileList: edExportBuildZipFileList,
     zipFetchFiles: ZIP_FETCH_FILES.slice(),
@@ -2298,6 +2569,14 @@ ED.Export = (function () {
     setCombatMode: setCombatMode, getMusicMode: getMusicMode,
     setContextMusic: setContextMusic, isContextMusic: isContextMusic,
     toggleContextMusic: toggleContextMusic,
+    /* Đợt 5 — nhạc theo khu vực (preset môi trường). */
+    trackForPreset: edAudioTrackForPreset,
+    setPresetTrack: setMusicForPreset,
+    getMusicByPreset: getMusicByPreset,
+    applyPresetMusic: applyPresetMusic,
+    syncPresetMusicFromProject: syncPresetMusicFromProject,
+    currentEnvPreset: _currentEnvPreset,
+    AUDIO_ENV_PRESETS: ED_AUDIO_ENV_PRESETS.slice(),
     init: init
   };
 })();

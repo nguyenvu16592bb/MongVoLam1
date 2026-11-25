@@ -10,6 +10,13 @@
    (màu fog chỉnh được + fog theo chiều cao camera), mặt nước phản chiếu
    thật (THREE.Reflector r128 — viewport thay mặt phẳng bằng Reflector;
    module này chỉ giữ setting nước trong project.env).
+   Đợt 5 — đèn diện tích gần đúng (THREE.RectAreaLight + lib
+   RectAreaLightUniformsLib r128 vendored, preset "ánh sáng cửa sổ mềm";
+   chỉ tác dụng lên vật liệu Standard/Physical của three.js r128) và
+   lớp sương bay gần đúng (N mặt phẳng trong suốt với texture mây vẽ
+   bằng canvas, trôi theo gió ở tầm thấp — GHI RÕ không phải volumetric
+   fog thật). Cả hai lưu vào project.env.areaLight / project.env.fogLayers
+   (mặc định tắt, project cũ không có field vẫn mở được).
    Lưu tất cả vào project.env; đổi là markDirty + pushHistory GỘP
    (chỉ push khi thả slider/change, không push mỗi tick input).
    Logic thuần (computeSun, preset, sway, shadow/fog/water normalize)
@@ -29,6 +36,12 @@ ED.Environment = (function () {
   var _weather = null; // {type, points, velocities:Float32Array, count}
   var _weatherTick = 0;
   var _fogLastY = null, _fogTick = 0; // throttle cập nhật fog theo chiều cao camera
+  /* Đợt 5 — đèn diện tích + lớp sương bay. */
+  var _areaLight = null; // THREE.RectAreaLight, tạo 1 lần khi bật
+  var _rectAreaLibInit = false; // RectAreaLightUniformsLib.init() chỉ gọi 1 lần
+  var _fogGroup = null; // THREE.Group chứa các mặt phẳng sương bay
+  var _fogTexture = null; // CanvasTexture mây mờ, tạo 1 lần
+  var _fogTime = 0; // thời gian tích luỹ cho lớp sương trôi theo gió
 
   var PRESETS = {
     'thanh-co': { name: 'Thành cổ', timeOfDay: 10, fog: 0.008, weather: 'none', wind: 0.3, skyColor: '#87b5d6',
@@ -187,16 +200,148 @@ ED.Environment = (function () {
       far: +(baseFar * (1 + h * 1.2)).toFixed(1), heightFactor: +h.toFixed(3) };
   }
 
+  /* ---- Đợt 5 — logic thuần: đèn diện tích + lớp sương bay. ---- */
+  /* Preset đèn diện tích duy nhất đợt 5: "ánh sáng cửa sổ mềm" — rect light
+     đặt nghiêng một bên, cao ~7m, chiếu xiên xuống tâm cảnh như nắng qua
+     cửa sổ, màu ấm, cường độ vừa. position/target theo toạ độ world. */
+  var AREA_LIGHT_PRESETS = {
+    window: { name: 'Ánh sáng cửa sổ mềm', color: '#ffd9a0', intensity: 2,
+      width: 4, height: 3, position: [14, 7, 8], target: [0, 1, 0] }
+  };
+  /* Đèn diện tích mặc định: TẮT (project cũ không có field areaLight sẽ
+     nhận mặc định này qua defaultEnv, không đổi cảnh cũ). */
+  function defaultAreaLight() {
+    return { enabled: false, color: '#ffd9a0', intensity: 2, width: 4, height: 3, preset: 'window' };
+  }
+  /* Chuẩn hoá param đèn diện tích (thuần, test được bằng vm):
+     intensity kẹp 0..5, width/height kẹp 1..10, preset lạ -> 'window'. */
+  function edEnvAreaLightNormalize(input) {
+    var d = defaultAreaLight();
+    if (!input || typeof input !== 'object') return d;
+    var out = { enabled: d.enabled, color: d.color, intensity: d.intensity,
+      width: d.width, height: d.height, preset: d.preset };
+    if (input.enabled != null) out.enabled = !!input.enabled;
+    if (input.color) out.color = String(input.color);
+    if (input.intensity != null) {
+      var it = Number(input.intensity);
+      out.intensity = isFinite(it) ? clamp(it, 0, 5) : d.intensity;
+    }
+    if (input.width != null) {
+      var w = Number(input.width);
+      out.width = isFinite(w) ? clamp(w, 1, 10) : d.width;
+    }
+    if (input.height != null) {
+      var h = Number(input.height);
+      out.height = isFinite(h) ? clamp(h, 1, 10) : d.height;
+    }
+    if (input.preset) out.preset = AREA_LIGHT_PRESETS[input.preset] ? input.preset : 'window';
+    return out;
+  }
+  /* Vị trí + hướng đặt đèn theo preset (thuần). Trả bản sao để caller
+     sửa không làm bẩn preset gốc. */
+  function computeAreaLightPose(preset) {
+    var p = AREA_LIGHT_PRESETS[preset] || AREA_LIGHT_PRESETS.window;
+    return { preset: preset && AREA_LIGHT_PRESETS[preset] ? preset : 'window',
+      name: p.name, color: p.color, intensity: p.intensity, width: p.width, height: p.height,
+      position: p.position.slice(), target: p.target.slice() };
+  }
+  /* Lớp sương bay mặc định: TẮT (project cũ không có field fogLayers sẽ
+     nhận mặc định này, không đổi cảnh cũ). */
+  function defaultFogLayers() { return { enabled: false, count: 6, height: 1.2, opacity: 0.35 }; }
+  /* Chuẩn hoá setting lớp sương: count nguyên 0..12, height 0..5, opacity 0..1. Thuần. */
+  function normalizeFogLayers(input) {
+    var d = defaultFogLayers();
+    if (!input || typeof input !== 'object') return d;
+    var out = { enabled: d.enabled, count: d.count, height: d.height, opacity: d.opacity };
+    if (input.enabled != null) out.enabled = !!input.enabled;
+    if (input.count != null) {
+      var c = Number(input.count);
+      out.count = isFinite(c) ? Math.floor(clamp(c, 0, 12)) : d.count;
+    }
+    if (input.height != null) {
+      var h = Number(input.height);
+      out.height = isFinite(h) ? clamp(h, 0, 5) : d.height;
+    }
+    if (input.opacity != null) {
+      var o = Number(input.opacity);
+      out.opacity = isFinite(o) ? clamp(o, 0, 1) : d.opacity;
+    }
+    return out;
+  }
+  /* Hash giả-ngẫu nhiên xác định theo (index, salt): vị trí gốc của mỗi lớp
+     sương cố định theo index, không dùng Math.random (build cấm random,
+     test lặp lại được). Trả [0,1). */
+  function _hash01(i, salt) {
+    var s = Math.sin(i * 127.1 + salt * 311.7) * 43758.5453;
+    return s - Math.floor(s);
+  }
+  /* Cuộn 1 toạ độ vào [-48, 48] (khổ cảnh 96m): lớp sương trôi ra khỏi biên
+     sẽ xuất hiện lại ở biên đối diện, bay mãi không hết. */
+  function _wrap48(v) {
+    var r = (v + 48) % 96;
+    if (r < 0) r += 96;
+    return r - 48;
+  }
+  /* Chuẩn hoá hướng gió thành vector vận tốc trôi [vx, vz] (m/s):
+     mảng [x, z] hoặc {x, z} = vận tốc trực tiếp; số = góc radian (hướng
+     đơn vị, tốc độ 1 m/s); thiếu/không hợp lệ = gió +x 1 m/s. */
+  function _windVec(windDir) {
+    if (Array.isArray(windDir) && windDir.length >= 2) {
+      return [Number(windDir[0]) || 0, Number(windDir[1]) || 0];
+    }
+    if (windDir && typeof windDir === 'object') {
+      return [Number(windDir.x) || 0, Number(windDir.z) || 0];
+    }
+    var a = Number(windDir);
+    if (isFinite(a)) return [Math.cos(a), Math.sin(a)];
+    return [1, 0];
+  }
+  /* Vị trí các lớp sương tại thời điểm t (thuần, test được bằng vm):
+     vị trí gốc xác định theo index + trôi theo vector gió * t (cuộn biên),
+     y = height + 0..0.8 (lệch nhẹ theo lớp để không phẳng đơ). Trả đúng
+     `count` phần tử {x, y, z}; count 0 -> []. */
+  function edEnvFogLayerPositions(count, height, t, windDir) {
+    count = Math.floor(clamp(Number(count) || 0, 0, 12));
+    height = clamp(Number(height) || 0, 0, 5);
+    t = Number(t) || 0;
+    var w = _windVec(windDir);
+    var out = [];
+    for (var i = 0; i < count; i++) {
+      var bx = (_hash01(i, 1) * 2 - 1) * 44;
+      var bz = (_hash01(i, 2) * 2 - 1) * 44;
+      out.push({
+        x: +_wrap48(bx + w[0] * t).toFixed(3),
+        y: +(height + _hash01(i, 3) * 0.8).toFixed(3),
+        z: +_wrap48(bz + w[1] * t).toFixed(3)
+      });
+    }
+    return out;
+  }
+
   /* ---- State + đồng bộ project.env ---- */
   function getEnv() {
     return { timeOfDay: _env.timeOfDay, fog: _env.fog, weather: _env.weather, wind: _env.wind,
       preset: _env.preset, skyColor: _env.skyColor, fogColor: _env.fogColor, fogHeight: _env.fogHeight,
       shadow: { enabled: _env.shadow.enabled, mapSize: _env.shadow.mapSize, bias: _env.shadow.bias },
-      water: { reflect: _env.water.reflect, color: _env.water.color, opacity: _env.water.opacity } };
+      water: { reflect: _env.water.reflect, color: _env.water.color, opacity: _env.water.opacity },
+      areaLight: { enabled: _env.areaLight.enabled, color: _env.areaLight.color,
+        intensity: _env.areaLight.intensity, width: _env.areaLight.width,
+        height: _env.areaLight.height, preset: _env.areaLight.preset },
+      fogLayers: { enabled: _env.fogLayers.enabled, count: _env.fogLayers.count,
+        height: _env.fogLayers.height, opacity: _env.fogLayers.opacity } };
   }
   function getWind() { return _env.wind; }
   function getShadow() { return { enabled: _env.shadow.enabled, mapSize: _env.shadow.mapSize, bias: _env.shadow.bias }; }
   function getWater() { return { reflect: _env.water.reflect, color: _env.water.color, opacity: _env.water.opacity }; }
+  function getAreaLight() {
+    return { enabled: _env.areaLight.enabled, color: _env.areaLight.color,
+      intensity: _env.areaLight.intensity, width: _env.areaLight.width,
+      height: _env.areaLight.height, preset: _env.areaLight.preset };
+  }
+  function getFogLayers() {
+    return { enabled: _env.fogLayers.enabled, count: _env.fogLayers.count,
+      height: _env.fogLayers.height, opacity: _env.fogLayers.opacity };
+  }
   function setEnv(partial, opts) {
     opts = opts || {};
     if (!partial) return getEnv();
@@ -210,6 +355,8 @@ ED.Environment = (function () {
     if (partial.fogHeight != null) _env.fogHeight = clamp(Number(partial.fogHeight) || 0, 0, 1);
     if (partial.shadow) _env.shadow = normalizeShadow(_merge(_env.shadow, partial.shadow));
     if (partial.water) _env.water = normalizeWater(_merge(_env.water, partial.water));
+    if (partial.areaLight) _env.areaLight = edEnvAreaLightNormalize(_merge(_env.areaLight, partial.areaLight));
+    if (partial.fogLayers) _env.fogLayers = normalizeFogLayers(_merge(_env.fogLayers, partial.fogLayers));
     if (opts.commit !== false) { syncToProject(); applyToScene(); }
     if (opts.dirty !== false && ED.Core && typeof ED.Core.markDirty === 'function') ED.Core.markDirty();
     if (opts.history && ED.Core && typeof ED.Core.pushHistory === 'function') ED.Core.pushHistory(opts.history);
@@ -238,7 +385,8 @@ ED.Environment = (function () {
   }
   function defaultEnv() {
     return { timeOfDay: 10, fog: 0.01, weather: 'none', wind: 0.5, preset: 'thanh-co', skyColor: '#87b5d6',
-      fogColor: '', fogHeight: 0.5, shadow: defaultShadow(), water: defaultWater() };
+      fogColor: '', fogHeight: 0.5, shadow: defaultShadow(), water: defaultWater(),
+      areaLight: defaultAreaLight(), fogLayers: defaultFogLayers() };
   }
 
   /* ---- Áp dụng env lên scene thật (cần THREE + viewport). ----
@@ -295,7 +443,121 @@ ED.Environment = (function () {
     }
     _fogLastY = camY;
     applyShadows();
+    applyAreaLight();
+    applyFogLayers();
     setWeather(_env.weather);
+    return true;
+  }
+  /* ---- Đợt 5 — đèn diện tích + lớp sương bay (áp lên scene thật). ---- */
+  /* Lib RectAreaLight đã nối vào build chưa? Chưa nối thì panel khoá nút
+     bật (không vẽ nút giả chạy không thật); đèn vẫn tạo được bằng
+     THREE.RectAreaLight nhưng thiếu LTC texture nên không sáng. */
+  function hasRectAreaLib() {
+    return (typeof THREE !== 'undefined' && !!THREE.RectAreaLight &&
+      !!THREE.RectAreaLightUniformsLib);
+  }
+  /* Gọi RectAreaLightUniformsLib.init() 1 lần (dự phòng khi Viewport.init
+     chưa gọi — boot chạy Viewport trước Environment nên thường Viewport
+     đã init rồi; gọi lại lần 2 chỉ thay texture LTC, không crash). */
+  function ensureRectAreaLib() {
+    if (_rectAreaLibInit) return true;
+    if (typeof THREE === 'undefined' || !THREE.RectAreaLightUniformsLib ||
+        typeof THREE.RectAreaLightUniformsLib.init !== 'function') return false;
+    try {
+      THREE.RectAreaLightUniformsLib.init();
+      _rectAreaLibInit = true;
+      return true;
+    } catch (e) { return false; }
+  }
+  /* Tạo 1 lần + cập nhật đèn diện tích theo _env.areaLight (preset window:
+     đặt nghiêng như nắng qua cửa sổ, lookAt về tâm cảnh). Tắt = ẩn đèn
+     (giữ object để bật lại không tạo mới). Trả false khi chưa có scene
+     hoặc THREE.RectAreaLight không có trong bản build. */
+  function applyAreaLight() {
+    if (typeof THREE === 'undefined') return false;
+    var scene = _scene || findScene();
+    if (!scene) return false;
+    var a = _env.areaLight;
+    if (!_areaLight) {
+      if (!a.enabled || !THREE.RectAreaLight) return false;
+      ensureRectAreaLib();
+      _areaLight = new THREE.RectAreaLight(0xffffff, 1, 1, 1);
+      scene.add(_areaLight);
+    }
+    var pose = computeAreaLightPose(a.preset);
+    _areaLight.visible = !!a.enabled;
+    _areaLight.color.set(a.color);
+    _areaLight.intensity = a.intensity;
+    _areaLight.width = a.width;
+    _areaLight.height = a.height;
+    _areaLight.position.set(pose.position[0], pose.position[1], pose.position[2]);
+    _areaLight.lookAt(pose.target[0], pose.target[1], pose.target[2]);
+    return true;
+  }
+  /* Vận tốc trôi của lớp sương theo gió của env (m/s): hướng +x chủ đạo,
+     tốc độ tăng theo env.wind (0.5..3 m/s), lệch nhẹ +z cho đỡ thẳng đơ. */
+  function _fogWindVec() {
+    var speed = 0.5 + _env.wind * 2.5;
+    return [speed, speed * 0.15];
+  }
+  /* Texture mây mờ vẽ bằng canvas (vài đốm radial-gradient trắng, viền
+     mờ dần về 0): dùng chung cho mọi lớp sương, tạo 1 lần. Trả null khi
+     không có document/THREE (test vm) — khi đó applyFogLayers bỏ qua. */
+  function buildFogTexture() {
+    if (typeof document === 'undefined' || typeof THREE === 'undefined') return null;
+    var cv = document.createElement('canvas');
+    cv.width = 256; cv.height = 128;
+    var ctx = cv.getContext('2d');
+    if (!ctx) return null;
+    var blobs = [[64, 64, 58], [128, 56, 66], [192, 68, 54], [96, 84, 44], [160, 88, 46], [128, 40, 40]];
+    for (var i = 0; i < blobs.length; i++) {
+      var b = blobs[i];
+      var g = ctx.createRadialGradient(b[0], b[1], 0, b[0], b[1], b[2]);
+      g.addColorStop(0, 'rgba(255,255,255,0.55)');
+      g.addColorStop(0.6, 'rgba(255,255,255,0.22)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 256, 128);
+    }
+    return new THREE.CanvasTexture(cv);
+  }
+  /* Dựng lại nhóm lớp sương theo _env.fogLayers: N mặt phẳng nằm ngang
+     (rotation.x = -PI/2), texture mây, opacity thấp, depthWrite tắt để
+     các lớp chồng nhau không xén nhau. Tắt hoặc count 0 = gỡ nhóm. */
+  function applyFogLayers() {
+    if (typeof THREE === 'undefined') return false;
+    var scene = _scene || findScene();
+    if (!scene) return false;
+    var f = _env.fogLayers;
+    if (_fogGroup) {
+      scene.remove(_fogGroup);
+      _fogGroup.traverse(function (c) {
+        if (c && c.isMesh) {
+          if (c.geometry) c.geometry.dispose();
+          if (c.material) c.material.dispose();
+        }
+      });
+      _fogGroup = null;
+    }
+    if (!f.enabled || f.count <= 0) return true;
+    if (!_fogTexture) _fogTexture = buildFogTexture();
+    if (!_fogTexture) return false;
+    _fogGroup = new THREE.Group();
+    _fogGroup.name = 'ed-fog-layers';
+    var pos = edEnvFogLayerPositions(f.count, f.height, _fogTime, _fogWindVec());
+    for (var i = 0; i < pos.length; i++) {
+      var w = 18 + _hash01(i, 4) * 14, d = 10 + _hash01(i, 5) * 8;
+      var geo = new THREE.PlaneGeometry(w, d);
+      var mat = new THREE.MeshBasicMaterial({ map: _fogTexture, transparent: true,
+        opacity: f.opacity, depthWrite: false, side: THREE.DoubleSide, fog: false });
+      var m = new THREE.Mesh(geo, mat);
+      m.rotation.x = -Math.PI / 2;
+      m.rotation.z = _hash01(i, 6) * Math.PI;
+      m.position.set(pos[i].x, pos[i].y, pos[i].z);
+      m.renderOrder = 5;
+      _fogGroup.add(m);
+    }
+    scene.add(_fogGroup);
     return true;
   }
   /* Bật/tắt flag cast/receive cho 1 group theo type của object.
@@ -458,6 +720,15 @@ ED.Environment = (function () {
     /* Fog theo chiều cao camera: kiểm tra định kỳ, không tính mỗi frame. */
     _fogTick += Math.min(Number(dt) || 0, 0.1);
     if (_fogTick >= 0.3) { _fogTick = 0; try { updateHeightFog(); } catch (e) {} }
+    /* Đợt 5 — lớp sương bay trôi theo gió: chỉ đổi vị trí các plane theo
+       hàm thuần edEnvFogLayerPositions, không dựng lại mesh mỗi frame. */
+    _fogTime += Math.min(Number(dt) || 0, 0.1);
+    if (_fogGroup && _env.fogLayers.enabled) {
+      var fp = edEnvFogLayerPositions(_env.fogLayers.count, _env.fogLayers.height, _fogTime, _fogWindVec());
+      for (var i = 0; i < _fogGroup.children.length && i < fp.length; i++) {
+        _fogGroup.children[i].position.set(fp[i].x, fp[i].y, fp[i].z);
+      }
+    }
     if (!_weather || !_weather.points) return;
     dt = Math.min(Number(dt) || 0, 0.1);
     var attr = _weather.points.geometry.attributes.position;
@@ -491,7 +762,16 @@ ED.Environment = (function () {
     _env.fogHeight = (p.fogHeight != null) ? p.fogHeight : 0.5;
     _env.shadow = defaultShadow();
     _env.water = defaultWater();
+    _env.areaLight = defaultAreaLight();
+    _env.fogLayers = defaultFogLayers();
     syncToProject(); applyToScene();
+    /* Đợt 5 — đổi preset thì đổi nhạc theo khu vực (guard typeof; nút
+       "Phát nhạc khu vực hiện tại" trong panel Export vẫn dùng được tay). */
+    try {
+      if (typeof ED !== 'undefined' && ED.Export && typeof ED.Export.applyPresetMusic === 'function') {
+        ED.Export.applyPresetMusic(name);
+      }
+    } catch (e) {}
     if (ED.Viewport && typeof ED.Viewport.refreshWater === 'function') {
       try { ED.Viewport.refreshWater(); } catch (e) {}
     }
@@ -532,6 +812,7 @@ ED.Environment = (function () {
       return '<option value="' + p.id + '"' + (p.id === _env.preset ? ' selected' : '') + '>' + p.name + '</option>';
     }).join('');
     var hasReflector = (typeof THREE !== 'undefined' && !!THREE.Reflector);
+    var hasRectArea = hasRectAreaLib(); // đợt 5: lib RectAreaLightUniformsLib đã nối chưa
     var fogColorShown = resolveFogColor(_env.fogColor, _env.skyColor);
     var shadowSizeOpts = [512, 1024, 2048].map(function (s) {
       return '<option value="' + s + '"' + (s === _env.shadow.mapSize ? ' selected' : '') + '>' + s + ' px</option>';
@@ -572,6 +853,31 @@ ED.Environment = (function () {
       (hasReflector
         ? '<div class="ed-hint">Phản chiếu dùng THREE.Reflector (render lại cảnh 1 lần mỗi mặt nước). Điện thoại yếu thì tắt nếu thấy giật.</div>'
         : '<div class="ed-hint">Chưa có Reflector trong bản build này nên mặt nước đang là mặt phẳng thường — bật phản chiếu sẽ có hiệu lực sau khi build nối lib/Reflector.js.</div>') +
+      '<div class="ed-panel-title">💡 Đèn diện tích (Rect Area)</div>' +
+      '<div class="ed-row"><label>Preset</label><span>Ánh sáng cửa sổ mềm — đèn nghiêng như nắng qua cửa sổ, màu ấm</span></div>' +
+      '<div class="ed-row"><label>Bật đèn diện tích</label>' +
+      '<input id="ed-env-area-on" type="checkbox"' + (_env.areaLight.enabled ? ' checked' : '') + (hasRectArea ? '' : ' disabled') + ' style="min-height:40px;min-width:40px"></div>' +
+      '<div class="ed-row"><label>Màu đèn</label>' +
+      '<input id="ed-env-area-color" type="color" value="' + _env.areaLight.color + '"' + (hasRectArea ? '' : ' disabled') + ' style="min-height:40px;min-width:44px"></div>' +
+      '<div class="ed-row"><label>Cường độ <span id="ed-env-area-intensity-v">' + _env.areaLight.intensity.toFixed(1) + '</span></label>' +
+      '<input id="ed-env-area-intensity" type="range" min="0" max="5" step="0.1" value="' + _env.areaLight.intensity + '"' + (hasRectArea ? '' : ' disabled') + ' style="min-height:40px"></div>' +
+      '<div class="ed-row"><label>Rộng <span id="ed-env-area-w-v">' + _env.areaLight.width.toFixed(1) + 'm</span></label>' +
+      '<input id="ed-env-area-w" type="range" min="1" max="10" step="0.5" value="' + _env.areaLight.width + '"' + (hasRectArea ? '' : ' disabled') + ' style="min-height:40px"></div>' +
+      '<div class="ed-row"><label>Cao <span id="ed-env-area-h-v">' + _env.areaLight.height.toFixed(1) + 'm</span></label>' +
+      '<input id="ed-env-area-h" type="range" min="1" max="10" step="0.5" value="' + _env.areaLight.height + '"' + (hasRectArea ? '' : ' disabled') + ' style="min-height:40px"></div>' +
+      (hasRectArea
+        ? '<div class="ed-hint">RectAreaLight r128 chỉ tác dụng lên vật liệu Standard/Physical — mesh Lambert trong editor sẽ không thấy đổi. Đèn đặt nghiêng một bên, chiếu xiên xuống tâm cảnh.</div>'
+        : '<div class="ed-hint">Chưa có RectAreaLightUniformsLib trong bản build này — cần nối lib/RectAreaLightUniformsLib.js vào build (coordinator) thì đèn mới sáng. Các nút trên đang khoá, không phải nút giả.</div>') +
+      '<div class="ed-panel-title">🌫 Lớp sương bay (gần đúng)</div>' +
+      '<div class="ed-hint">⚠️ Đây là sương mù GẦN ĐÚNG bằng các mặt phẳng trong suốt trôi theo gió ở tầm thấp — KHÔNG phải volumetric fog thật (không có tán xạ ánh sáng trong thể tích).</div>' +
+      '<div class="ed-row"><label>Bật lớp sương bay</label>' +
+      '<input id="ed-env-foglayers-on" type="checkbox"' + (_env.fogLayers.enabled ? ' checked' : '') + ' style="min-height:40px;min-width:40px"></div>' +
+      '<div class="ed-row"><label>Mật độ <span id="ed-env-foglayers-count-v">' + _env.fogLayers.count + ' lớp</span></label>' +
+      '<input id="ed-env-foglayers-count" type="range" min="0" max="12" step="1" value="' + _env.fogLayers.count + '" style="min-height:40px"></div>' +
+      '<div class="ed-row"><label>Độ cao <span id="ed-env-foglayers-height-v">' + _env.fogLayers.height.toFixed(1) + 'm</span></label>' +
+      '<input id="ed-env-foglayers-height" type="range" min="0" max="5" step="0.1" value="' + _env.fogLayers.height + '" style="min-height:40px"></div>' +
+      '<div class="ed-row"><label>Độ mờ <span id="ed-env-foglayers-opacity-v">' + _env.fogLayers.opacity.toFixed(2) + '</span></label>' +
+      '<input id="ed-env-foglayers-opacity" type="range" min="0.05" max="0.8" step="0.05" value="' + _env.fogLayers.opacity + '" style="min-height:40px"></div>' +
       '<div class="ed-hint">Kéo giờ để xem ngày/đêm; đèn lồng sáng dần khi trời tối. Sương mù loãng dần khi camera lên cao (theo thanh "Sương theo cao").</div>';
     var preset = panel.querySelector('#ed-env-preset');
     preset.addEventListener('change', function () { applyPreset(preset.value); });
@@ -658,6 +964,42 @@ ED.Environment = (function () {
     waterColor.addEventListener('change', function () {
       if (ED.Core && typeof ED.Core.pushHistory === 'function') ED.Core.pushHistory('Môi trường: màu nước');
     });
+    /* ---- Đợt 5: đèn diện tích / lớp sương bay ----
+       Slider lồng (areaLight.*, fogLayers.*) dùng bindNestedSlider như
+       đợt 3; checkbox dùng change + pushHistory 1 lần. Khi lib RectArea
+       chưa nối, các input đèn đã disabled ở HTML nên querySelector vẫn
+       có phần tử nhưng không tương tác được — vẫn bind cho đủ, không lỗi. */
+    var areaOn = panel.querySelector('#ed-env-area-on');
+    if (areaOn) areaOn.addEventListener('change', function () {
+      setEnv({ areaLight: { enabled: areaOn.checked } },
+        { history: 'Môi trường: đèn diện tích ' + (areaOn.checked ? 'bật' : 'tắt') });
+    });
+    var areaColor = panel.querySelector('#ed-env-area-color');
+    if (areaColor) {
+      areaColor.addEventListener('input', function () {
+        setEnv({ areaLight: { color: areaColor.value } }, { history: null });
+      });
+      areaColor.addEventListener('change', function () {
+        if (ED.Core && typeof ED.Core.pushHistory === 'function') ED.Core.pushHistory('Môi trường: màu đèn diện tích');
+      });
+    }
+    bindNestedSlider('#ed-env-area-intensity', '#ed-env-area-intensity-v', function (v) { return v.toFixed(1); },
+      function (v) { setEnv({ areaLight: { intensity: v } }, { history: null }); }, 'Môi trường: cường độ đèn diện tích');
+    bindNestedSlider('#ed-env-area-w', '#ed-env-area-w-v', function (v) { return v.toFixed(1) + 'm'; },
+      function (v) { setEnv({ areaLight: { width: v } }, { history: null }); }, 'Môi trường: rộng đèn diện tích');
+    bindNestedSlider('#ed-env-area-h', '#ed-env-area-h-v', function (v) { return v.toFixed(1) + 'm'; },
+      function (v) { setEnv({ areaLight: { height: v } }, { history: null }); }, 'Môi trường: cao đèn diện tích');
+    var fogLayersOn = panel.querySelector('#ed-env-foglayers-on');
+    if (fogLayersOn) fogLayersOn.addEventListener('change', function () {
+      setEnv({ fogLayers: { enabled: fogLayersOn.checked } },
+        { history: 'Môi trường: lớp sương bay ' + (fogLayersOn.checked ? 'bật' : 'tắt') });
+    });
+    bindNestedSlider('#ed-env-foglayers-count', '#ed-env-foglayers-count-v', function (v) { return v + ' lớp'; },
+      function (v) { setEnv({ fogLayers: { count: v } }, { history: null }); }, 'Môi trường: mật độ sương bay');
+    bindNestedSlider('#ed-env-foglayers-height', '#ed-env-foglayers-height-v', function (v) { return v.toFixed(1) + 'm'; },
+      function (v) { setEnv({ fogLayers: { height: v } }, { history: null }); }, 'Môi trường: độ cao sương bay');
+    bindNestedSlider('#ed-env-foglayers-opacity', '#ed-env-foglayers-opacity-v', function (v) { return v.toFixed(2); },
+      function (v) { setEnv({ fogLayers: { opacity: v } }, { history: null }); }, 'Môi trường: độ mờ sương bay');
   }
 
   return {
@@ -673,7 +1015,16 @@ ED.Environment = (function () {
     computeShadowSettings: computeShadowSettings, computeShadowFlags: computeShadowFlags,
     getShadow: getShadow, applyShadowFlags: applyShadowFlags, applyShadows: applyShadows,
     defaultWater: defaultWater, normalizeWater: normalizeWater, getWater: getWater,
-    resolveFogColor: resolveFogColor, computeFog: computeFog, updateHeightFog: updateHeightFog
+    resolveFogColor: resolveFogColor, computeFog: computeFog, updateHeightFog: updateHeightFog,
+    /* Đợt 5 — đèn diện tích + lớp sương bay (hàm thuần test được bằng vm). */
+    AREA_LIGHT_PRESETS: AREA_LIGHT_PRESETS,
+    defaultAreaLight: defaultAreaLight, edEnvAreaLightNormalize: edEnvAreaLightNormalize,
+    normalizeAreaLight: edEnvAreaLightNormalize, computeAreaLightPose: computeAreaLightPose,
+    getAreaLight: getAreaLight, hasRectAreaLib: hasRectAreaLib,
+    ensureRectAreaLib: ensureRectAreaLib, applyAreaLight: applyAreaLight,
+    defaultFogLayers: defaultFogLayers, normalizeFogLayers: normalizeFogLayers,
+    edEnvFogLayerPositions: edEnvFogLayerPositions, getFogLayers: getFogLayers,
+    applyFogLayers: applyFogLayers, buildFogTexture: buildFogTexture
   };
 })();
 

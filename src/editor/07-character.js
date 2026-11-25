@@ -50,6 +50,25 @@
    GIỚI HẠN ĐỢT 4: retarget chỉ map theo tên (không khớp tư thế, không
    khác hệ xương); clip retarget phát bằng mixer thường nên constraint
    đợt 3 không chặn; số liệu bone weight lấy từ mesh đầu tiên có xương đó.
+   ĐỢT 5 (morph targets, chỉ sửa file này):
+   (a) Import .glb qua THREE.GLTFLoader (đã inline): validate .glb
+       1..20MB, parse -> chuẩn hoá cao 1.8 như FBX, lưu bytes vào IDB
+       editor key 'char-<id>' (chung với FBX), upsert characters[].
+   (b) Morph targets: duyệt preview group tìm mesh có
+       morphTargetDictionary + morphTargetInfluences; panel Character
+       hiện 1 slider 0..1 cho từng morph target (tên từ dictionary),
+       kéo là đổi trực tiếp morphTargetInfluences để xem trước ngay.
+       Model không có morph thì panel báo rõ "Model này không có morph
+       target", không hiện slider giả. Giá trị morph hiện tại lưu vào
+       character.extra.morphValues {tên: giá trị} (project cũ không có
+       extra -> tự tạo, vẫn mở được); mở lại project / loadStoredModel
+       khôi phục qua edCharMorphNormalize.
+       LƯU Ý GHI RÕ TRONG UI: clip tự tạo vẫn chỉ ghi pos/rot/scale,
+       KHÔNG ghi morph vào clip.
+   GIỚI HẠN ĐỢT 5: morph chỉ áp cho model đang preview (không áp lên
+   object trong scene chính); tên morph trùng nhau giữa nhiều mesh thì
+   1 slider điều khiển tất cả mesh có tên đó, giá trị lưu theo tên;
+   chưa test trên trình duyệt/điện thoại thật.
    QUY TẮC DESIGN.md: KHÔNG truy cập document/window/THREE ở top-level;
    mọi khởi tạo DOM/THREE trong init(). Logic thuần expose để nhóm D test
    bằng vm + stub THREE. Không sửa file nhóm khác. */
@@ -159,7 +178,8 @@ function edCharNewCharacter(id, name) {
   return {
     id: id, name: name || 'Nhân vật mới', level: 1, faction: 'Thiếu Lâm',
     hp: 100, atk: 10, def: 5, speed: 5, fbxKey: null, color: '#334155',
-    boneConstraints: {} /* đợt 3: { boneName: {min:[x,y,z], max:[x,y,z]} (độ, delta so với tư thế gốc) } */
+    boneConstraints: {}, /* đợt 3: { boneName: {min:[x,y,z], max:[x,y,z]} (độ, delta so với tư thế gốc) } */
+    extra: { morphValues: {} } /* đợt 5: { morphName: 0..1 } — khôi phục morph khi mở lại project */
   };
 }
 
@@ -563,6 +583,110 @@ function edCharRetargetClip(clip, sourceBoneNames, targetBoneNames) {
   return { clip: { name: name, duration: duration, tracks: out }, missing: missing, mapped: mapped };
 }
 
+/* ---------------- Morph targets — đợt 5 (logic thuần) ----------------
+   GLTFLoader trả mesh.morphTargetDictionary {tên: index} +
+   mesh.morphTargetInfluences [v0..]. Model FBX có morph cũng cùng dạng
+   nên các hàm dưới dùng chung cho cả .glb lẫn .fbx.
+   - edCharCollectMorphTargets(group): duyệt group (thật hoặc giả, chỉ
+     cần traverse + isMesh), trả [{meshName, name, index, value}] theo
+     thứ tự mesh duyệt được, mỗi mesh theo thứ tự key của dictionary.
+     Mesh không có morph (không có dictionary/influences, index ngoài
+     mảng) thì bỏ qua.
+   - edCharMorphTargetNames(group): tên morph duy nhất theo thứ tự xuất
+     hiện đầu tiên (để vẽ 1 slider cho mỗi tên).
+   - edCharMorphNormalize(values, dictionary): chỉ giữ tên có trong
+     dictionary, kẹp 0..1 (không phải số -> 0). dictionary là object
+     {tên: index} hoặc mảng tên hoặc mảng [{name}] (kết quả collect).
+   - edCharApplyMorphValuesToMesh(mesh, values): ghi values vào
+     mesh.morphTargetInfluences theo dictionary (tự kẹp 0..1), trả số
+     morph đã ghi (0 nếu mesh không có morph). */
+
+/* Validate file .glb: đuôi .glb, 1..20MB (cùng giới hạn với .fbx). */
+function edCharValidateGlbFile(file) {
+  if (!file || typeof file !== 'object' || typeof file.name !== 'string' || !file.name) {
+    return { ok: false, reason: 'Chưa chọn file nào.' };
+  }
+  if (!/\.glb$/i.test(file.name)) {
+    return { ok: false, reason: 'File "' + file.name + '" không phải định dạng .glb.' };
+  }
+  var size = Number(file.size);
+  if (!size || size < 1) {
+    return { ok: false, reason: 'File .glb rỗng, không đọc được.' };
+  }
+  if (size > 20 * 1024 * 1024) {
+    return { ok: false, reason: 'File .glb quá lớn (' + (size / 1048576).toFixed(1) + ' MB, tối đa 20 MB).' };
+  }
+  return { ok: true };
+}
+
+function edCharCollectMorphTargets(group) {
+  var out = [];
+  if (!group || typeof group.traverse !== 'function') return out;
+  group.traverse(function (obj) {
+    if (!obj || !obj.isMesh) return;
+    var dict = obj.morphTargetDictionary;
+    var infl = obj.morphTargetInfluences;
+    if (!dict || typeof dict !== 'object' || !infl) return;
+    var names = Object.keys(dict);
+    for (var i = 0; i < names.length; i++) {
+      var idx = Number(dict[names[i]]);
+      if (!isFinite(idx) || idx < 0 || idx >= infl.length) continue;
+      var v = Number(infl[idx]);
+      out.push({ meshName: obj.name || 'mesh', name: names[i], index: idx, value: isFinite(v) ? _edClamp(v, 0, 1) : 0 });
+    }
+  });
+  return out;
+}
+
+function edCharMorphTargetNames(group) {
+  var names = [], seen = {};
+  edCharCollectMorphTargets(group).forEach(function (t) {
+    if (!seen[t.name]) { seen[t.name] = true; names.push(t.name); }
+  });
+  return names;
+}
+
+function _edMorphNameSet(dictionary) {
+  var set = {};
+  if (!dictionary) return set;
+  if (Array.isArray(dictionary)) {
+    dictionary.forEach(function (d) {
+      if (typeof d === 'string') set[d] = true;
+      else if (d && typeof d.name === 'string') set[d.name] = true;
+    });
+  } else if (typeof dictionary === 'object') {
+    Object.keys(dictionary).forEach(function (k) { set[k] = true; });
+  }
+  return set;
+}
+
+function edCharMorphNormalize(values, dictionary) {
+  var out = {};
+  if (!values || typeof values !== 'object') return out;
+  var allowed = _edMorphNameSet(dictionary);
+  Object.keys(values).forEach(function (name) {
+    if (!allowed[name]) return; /* lọc tên lạ (không có trong dictionary) */
+    var v = Number(values[name]);
+    out[name] = isFinite(v) ? _edClamp(v, 0, 1) : 0;
+  });
+  return out;
+}
+
+function edCharApplyMorphValuesToMesh(mesh, values) {
+  if (!mesh || !mesh.morphTargetDictionary || !mesh.morphTargetInfluences || !values) return 0;
+  var dict = mesh.morphTargetDictionary;
+  var infl = mesh.morphTargetInfluences;
+  var n = 0;
+  Object.keys(values).forEach(function (name) {
+    var idx = Number(dict[name]);
+    if (!isFinite(idx) || idx < 0 || idx >= infl.length) return;
+    var v = Number(values[name]);
+    infl[idx] = isFinite(v) ? _edClamp(v, 0, 1) : 0;
+    n++;
+  });
+  return n;
+}
+
 /* ---------------- IndexedDB riêng của editor ----------------
    DB 'mongvolam_editor_v1', store 'assets' (keyPath 'key'):
    {key, name, size, data:ArrayBuffer}. Mở trong hàm (không top-level). */
@@ -663,6 +787,12 @@ ED.Character = {
   computeBoneWeightStats: edCharComputeBoneWeightStats,
   trackBoneName: edCharTrackBoneName,
   retargetClip: edCharRetargetClip,
+  /* Đợt 5 — morph targets (hàm thuần, test được bằng vm). */
+  validateGlbFile: edCharValidateGlbFile,
+  collectMorphTargets: edCharCollectMorphTargets,
+  morphTargetNames: edCharMorphTargetNames,
+  morphNormalize: edCharMorphNormalize,
+  applyMorphValuesToMesh: edCharApplyMorphValuesToMesh,
   defaultBoneConstraint: edCharDefaultBoneConstraint,
   normalizeBoneConstraint: edCharNormalizeBoneConstraint,
   clampRotationDeg: edCharClampRotationDeg,
@@ -758,6 +888,95 @@ ED.Character = {
     group.position.z += t.offsetZ;
     group.updateMatrixWorld(true);
     return { group: group, animations: group.animations || [] };
+  },
+
+  /* Parse ArrayBuffer .glb bằng GLTFLoader r128 rồi chuẩn hoá cao 1.8,
+     đáy y=0, căn giữa x/z — cùng chuẩn với FBX (edCharNormalizeTransform)
+     và pattern parse GLB của 03-assets.js (GLTFLoader.parse callback).
+     Trả Promise<{group, animations}> — GLTFLoader.parse là async. */
+  parseGlbArrayBuffer: function (ab) {
+    var buf = null;
+    if (ab && typeof ab === 'object') {
+      if (typeof ab.byteLength === 'number' && typeof ab.slice === 'function' && !ab.buffer) buf = ab;
+      else if (ab.buffer && typeof ab.byteLength === 'number' && typeof ab.byteOffset === 'number' && typeof ab.buffer.slice === 'function') {
+        buf = ab.buffer.slice(ab.byteOffset, ab.byteOffset + ab.byteLength);
+      }
+    }
+    if (!buf) return Promise.reject(new Error('Dữ liệu file .glb không hợp lệ.'));
+    if (typeof THREE === 'undefined' || !THREE.GLTFLoader) {
+      return Promise.reject(new Error('Chưa tải được bộ đọc .glb, thử tải lại trang.'));
+    }
+    return new Promise(function (resolve, reject) {
+      try {
+        new THREE.GLTFLoader().parse(buf, '', function (gltf) {
+          try {
+            var group = gltf.scene;
+            if (!group) { reject(new Error('File .glb không có scene nào để hiển thị.')); return; }
+            var box = new THREE.Box3().setFromObject(group);
+            var size = new THREE.Vector3();
+            box.getSize(size);
+            if (!isFinite(size.y) || size.y <= 0) { reject(new Error('File .glb không có hình dạng nào để hiển thị.')); return; }
+            var t = edCharNormalizeTransform({ minX: box.min.x, maxX: box.max.x, minY: box.min.y, maxY: box.max.y, minZ: box.min.z, maxZ: box.max.z });
+            if (!t) { reject(new Error('File .glb không có hình dạng nào để hiển thị.')); return; }
+            group.scale.setScalar(t.scale);
+            group.position.x += t.offsetX;
+            group.position.y += t.offsetY;
+            group.position.z += t.offsetZ;
+            group.updateMatrixWorld(true);
+            resolve({ group: group, animations: gltf.animations || [] });
+          } catch (e) { reject(new Error('Không chuẩn hoá được model .glb: ' + (e && e.message ? e.message : ''))); }
+        }, function (e) { reject(new Error('Không đọc được file .glb này (' + (e && e.message ? e.message : 'định dạng không hỗ trợ') + ').')); });
+      } catch (e) { reject(new Error('Không đọc được file .glb này (' + (e && e.message ? e.message : '') + ').')); }
+    });
+  },
+
+  /* Import .glb (đợt 5): validate -> đọc + parse TRƯỚC (lỗi thì dừng,
+     không lưu gì) -> lưu bytes vào IDB editor key 'char-<id>' (chung kho
+     với FBX) -> upsert project.characters[] -> hiện preview + panel
+     morph. opts.charId: thay model của nhân vật có sẵn.
+     Trả Promise<{id, clips, bones, hasBones, morphNames}>. */
+  importGlb: function (file, opts) {
+    var self = this;
+    opts = opts || {};
+    var v = edCharValidateGlbFile(file);
+    if (!v.ok) return Promise.reject(new Error(v.reason));
+    if (this._busy) return Promise.reject(new Error('Đang đọc file .glb, đợi một lát nhé!'));
+    this._busy = true;
+    this._setLoading(true, file.name);
+    var project = this.project();
+    var id = (opts.charId && typeof opts.charId === 'string') ? opts.charId : edCharNextId(project);
+    var key = 'char-' + id;
+    return this._readBuffer(file).then(function (buf) {
+      return self.parseGlbArrayBuffer(buf).then(function (parsed) {
+        return edCharIdbPut(key, file.name, file.size, buf).then(function () { return parsed; });
+      });
+    }).then(function (parsed) {
+      var clips = edCharCollectClips(parsed.animations);
+      var bones = edCharCollectBones(parsed.group);
+      var morphNames = edCharMorphTargetNames(parsed.group);
+      var chars = project.characters;
+      var ch = null;
+      for (var i = 0; i < chars.length; i++) if (chars[i] && chars[i].id === id) { ch = chars[i]; break; }
+      if (!ch) {
+        ch = edCharNewCharacter(id, file.name.replace(/\.glb$/i, ''));
+        chars.push(ch);
+      }
+      ch.fbxKey = key;
+      ch.name = ch.name || file.name.replace(/\.glb$/i, '');
+      self._selectedId = id;
+      self._busy = false;
+      self._setLoading(false);
+      self._bankRetargetClips(id, file.name, parsed.animations);
+      self.showPreview(parsed.group, clips, bones);
+      self.commit('Import GLB ' + file.name);
+      self.refreshList();
+      self.toast('Đã nhập "' + file.name + '" — ' + clips.length + ' clip, ' + bones.length + ' xương, ' + morphNames.length + ' morph target.');
+      return { id: id, clips: clips, bones: bones, hasBones: bones.length > 0, morphNames: morphNames };
+    }).catch(function (e) {
+      self._busy = false;
+      self._setLoading(false);
+      throw e;
+    });
   },
 
   /* Import .fbx (DESIGN API): validate -> đọc + parse TRƯỚC (lỗi thì dừng,
@@ -1060,6 +1279,8 @@ ED.Character = {
     this._refreshIkPanel();
     this._refreshHeatmapPanel();
     this._refreshConstraintPanel();
+    this._restoreStoredMorphValues(); /* đợt 5: khôi phục morph đã lưu */
+    this.renderMorphPanel();
     return true;
   },
 
@@ -1073,6 +1294,7 @@ ED.Character = {
     pv.onTick = null;
     pv.customClip = null;
     pv.marker.visible = false;
+    pv.morphValues = {}; /* đợt 5: reset morph */
     pv.heatmap = { on: false, bone: null };
     if (pv.ik) {
       pv.ik.targetPos = null;
@@ -1087,6 +1309,7 @@ ED.Character = {
     this._refreshIkPanel();
     this._refreshHeatmapPanel();
     this._refreshConstraintPanel();
+    this.renderMorphPanel(); /* đợt 5: báo chưa có model */
   },
 
   /* Phát clip theo tên (mặc định clip đầu). opts.fadeSec > 0 thì chuyển
@@ -1639,6 +1862,165 @@ ED.Character = {
     body.appendChild(topWrap);
   },
 
+  /* ---------------- Đợt 5 — Morph targets (runtime) ----------------
+     Morph chỉ áp cho model đang preview (không áp lên object trong
+     scene chính). Tên morph trùng nhau giữa nhiều mesh thì 1 slider
+     điều khiển tất cả mesh có tên đó; giá trị lưu theo TÊN vào
+     character.extra.morphValues (xem edCharMorphNormalize). */
+
+  /* Nhân vật đang chọn trong project (project cũ không có extra thì
+     các hàm morph tự tạo khi ghi; đọc thì trả null an toàn). */
+  _getSelectedChar: function () {
+    var project = this.project();
+    for (var i = 0; i < project.characters.length; i++) {
+      if (project.characters[i] && project.characters[i].id === this._selectedId) return project.characters[i];
+    }
+    return null;
+  },
+
+  /* Danh sách morph target của model đang preview:
+     [{meshName, name, index, value}] (xem edCharCollectMorphTargets). */
+  getMorphTargets: function () {
+    var pv = this._preview;
+    if (!pv || !pv.group) return [];
+    return edCharCollectMorphTargets(pv.group);
+  },
+
+  /* Giá trị morph hiện tại trong preview, theo tên (mesh đầu tiên có
+     tên đó thắng khi trùng tên giữa nhiều mesh). Trả {tên: 0..1}. */
+  getMorphValues: function () {
+    var vals = {};
+    this.getMorphTargets().forEach(function (t) {
+      if (vals[t.name] === undefined) vals[t.name] = t.value;
+    });
+    return vals;
+  },
+
+  /* Đặt 1 morph target trong preview (ghi trực tiếp vào
+     morphTargetInfluences của mọi mesh có tên đó để xem trước ngay)
+     + lưu vào character.extra.morphValues. Trả giá trị đã kẹp 0..1,
+     hoặc null nếu model không có morph tên đó. opts.commit=true thì
+     push history (gọi khi thả slider — sự kiện 'change'; kéo slider
+     ('input') thì chỉ xem trước, không commit để khỏi spam undo). */
+  setMorphValue: function (name, value, opts) {
+    var pv = this._preview;
+    if (!pv || !pv.group || !name) return null;
+    var dict = {};
+    this.getMorphTargets().forEach(function (t) { dict[t.name] = t.index; });
+    var one = {};
+    one[name] = value;
+    var norm = edCharMorphNormalize(one, dict);
+    if (norm[name] === undefined) return null;
+    var v = norm[name];
+    pv.group.traverse(function (obj) {
+      if (obj && obj.isMesh) edCharApplyMorphValuesToMesh(obj, norm);
+    });
+    if (!pv.morphValues) pv.morphValues = {};
+    pv.morphValues[name] = v;
+    var ch = this._getSelectedChar();
+    if (ch) {
+      if (!ch.extra || typeof ch.extra !== 'object') ch.extra = {};
+      if (!ch.extra.morphValues || typeof ch.extra.morphValues !== 'object') ch.extra.morphValues = {};
+      ch.extra.morphValues[name] = v;
+    }
+    if (opts && opts.commit) this.commit('Đổi morph target ' + name);
+    return v;
+  },
+
+  /* Áp nhiều morph cùng lúc (đã lọc tên lạ + kẹp 0..1 theo dictionary
+     của model đang preview) + lưu toàn bộ vào
+     character.extra.morphValues. Trả object đã chuẩn hoá. */
+  applyMorphValues: function (values) {
+    var pv = this._preview;
+    if (!pv || !pv.group || !values) return {};
+    var dict = {};
+    this.getMorphTargets().forEach(function (t) { dict[t.name] = t.index; });
+    var norm = edCharMorphNormalize(values, dict);
+    pv.group.traverse(function (obj) {
+      if (obj && obj.isMesh) edCharApplyMorphValuesToMesh(obj, norm);
+    });
+    pv.morphValues = norm;
+    var ch = this._getSelectedChar();
+    if (ch) {
+      if (!ch.extra || typeof ch.extra !== 'object') ch.extra = {};
+      ch.extra.morphValues = norm;
+    }
+    return norm;
+  },
+
+  /* Khôi phục morph đã lưu của nhân vật đang chọn lên model preview
+     (gọi trong showPreview; project cũ không có extra.morphValues thì
+     morph về 0). Trả object đã áp. */
+  _restoreStoredMorphValues: function () {
+    var pv = this._preview;
+    if (!pv) return {};
+    var ch = this._getSelectedChar();
+    var stored = (ch && ch.extra && ch.extra.morphValues) ? ch.extra.morphValues : null;
+    if (!stored) { pv.morphValues = {}; return {}; }
+    return this.applyMorphValues(stored);
+  },
+
+  /* Vẽ panel morph (ngay dưới panel Số liệu Bone Weight): 1 slider
+     0..1 cho từng morph target; model không có morph thì báo rõ
+     "Model này không có morph target" (không hiện slider giả); ghi rõ
+     clip tự tạo chỉ ghi pos/rot/scale, không ghi morph. */
+  renderMorphPanel: function () {
+    var body = this._morphBodyEl;
+    if (!body || typeof document === 'undefined') return;
+    while (body.firstChild) body.removeChild(body.firstChild);
+    function line(text) {
+      var d = document.createElement('div');
+      d.textContent = text;
+      body.appendChild(d);
+      return d;
+    }
+    var pv = this._preview;
+    if (!pv || !pv.group) { line('Chưa có model — nhập file .glb có morph trước.'); return; }
+    var targets = this.getMorphTargets();
+    if (!targets.length) { line('Model này không có morph target.'); return; }
+    var names = [], seen = {};
+    targets.forEach(function (t) { if (!seen[t.name]) { seen[t.name] = true; names.push(t.name); } });
+    var values = this.getMorphValues();
+    var self = this;
+    names.forEach(function (name) {
+      var row = document.createElement('div');
+      row.className = 'ed-row';
+      var lab = document.createElement('label');
+      lab.textContent = name;
+      row.appendChild(lab);
+      var s = document.createElement('input');
+      s.type = 'range'; s.min = '0'; s.max = '1'; s.step = '0.01';
+      s.value = String(values[name] !== undefined ? values[name] : 0);
+      s.style.flex = '1';
+      var val = document.createElement('span');
+      val.textContent = (Math.round(Number(s.value) * 100) / 100).toFixed(2);
+      s.addEventListener('input', function () {
+        var v = Number(s.value);
+        self.setMorphValue(name, v, { commit: false });
+        val.textContent = v.toFixed(2);
+      });
+      s.addEventListener('change', function () {
+        self.setMorphValue(name, Number(s.value), { commit: true });
+      });
+      row.appendChild(s);
+      row.appendChild(val);
+      body.appendChild(row);
+    });
+    var resetBtn = document.createElement('button');
+    resetBtn.className = 'ed-btn';
+    resetBtn.style.minHeight = '40px';
+    resetBtn.textContent = '↺ Đặt lại morph về 0';
+    resetBtn.addEventListener('click', function () {
+      var zero = {};
+      names.forEach(function (n) { zero[n] = 0; });
+      self.applyMorphValues(zero);
+      self.commit('Đặt lại morph target');
+      self.renderMorphPanel();
+    });
+    body.appendChild(resetBtn);
+    line('Lưu ý: clip tự tạo vẫn chỉ ghi pos/rot/scale, không ghi morph vào clip.');
+  },
+
   /* ---------------- Đợt 4 (b) Retarget clip Mixamo (runtime) ----------------
      Nguồn clip: kho clip của các file FBX đã nhập trong phiên này
      (_retargetClipBank) + clip của model đang xem. Đích: rig của model
@@ -1912,6 +2294,7 @@ ED.Character = {
 
     var row1 = el('div', 'ed-row');
     var pickBtn = btn('📁 Nhập file .fbx', function () { self._openPicker(null); });
+    var glbBtn = btn('📁 Nhập file .glb', function () { self._openPicker(null); });
     var replaceBtn = btn('🔄 Thay model', function () {
       if (!self._selectedId) { self.toast('Chọn nhân vật trước rồi mới thay model.'); return; }
       self._openPicker(self._selectedId);
@@ -1920,7 +2303,7 @@ ED.Character = {
       if (!self._selectedId) { self.toast('Chọn nhân vật trước.'); return; }
       self.addCharacterToScene(self._selectedId);
     });
-    row1.appendChild(pickBtn); row1.appendChild(replaceBtn); row1.appendChild(addBtn);
+    row1.appendChild(pickBtn); row1.appendChild(glbBtn); row1.appendChild(replaceBtn); row1.appendChild(addBtn);
     host.appendChild(row1);
 
     var listWrap = el('div', 'ed-char-list');
@@ -2027,6 +2410,17 @@ ED.Character = {
     this._bwStatsBodyEl = bwBody;
     skWrap.appendChild(bwWrap);
     host.appendChild(skWrap);
+
+    /* ---- Đợt 5 — Morph targets (ngay dưới cây xương / số liệu bone weight) ---- */
+    var morphWrap = el('div', 'ed-char-morph');
+    morphWrap.appendChild(el('div', '', '😀 Morph Targets'));
+    morphWrap.appendChild(el('div', 'ed-char-hint', 'Chỉ model .glb (hoặc .fbx) có morph target mới hiện slider — kéo slider để xem trước ngay trong khung xem trước. Lưu ý: clip tự tạo vẫn chỉ ghi pos/rot/scale, không ghi morph vào clip.'));
+    var morphBody = el('div', 'ed-char-morph-body', 'Chưa có model — nhập file .glb có morph trước.');
+    morphBody.style.maxHeight = '220px';
+    morphBody.style.overflowY = 'auto';
+    morphWrap.appendChild(morphBody);
+    this._morphBodyEl = morphBody;
+    host.appendChild(morphWrap);
 
     /* ---- Đợt 3 — Skeleton nâng cao: IK / Heatmap / Constraint ---- */
     /* (a) IK 2 xương. */
@@ -2162,10 +2556,10 @@ ED.Character = {
     csWrap.appendChild(csBtnRow);
     host.appendChild(csWrap);
 
-    /* File picker ẩn. */
+    /* File picker ẩn — nhận cả .fbx lẫn .glb (đợt 5), phân biệt theo đuôi file. */
     var inp = document.createElement('input');
     inp.type = 'file';
-    inp.accept = '.fbx';
+    inp.accept = '.fbx,.glb';
     inp.style.display = 'none';
     document.body.appendChild(inp);
     this._input = inp;
@@ -2183,8 +2577,9 @@ ED.Character = {
       var f = self._input.files && self._input.files[0];
       self._input.value = '';
       if (!f) return;
-      self.importFbx(f, { charId: charId }).catch(function (e) {
-        self.toast(e && e.message ? e.message : 'Không nhập được file .fbx.');
+      var p = /\.glb$/i.test(f.name) ? self.importGlb(f, { charId: charId }) : self.importFbx(f, { charId: charId });
+      p.catch(function (e) {
+        self.toast(e && e.message ? e.message : 'Không nhập được file model.');
         if (self._statusEl) self._statusEl.textContent = 'Lỗi: ' + (e && e.message ? e.message : 'không nhập được file.');
       });
     };

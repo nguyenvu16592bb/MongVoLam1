@@ -36,6 +36,21 @@
    + patrol/idle. 2 state mới 'alert'/'search' (ED_NPC_AI_STATES).
    Nhãn tiếng Việt cho mọi state: ED_NPC_AI_STATE_LABELS (09-play.js vẽ
    lên đầu NPC trong Play Mode bằng THREE.Sprite + canvas).
+   ĐỢT 5 (Utility AI, chỉ sửa file này — KHÔNG sửa 09-play.js):
+   edAiUtilityScores — NPC chọn behavior theo ĐIỂM thay cho chỉ chuyển
+   theo điều kiện cố định: mỗi behavior ứng viên (Idle/Patrol/Chase/
+   Attack/Flee/Search) có hàm tính điểm từ khoảng cách tới địch gần
+   nhất, HP bản thân (%), số đồng minh gần đó (bán kính 8), trí nhớ
+   (hasMemory: còn nhớ vị trí thấy địch lần cuối). HP < ~40% + địch gần
+   thì Flee điểm cao; địch gần + HP cao thì Attack (địch rất gần) /
+   Chase (địch xa hơn) điểm cao; không thấy địch thì Search (còn nhớ)
+   hoặc Patrol. Điểm nhân với trọng số npc.utility.weights (mặc định
+   1, chỉnh được trong inspector). ED.NpcAi.pickBehavior(npc, ctx) dùng
+   hàm thuần đó (09-play.js sẽ nối sau qua guard typeof — coordinator).
+   Utility CHỈ thay cách CHỌN behavior: node editor (aiStates/
+   aiTransitions) + memory đợt 3–4 + edNpcNextAiState giữ nguyên.
+   Điểm số từng behavior hiện trong inspector để debug (panel nhỏ
+   trong module NPC: trọng số + tính thử điểm).
    QUY TẮC DESIGN.md: KHÔNG truy cập document/window/THREE ở top-level;
    logic thuần expose để nhóm D test bằng vm + stub THREE. */
 
@@ -59,6 +74,17 @@ var ED_NPC_AI_STATE_LABELS = {
 var ED_NPC_AI_SEARCH_DURATION_DEFAULT = 5; /* giây tìm quanh lastSeenPos, mặc định */
 var ED_NPC_AI_SEARCH_RADIUS = 2;           /* bán kính vòng tìm nhỏ quanh lastSeenPos */
 var ED_NPC_AI_ALERT_TIMEOUT_DEFAULT = 10;  /* giây: alert quá lâu không tới được lastSeenPos thì bỏ về nhà */
+/* Đợt 5 — behavior ứng viên của Utility AI (6 behavior, KHÔNG gồm
+   'alert'/'wander'/'follow': alert là state runtime của memory đợt 4,
+   wander/follow không có hàm tính điểm — NPC dùng chúng qua aiStates
+   gốc / node editor, không qua utility). */
+var ED_NPC_UTILITY_BEHAVIORS = ['idle', 'patrol', 'chase', 'attack', 'flee', 'search'];
+var ED_NPC_UTILITY_LABELS = {
+  idle: 'Đứng yên', patrol: 'Tuần tra', chase: 'Đuổi theo',
+  attack: 'Tấn công', flee: 'Chạy trốn', search: 'Tìm kiếm'
+};
+var ED_NPC_UTILITY_ENEMY_RANGE = 12; /* ô: địch xa hơn thì điểm chase/attack/flee ~0 */
+var ED_NPC_UTILITY_ALLY_RADIUS = 8;  /* ô: bán kính tính đồng minh gần đó (ghi rõ, ctx chỉ nhận số lượng) */
 var ED_NPC_IDLE_ANIMS = ['idle', 'walk', 'talk'];
 var ED_QUEST_TYPES = ['Chính', 'Tuyến', 'Phụ', 'Hằng ngày', 'Boss', 'Thu thập', 'Giết quái', 'Nói chuyện'];
 
@@ -84,6 +110,10 @@ function edNpcNewNpc(id) {
        NPC cũ (project đã lưu) không có field này thì nextAiState mặc
        định 5s. */
     searchDuration: 5,
+    /* Đợt 5 — Utility AI: trọng số từng behavior (mặc định 1, chỉnh
+       được trong inspector). NPC cũ không có field này thì
+       normalizeUtility tự thêm, vẫn mở được. */
+    utility: { weights: { idle: 1, patrol: 1, chase: 1, attack: 1, flee: 1, search: 1 } },
     robe: '#334155', hair: '#1e1b18', weapon: null, aura: null
   };
 }
@@ -427,6 +457,135 @@ function edNpcNextAiState(npc, ctx) {
   return { state: cur, moveTo: null, lookAround: false };
 }
 
+/* ---- Đợt 5: Utility-based AI — chọn behavior theo ĐIỂM (thuần) ----
+   edAiUtilityScores(ctx) với ctx {enemyDist, hpPct, alliesNear,
+   hasMemory, weights?} trả {scores:{idle,patrol,chase,attack,flee,
+   search}, best}. Quy ước điểm (đã nhân trọng số, làm tròn 3 chữ số):
+   - enemyDist: khoảng cách tới địch gần nhất (ô); null/Infinity/
+     không phải số = không thấy địch. enemyNear = kẹp(1 - dist/12, 0, 1)
+     (địch xa hơn 12 ô coi như ngoài tầm xét điểm).
+   - hpPct: HP bản thân 0..100 (kẹp); hpFrac = hpPct/100.
+   - alliesNear: số đồng minh trong bán kính 8 ô (kẹp 0..5); mỗi đồng
+     minh +0.05 vào attack/chase, -0.05 vào flee (đông thì đỡ sợ).
+   - hasMemory: còn nhớ vị trí thấy địch lần cuối (trí nhớ đợt 4).
+   Công thức điểm THÔ (trước trọng số):
+     idle   = 0.10 (điểm sàn — luôn có behavior để chọn)
+     patrol = có địch ? 0.05 : (có nhớ ? 0.30 : 0.60)
+     search = (!có địch && có nhớ) ? 0.70 : 0.05
+     chase  = có địch ? enemyNear*(0.40+0.60*hpFrac) + allyBonus : 0
+     attack = có địch ? enemyNear*(0.15+0.85*hpFrac)
+              + (dist<=3 ? 0.25*hpFrac : 0) + allyBonus : 0
+              (địch rất gần + HP cao thì attack vượt chase)
+     flee   = có địch ? (1-hpFrac)^2 * 1.5 * enemyNear - allyBonus : 0
+              (HP 20% + địch gần ~0.80 > chase ~0.43; HP 90% + địch gần
+              ~0.01 < attack ~0.99; ngưỡng đổi flee->attack khoảng 40%)
+   best: điểm cao nhất; hòa thì ưu tiên theo thứ tự
+   attack > chase > flee > search > patrol > idle (xác định).
+   weights: {behavior: số >= 0} — mặc định 1; số âm kẹp về 0,
+   không phải số -> 1. Đổi weights làm đổi best (vd weight flee=0 thì
+   NPC HP thấp vẫn đuổi thay vì chạy).
+   KHÔNG đụng node editor / memory đợt 3–4: hàm này chỉ TÍNH ĐIỂM,
+   không đọc/ghi aiStates/aiTransitions/lastSeenPos. */
+
+function edNpcDefaultUtilityWeights() {
+  return { idle: 1, patrol: 1, chase: 1, attack: 1, flee: 1, search: 1 };
+}
+
+function edNpcNormalizeUtilityWeights(weights) {
+  var out = edNpcDefaultUtilityWeights();
+  if (weights && typeof weights === 'object') {
+    ED_NPC_UTILITY_BEHAVIORS.forEach(function (b) {
+      var w = Number(weights[b]);
+      if (isFinite(w)) out[b] = Math.max(0, w);
+    });
+  }
+  return out;
+}
+
+/* Đảm bảo npc.utility = {weights:{...đủ 6 behavior}} (tạo/thêm khi
+   thiếu — project cũ vẫn mở được). Trả npc.utility. */
+function edNpcNormalizeUtility(npc) {
+  if (!npc || typeof npc !== 'object') return { weights: edNpcDefaultUtilityWeights() };
+  if (!npc.utility || typeof npc.utility !== 'object') npc.utility = {};
+  npc.utility.weights = edNpcNormalizeUtilityWeights(npc.utility.weights);
+  return npc.utility;
+}
+
+/* Đặt trọng số 1 behavior cho NPC (kẹp >= 0, không phải số -> 1).
+   Trả trọng số đã lưu, hoặc null nếu behavior không hợp lệ. */
+function edNpcSetUtilityWeight(npc, behavior, w) {
+  if (!npc || typeof npc !== 'object' || ED_NPC_UTILITY_BEHAVIORS.indexOf(behavior) < 0) return null;
+  var util = edNpcNormalizeUtility(npc);
+  var n = Number(w);
+  util.weights[behavior] = isFinite(n) ? Math.max(0, n) : 1;
+  return util.weights[behavior];
+}
+
+function edAiUtilityScores(ctx) {
+  var c = ctx || {};
+  /* null/undefined = không thấy địch (chú ý: Number(null) === 0 nên
+     phải chặn null trước khi Number, không thì địch "ở cự ly 0"). */
+  var enemyDist = (c.enemyDist === undefined || c.enemyDist === null) ? NaN : Number(c.enemyDist);
+  var enemyPresent = isFinite(enemyDist) && enemyDist >= 0;
+  var enemyNear = enemyPresent ? edNpcClampNum(1 - enemyDist / ED_NPC_UTILITY_ENEMY_RANGE, 0, 1, 0) : 0;
+  var hpPct = Number(c.hpPct);
+  var hpFrac = isFinite(hpPct) ? edNpcClampNum(hpPct / 100, 0, 1, 1) : 1;
+  var allies = Math.min(5, Math.max(0, Math.floor(Number(c.alliesNear) || 0)));
+  var allyBonus = allies * 0.05;
+  var hasMemory = !!c.hasMemory;
+  var raw = {
+    idle: 0.10,
+    patrol: enemyPresent ? 0.05 : (hasMemory ? 0.30 : 0.60),
+    chase: enemyPresent ? enemyNear * (0.40 + 0.60 * hpFrac) + allyBonus : 0,
+    attack: enemyPresent
+      ? enemyNear * (0.15 + 0.85 * hpFrac) + (enemyDist <= 3 ? 0.25 * hpFrac : 0) + allyBonus
+      : 0,
+    flee: enemyPresent ? Math.pow(1 - hpFrac, 2) * 1.5 * enemyNear : 0,
+    search: (!enemyPresent && hasMemory) ? 0.70 : 0.05
+  };
+  raw.flee = Math.max(0, raw.flee - allyBonus);
+  var weights = edNpcNormalizeUtilityWeights(c.weights);
+  var scores = {};
+  ED_NPC_UTILITY_BEHAVIORS.forEach(function (b) {
+    scores[b] = Math.round(raw[b] * weights[b] * 1000) / 1000;
+  });
+  var best = 'idle', bestScore = -Infinity;
+  ['attack', 'chase', 'flee', 'search', 'patrol', 'idle'].forEach(function (b) {
+    if (scores[b] > bestScore) { bestScore = scores[b]; best = b; }
+  });
+  return { scores: scores, best: best };
+}
+
+/* Gộp ctx gọi pickBehavior từ dữ liệu NPC + ctx caller truyền:
+   - enemyDist/alliesNear: lấy từ ctx (caller tính trong Play Mode).
+   - hpPct: ctx.hpPct, không có thì npc.hpPct, không có thì
+     npc.hp/npc.maxHp, không có nữa thì 100.
+   - hasMemory: ctx.hasMemory, không có thì suy ra từ
+     npc.lastSeenPos (trí nhớ đợt 4).
+   - weights: ctx.weights, không có thì npc.utility.weights.
+   Không sửa npc (chỉ đọc). Trả ctx đầy đủ cho edAiUtilityScores. */
+function edNpcBuildUtilityCtx(npc, ctx) {
+  var c = ctx || {};
+  var n = npc || {};
+  var hpPct = c.hpPct;
+  if (!isFinite(Number(hpPct))) {
+    if (isFinite(Number(n.hpPct))) hpPct = Number(n.hpPct);
+    else if (isFinite(Number(n.hp)) && isFinite(Number(n.maxHp)) && Number(n.maxHp) > 0) {
+      hpPct = Number(n.hp) / Number(n.maxHp) * 100;
+    } else hpPct = 100;
+  }
+  var hasMemory;
+  if (c.hasMemory !== undefined) hasMemory = !!c.hasMemory;
+  else hasMemory = !!(Array.isArray(n.lastSeenPos) && n.lastSeenPos.length >= 2);
+  return {
+    enemyDist: (c.enemyDist === undefined || c.enemyDist === null) ? null : Number(c.enemyDist),
+    hpPct: hpPct,
+    alliesNear: (c.alliesNear === undefined || c.alliesNear === null) ? 0 : Number(c.alliesNear),
+    hasMemory: hasMemory,
+    weights: edNpcNormalizeUtilityWeights(c.weights || (n.utility && n.utility.weights) || null)
+  };
+}
+
 function edNpcClampNum(v, min, max, fallback) {
   var n = Number(v);
   if (!isFinite(n)) return fallback;
@@ -489,6 +648,17 @@ ED.NpcAi = {
   ALERT_TIMEOUT_DEFAULT: ED_NPC_AI_ALERT_TIMEOUT_DEFAULT,
   nextAiState: edNpcNextAiState,
   aiStateLabel: edNpcAiStateLabel,
+  /* Đợt 5 — Utility AI (hàm thuần, test được bằng vm). */
+  UTILITY_BEHAVIORS: ED_NPC_UTILITY_BEHAVIORS,
+  UTILITY_LABELS: ED_NPC_UTILITY_LABELS,
+  UTILITY_ENEMY_RANGE: ED_NPC_UTILITY_ENEMY_RANGE,
+  UTILITY_ALLY_RADIUS: ED_NPC_UTILITY_ALLY_RADIUS,
+  utilityScores: edAiUtilityScores,
+  buildUtilityCtx: edNpcBuildUtilityCtx,
+  normalizeUtility: edNpcNormalizeUtility,
+  setUtilityWeight: edNpcSetUtilityWeight,
+  defaultUtilityWeights: edNpcDefaultUtilityWeights,
+  normalizeUtilityWeights: edNpcNormalizeUtilityWeights,
   IDLE_ANIMS: ED_NPC_IDLE_ANIMS,
   QUEST_TYPES: ED_QUEST_TYPES,
   newNpc: edNpcNewNpc,
@@ -524,6 +694,8 @@ ED.NpcAi = {
   _placingWaypoint: false,
   _patrolLines: {},      /* npcId -> THREE.Line trong viewport */
   _wpCounter: 0,
+  _utilityDebug: {},     /* đợt 5: npcId -> {scores, best} lần pickBehavior gần nhất */
+  _utilityLastDebug: null, /* đợt 5: {npcId, scores, best} lần "Tính điểm thử" gần nhất */
 
   /* Project đang sửa: ED.Core.getProject() (nhóm A) nếu có, không thì
      project cục bộ. Lưu ý: ED.Core KHÔNG có thuộc tính .project. */
@@ -808,6 +980,144 @@ ED.NpcAi = {
     return obj;
   },
 
+  /* ---------------- Đợt 5: Utility AI (runtime) ----------------
+     pickBehavior(npc, ctx) — điểm nối cho Play Mode (09-play.js sẽ gọi
+     qua guard typeof ED.NpcAi.pickBehavior — coordinator nối sau):
+     gộp ctx từ NPC + caller (edNpcBuildUtilityCtx) rồi tính điểm thuần
+     (edAiUtilityScores), trả behavior thắng ('idle'|'patrol'|'chase'|
+     'attack'|'flee'|'search'). Điểm lần chọn gần nhất lưu vào
+     _utilityDebug[npc.id] để inspector hiện debug; KHÔNG ghi điểm vào
+     project (chỉ weights trong npc.utility mới được lưu). */
+
+  pickBehavior: function (npc, ctx) {
+    var full = edNpcBuildUtilityCtx(npc, ctx);
+    var res = edAiUtilityScores(full);
+    if (npc && npc.id) {
+      if (!this._utilityDebug) this._utilityDebug = {};
+      this._utilityDebug[npc.id] = { scores: res.scores, best: res.best };
+      if (this._selectedId === npc.id) this.refreshUtilityScores();
+    }
+    return res.best;
+  },
+
+  /* Vẽ lại panel Utility AI (trọng số + tính thử + điểm số) cho NPC
+     đang chọn. Panel nằm ngoài form NPC (tự tạo trong init) nên không
+     bị renderNpcForm xoá; gọi lại sau mỗi lần đổi NPC chọn. */
+  refreshUtilityPanel: function () {
+    var wrap = this._utilityEl;
+    if (!wrap || typeof document === 'undefined') return;
+    while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
+    var self = this;
+    function el(tag, cls, text) {
+      var e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined && text !== null) e.textContent = text;
+      return e;
+    }
+    wrap.appendChild(el('div', '', '🎯 AI Utility (chọn behavior theo điểm)'));
+    wrap.appendChild(el('div', 'ed-char-hint', 'NPC chọn behavior theo ĐIỂM thay cho chỉ chuyển theo điều kiện cố định: HP thấp → Flee điểm cao, địch gần + HP cao → Attack/Chase điểm cao, mất dấu → Search/Patrol theo trí nhớ đợt 4. Utility chỉ thay cách CHỌN — state machine (aiStates/aiTransitions) và trí nhớ đợt 4 giữ nguyên. Trọng số 0 = tắt behavior đó.'));
+    var npc = this.selectedNpc();
+    if (!npc) {
+      wrap.appendChild(el('div', '', 'Chọn 1 NPC để chỉnh trọng số Utility AI.'));
+      return;
+    }
+    var util = edNpcNormalizeUtility(npc);
+    var wGrid = el('div', 'ed-npc-utility-weights');
+    ED_NPC_UTILITY_BEHAVIORS.forEach(function (b) {
+      var row = el('div', 'ed-row');
+      row.appendChild(el('label', '', (ED_NPC_UTILITY_LABELS[b] || b) + ' (' + b + ')'));
+      var inp = el('input');
+      inp.type = 'number'; inp.min = '0'; inp.max = '2'; inp.step = '0.1';
+      inp.value = String(util.weights[b]);
+      inp.style.minHeight = '40px'; inp.style.width = '70px';
+      inp.addEventListener('change', function () {
+        var w = edNpcSetUtilityWeight(npc, b, Number(inp.value));
+        inp.value = String(w);
+        self.commit('Đổi trọng số Utility AI');
+        self.refreshUtilityScores();
+      });
+      row.appendChild(inp);
+      wGrid.appendChild(row);
+    });
+    wrap.appendChild(wGrid);
+    /* Tính thử điểm (debug — không ảnh hưởng Play Mode). */
+    var dbg = el('div', 'ed-npc-utility-debug');
+    dbg.appendChild(el('div', '', '🧮 Tính thử điểm (debug):'));
+    function numField(label, value, placeholder) {
+      var row = el('div', 'ed-row');
+      row.appendChild(el('label', '', label));
+      var inp = el('input');
+      inp.type = 'number';
+      inp.value = value;
+      if (placeholder) inp.placeholder = placeholder;
+      inp.style.minHeight = '40px'; inp.style.width = '80px';
+      row.appendChild(inp);
+      dbg.appendChild(row);
+      return inp;
+    }
+    var distInp = numField('Khoảng cách tới địch (ô, để trống = không thấy địch)', '', 'không thấy địch');
+    var hpInp = numField('HP bản thân (%)', '100');
+    var allyInp = numField('Đồng minh gần đó (bán kính 8 ô)', '0');
+    var memRow = el('div', 'ed-row');
+    var memCb = el('input');
+    memCb.type = 'checkbox';
+    memRow.appendChild(memCb);
+    memRow.appendChild(el('label', '', 'Còn nhớ vị trí thấy địch lần cuối (trí nhớ đợt 4)'));
+    dbg.appendChild(memRow);
+    var calcBtn = el('button', 'ed-btn', '🧮 Tính điểm thử');
+    calcBtn.style.minHeight = '40px';
+    calcBtn.addEventListener('click', function () {
+      var distRaw = String(distInp.value || '').trim();
+      var res = edAiUtilityScores({
+        enemyDist: distRaw === '' ? null : Number(distRaw),
+        hpPct: Number(hpInp.value),
+        alliesNear: Number(allyInp.value),
+        hasMemory: memCb.checked,
+        weights: edNpcNormalizeUtility(npc).weights
+      });
+      self._utilityLastDebug = { npcId: npc.id, scores: res.scores, best: res.best };
+      self.refreshUtilityScores();
+    });
+    dbg.appendChild(calcBtn);
+    wrap.appendChild(dbg);
+    var scoresBox = el('div', 'ed-npc-utility-scores');
+    wrap.appendChild(scoresBox);
+    this._utilityScoresEl = scoresBox;
+    this.refreshUtilityScores();
+  },
+
+  /* Cập nhật riêng ô điểm số (gọi sau pickBehavior / tính thử / đổi
+     trọng số) mà không vẽ lại cả panel (khỏi mất giá trị đang nhập). */
+  refreshUtilityScores: function () {
+    var box = this._utilityScoresEl;
+    if (!box || typeof document === 'undefined') return;
+    while (box.firstChild) box.removeChild(box.firstChild);
+    var npc = this.selectedNpc();
+    function line(text) {
+      var d = document.createElement('div');
+      d.textContent = text;
+      box.appendChild(d);
+      return d;
+    }
+    function showScores(title, res) {
+      line(title);
+      ED_NPC_UTILITY_BEHAVIORS.forEach(function (b) {
+        line('  ' + (ED_NPC_UTILITY_LABELS[b] || b) + ' (' + b + '): ' + res.scores[b].toFixed(3) + (res.best === b ? '  ← chọn' : ''));
+      });
+      line('Behavior được chọn: ' + (ED_NPC_UTILITY_LABELS[res.best] || res.best) + ' (' + res.best + ')');
+    }
+    if (npc && this._utilityDebug && this._utilityDebug[npc.id]) {
+      showScores('Điểm lần chọn gần nhất (Play Mode gọi pickBehavior):', this._utilityDebug[npc.id]);
+      return;
+    }
+    var dbg = this._utilityLastDebug;
+    if (npc && dbg && dbg.npcId === npc.id) {
+      showScores('Điểm tính thử gần nhất:', dbg);
+      return;
+    }
+    line('Chưa có điểm số — bấm "Tính điểm thử" hoặc chạy Play Mode (pickBehavior).');
+  },
+
   /* ---------------- Panel (DOM — chỉ trong init) ---------------- */
   init: function (container) {
     if (typeof document === 'undefined') return false;
@@ -902,6 +1212,11 @@ ED.NpcAi = {
     this._wpListEl = wpList;
     host.appendChild(wpWrap);
 
+    /* Đợt 5 — Utility AI (panel nhỏ tự tạo trong init của module). */
+    var utilWrap = el('div', 'ed-npc-utility');
+    host.appendChild(utilWrap);
+    this._utilityEl = utilWrap;
+
     /* Quest. */
     var qWrap = el('div', 'ed-npc-quests');
     qWrap.appendChild(el('div', '', '📜 Nhiệm vụ (Quest)'));
@@ -959,6 +1274,7 @@ ED.NpcAi = {
     sel.value = cur || '';
     this.renderNpcForm();
     this.refreshWaypointList();
+    this.refreshUtilityPanel(); /* đợt 5: trọng số + điểm số theo NPC đang chọn */
   },
 
   renderNpcForm: function () {

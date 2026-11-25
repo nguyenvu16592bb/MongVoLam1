@@ -5,11 +5,20 @@
    tự viết, nhẹ, chạy được trên điện thoại.
 
    ĐÂY LÀ VẬT LÝ ĐƠN GIẢN, KHÔNG PHẢI RIGID-BODY ĐẦY ĐỦ: chỉ có trọng lực
-   thẳng đứng + va chạm đẩy ra (positional correction), không có xoay,
-   không mô-men/quán tính góc, không ma sát tiếp xúc phức tạp, không
-   xếp chồng (stacking) hay khớp nối (joint). Đủ cho Play Mode: nhân vật
-   nhảy/rơi/chặn tường/trượt tường, thùng trượt khi đẩy, prop rơi xuống
-   đất. UI panel Play Mode ghi rõ điều này.
+   thẳng đứng + va chạm đẩy ra (positional correction), không có mô-men/
+   quán tính góc đầy đủ, không ma sát tiếp xúc phức tạp, không khớp nối
+   (joint). Đợt 5 thêm 2 thứ ở mức lite: (1) thùng có xoay/quán tính góc
+   — đẩy lệch tâm thì vừa trượt vừa xoay (rotY + angVel, ma sát góc làm
+   angVel giảm dần về 0), va chạm vẫn là AABB KHÔNG xoay theo rotY;
+   (2) chồng thùng đơn giản — crate trên đứng yên trên mặt crate dưới
+   (resting contact, y = mặt trên crate dưới), crate dưới bị đẩy đi thì
+   crate trên rơi (g = 20); KHÔNG có truyền lực ngang giữa 2 thùng
+   (crate trên không bị kéo theo khi crate dưới trượt đi) và KHÔNG có
+   xếp chồng nhiều tầng ổn định kiểu rigid-body. Đủ cho Play Mode:
+   nhân vật nhảy/rơi/chặn tường/trượt tường, thùng trượt/xoay khi đẩy,
+   prop rơi xuống đất. UI panel Play Mode PHẢI ghi rõ điều này — chuỗi
+   ED.Physics.LITE_LABEL dưới đây chính là label đó (coordinator nối
+   vào panel Play, file này không có init/panel riêng nên không tự vẽ).
 
    Quy tắc DESIGN.md: KHÔNG truy cập document/window/THREE ở top-level.
    Mọi hàm tính toán là HÀM THUẦN (nhận state đơn giản, trả state mới,
@@ -42,6 +51,15 @@ var ED_PHYSICS_STEP = 0.35;         /* bước lên được (nóc cao hơn châ
 var ED_PHYSICS_GROUND_SNAP = 0.12;  /* dung sai bám đất khi đi xuống dốc */
 var ED_PHYSICS_CRATE_PUSH_SPEED = 3; /* tốc độ thùng trượt khi đang bị đẩy */
 var ED_PHYSICS_CRATE_FRICTION = 8;   /* ma sát làm thùng dừng (đơn vị/s^2) */
+/* Đợt 5 — xoay/quán tính góc của thùng (lite): ma sát góc trừ dần angVel
+   (rad/s^2), angVel kẹp tối đa để thùng không quay tít mất kiểm soát. */
+var ED_PHYSICS_CRATE_ANGULAR_FRICTION = 3; /* ma sát góc (rad/s^2) */
+var ED_PHYSICS_CRATE_MAX_ANG_VEL = 4;      /* |angVel| tối đa (rad/s) */
+/* Label physics-lite cho panel Play (coordinator hiển thị nguyên văn):
+   vẫn là physics-lite, không phải rigid-body đầy đủ. */
+var ED_PHYSICS_LITE_LABEL = 'Vật lý đơn giản (physics-lite), không phải rigid-body đầy đủ: ' +
+  'thùng trượt + xoay khi đẩy lệch tâm, chồng thùng chỉ đứng yên trên mặt nhau, ' +
+  'không có khớp nối, không truyền lực ngang giữa các thùng.';
 
 /* Type object KHÔNG bao giờ là box chặn (khớp edPlayBlockedByObjects):
    npc/monster/character đi xuyên được (chặn bằng tầm đánh), fx/light/
@@ -284,30 +302,109 @@ function edPhysicsMoveCapsule(pos, dx, dz, y, radius, height, boxes) {
   return { pos: [cx, cz], hit: hit, blocked: blocked };
 }
 
-/* ---- Đẩy 1 thùng/crate 1 bước.
-   crate: {pos:[x,y,z], vel:[vx,vz], size:[sx,sz] (rộng/sâu mặt đất)}.
-   dir: [dx,dz] hướng đẩy (hero đang đẩy) hoặc null (không ai đẩy).
-   boxes: box TĨNH (không gồm thùng khác — không đẩy dây chuyền).
-   opts: {pushSpeed, friction}. y của thùng KHÔNG đổi (thùng nằm trên
-   mặt đất; rơi thùng xem stepFallingProp).
-   - Đang bị đẩy: vel = dir * pushSpeed.
-   - Không bị đẩy: ma sát trừ dần tốc độ tới 0 (trượt rồi dừng).
-   - Gặp vật cản: đẩy AABB ra theo trục xuyên ít nhất, vel trục đó = 0.
-   Trả {crate:{pos, vel, size}, moved, blocked}. ---- */
-function edPhysicsPushCrate(crate, dir, dt, boxes, opts) {
+/* ---- Đợt 5 — chiều cao thùng (dùng cho chồng thùng). ----
+   Ưu tiên crate.height (số > 0), rồi size[2] nếu có, cuối cùng mặc
+   định bằng cạnh mặt đất size[0] (thùng khối vuông 1x1x1). Thuần. ---- */
+function edPhysicsCrateHeight(crate) {
   var c = crate || {};
+  if (typeof c.height === 'number' && c.height > 0) return c.height;
+  if (Array.isArray(c.size) && c.size.length >= 3 && Number(c.size[2]) > 0) return Number(c.size[2]);
+  if (Array.isArray(c.size) && c.size.length >= 1 && Number(c.size[0]) > 0) return Number(c.size[0]);
+  return 1;
+}
+
+/* ---- Đợt 5 — đọc vị trí điểm đẩy thành độ lệch tâm [rx, rz]. ----
+   opts.pushPoint: điểm đẩy trong world ([x,z] hoặc {x,z} — ví dụ vị trí
+   tay hero chạm vào thùng); opts.offset: độ lệch tâm trực tiếp [rx,rz].
+   Không có cả hai -> null (đẩy qua tâm, không sinh mô-men). Thuần. ---- */
+function edPhysicsPushOffset(cratePos, opts) {
   var o = opts || {};
-  var pushSpeed = (Number(o.pushSpeed) > 0) ? Number(o.pushSpeed) : ED_PHYSICS_CRATE_PUSH_SPEED;
-  var friction = (Number(o.friction) >= 0) ? Number(o.friction) : ED_PHYSICS_CRATE_FRICTION;
-  var dt2 = (Number(dt) > 0) ? Math.min(0.1, Number(dt)) : 0.016;
+  if (Array.isArray(o.offset) && o.offset.length >= 2) {
+    return [Number(o.offset[0]) || 0, Number(o.offset[1]) || 0];
+  }
+  var pp = o.pushPoint;
+  if (Array.isArray(pp) && pp.length >= 2) {
+    return [(Number(pp[0]) || 0) - (Number(cratePos[0]) || 0),
+            (Number(pp[1]) || 0) - (Number(cratePos[2]) || 0)];
+  }
+  if (pp && typeof pp === 'object' && (typeof pp.x === 'number' || typeof pp.z === 'number')) {
+    return [(Number(pp.x) || 0) - (Number(cratePos[0]) || 0),
+            (Number(pp.z) || 0) - (Number(cratePos[2]) || 0)];
+  }
+  return null;
+}
+
+/* ---- Đợt 5 — mô-men quanh trục Y từ lực đẩy + độ lệch tâm (thuần). ----
+   dir: [dx,dz] hướng lực (chuẩn hoá trong hàm); offset [rx,rz]: vector
+   từ tâm thùng tới điểm đẩy. Trả (r x F)_y = rz*Fx - rx*Fz (lực F lấy
+   theo hướng dir, độ lớn 1 — bên gọi nhân với độ lớn lực thật).
+   Đẩy qua tâm (offset 0) -> 0, không xoay. Đẩy lệch sang 1 bên -> khác
+   0, dấu cho biết chiều xoay (quy ước Y-up). ---- */
+function edPhysicsPushTorque(dir, offset) {
+  if (!Array.isArray(dir) || !Array.isArray(offset)) return 0;
+  var len = Math.sqrt(dir[0] * dir[0] + dir[1] * dir[1]);
+  if (!(len > 0)) return 0;
+  var fx = dir[0] / len, fz = dir[1] / len;
+  var rx = Number(offset[0]) || 0, rz = Number(offset[1]) || 0;
+  return rz * fx - rx * fz;
+}
+
+/* ---- Đợt 5 — chuẩn hoá crate đầu vào (không sửa object gốc). ----
+   Thiếu field thì mặc định: vel [0,0], velY 0, rotY 0, angVel 0,
+   size [1,1], height theo edPhysicsCrateHeight. ---- */
+function edPhysicsNormalizeCrate(crate) {
+  var c = crate || {};
   var pos = [Number(c.pos && c.pos[0]) || 0, Number(c.pos && c.pos[1]) || 0, Number(c.pos && c.pos[2]) || 0];
   var vel = [Number(c.vel && c.vel[0]) || 0, Number(c.vel && c.vel[1]) || 0];
   var size = (Array.isArray(c.size) && c.size.length >= 2)
     ? [Math.abs(Number(c.size[0]) || 1), Math.abs(Number(c.size[1]) || 1)] : [1, 1];
-  var hx = size[0] / 2, hz = size[1] / 2;
-  if (Array.isArray(dir) && (dir[0] !== 0 || dir[1] !== 0)) {
+  return {
+    pos: pos, vel: vel,
+    velY: (typeof c.velY === 'number' && isFinite(c.velY)) ? c.velY : 0,
+    rotY: (typeof c.rotY === 'number' && isFinite(c.rotY)) ? c.rotY : 0,
+    angVel: (typeof c.angVel === 'number' && isFinite(c.angVel)) ? c.angVel : 0,
+    size: size, height: edPhysicsCrateHeight(c)
+  };
+}
+
+/* ---- Đợt 5 — lõi trượt + xoay của thùng (dùng chung cho pushCrate
+   và crateStep, không gồm trọng lực/chồng thùng). ----
+   c (đã chuẩn hoá): {pos, vel, velY, rotY, angVel, size, height}.
+   dir: hướng đẩy hoặc null. opts: {pushSpeed, friction,
+   angularFriction, maxAngVel, pushPoint, offset}.
+   - Đang bị đẩy: vel = dir * pushSpeed; mô-men từ độ lệch tâm làm
+     angVel += (torque * pushSpeed / I) * dt, với I = (sx^2+sz^2)/12
+     (mô-men quán tính khối hộp, khối lượng 1 — lite, chỉ để tỉ lệ
+     xoay hợp lý: thùng càng to càng khó xoay).
+   - Ma sát góc (luôn áp dụng, cả lúc đang đẩy): |angVel| trừ dần
+     angularFriction*dt về 0, rồi kẹp |angVel| <= maxAngVel.
+   - rotY += angVel*dt (chuẩn hoá về [-PI, PI]); va chạm AABB-vs-AABB
+     như cũ — LITE: va chạm KHÔNG xoay theo rotY (hộp vẫn tính AABB
+     theo size gốc), rotY chủ yếu là hiệu ứng xoay/quán tính.
+   Trả {crate, moved, blocked} (crate gồm đủ field đã chuẩn hoá). ---- */
+function edPhysicsCrateSlideStep(c, dir, dt, boxes, opts) {
+  var o = opts || {};
+  var pushSpeed = (Number(o.pushSpeed) > 0) ? Number(o.pushSpeed) : ED_PHYSICS_CRATE_PUSH_SPEED;
+  var friction = (Number(o.friction) >= 0) ? Number(o.friction) : ED_PHYSICS_CRATE_FRICTION;
+  var angFriction = (Number(o.angularFriction) >= 0) ? Number(o.angularFriction) : ED_PHYSICS_CRATE_ANGULAR_FRICTION;
+  var maxAngVel = (Number(o.maxAngVel) > 0) ? Number(o.maxAngVel) : ED_PHYSICS_CRATE_MAX_ANG_VEL;
+  var dt2 = (Number(dt) > 0) ? Math.min(0.1, Number(dt)) : 0.016;
+  var pos = [c.pos[0], c.pos[1], c.pos[2]];
+  var vel = [c.vel[0], c.vel[1]];
+  var rotY = c.rotY, angVel = c.angVel;
+  var hx = c.size[0] / 2, hz = c.size[1] / 2;
+  var pushing = Array.isArray(dir) && (dir[0] !== 0 || dir[1] !== 0);
+  if (pushing) {
     var len = Math.sqrt(dir[0] * dir[0] + dir[1] * dir[1]);
-    vel = [dir[0] / len * pushSpeed, dir[1] / len * pushSpeed];
+    var ux = dir[0] / len, uz = dir[1] / len;
+    vel = [ux * pushSpeed, uz * pushSpeed];
+    var off = edPhysicsPushOffset(pos, o);
+    if (off) {
+      var torque = edPhysicsPushTorque([ux, uz], off);
+      var inertia = (c.size[0] * c.size[0] + c.size[1] * c.size[1]) / 12;
+      if (!(inertia > 0.01)) inertia = 0.01;
+      angVel += (torque * pushSpeed / inertia) * dt2;
+    }
   } else {
     var sp = Math.sqrt(vel[0] * vel[0] + vel[1] * vel[1]);
     if (sp > 0) {
@@ -316,11 +413,19 @@ function edPhysicsPushCrate(crate, dir, dt, boxes, opts) {
       else vel = [vel[0] / sp * ns, vel[1] / sp * ns];
     }
   }
+  /* Ma sát góc: trừ dần về 0 (cả lúc đang đẩy lẫn khi đã buông). */
+  if (angVel > 0) angVel = Math.max(0, angVel - angFriction * dt2);
+  else if (angVel < 0) angVel = Math.min(0, angVel + angFriction * dt2);
+  if (angVel > maxAngVel) angVel = maxAngVel;
+  else if (angVel < -maxAngVel) angVel = -maxAngVel;
+  rotY += angVel * dt2;
+  while (rotY > Math.PI) rotY -= 2 * Math.PI;
+  while (rotY < -Math.PI) rotY += 2 * Math.PI;
   var nx = pos[0] + vel[0] * dt2;
   var nz = pos[2] + vel[1] * dt2;
   var blocked = false;
   /* Va chạm AABB-vs-AABB, chỉ xét XZ (giả định lite: thùng và box cản
-     đều đứng trên mặt đất). */
+     đều đứng trên mặt đất; rotY KHÔNG làm thay đổi AABB). */
   for (var i = 0; i < (boxes || []).length; i++) {
     var b = boxes[i];
     if (!b) continue;
@@ -337,7 +442,113 @@ function edPhysicsPushCrate(crate, dir, dt, boxes, opts) {
     }
   }
   var moved = Math.abs(nx - pos[0]) > 1e-9 || Math.abs(nz - pos[2]) > 1e-9;
-  return { crate: { pos: [nx, pos[1], nz], vel: vel, size: size }, moved: moved, blocked: blocked };
+  return {
+    crate: { pos: [nx, pos[1], nz], vel: vel, velY: c.velY, rotY: rotY, angVel: angVel, size: c.size, height: c.height },
+    moved: moved, blocked: blocked
+  };
+}
+
+/* ---- Đẩy 1 thùng/crate 1 bước (đợt 3, mở rộng đợt 5: thêm xoay).
+   crate: {pos:[x,y,z], vel:[vx,vz], size:[sx,sz],
+     rotY? (góc quanh Y), angVel? (vận tốc góc), height?}.
+   dir: [dx,dz] hướng đẩy (hero đang đẩy) hoặc null (không ai đẩy).
+   boxes: box TĨNH (không gồm thùng khác — không đẩy dây chuyền).
+   opts: {pushSpeed, friction, angularFriction, maxAngVel,
+     pushPoint ([x,z]/{x,z}: điểm đẩy trong world — lệch tâm thì thùng
+     vừa trượt vừa xoay), offset ([rx,rz]: độ lệch tâm trực tiếp)}.
+   y của thùng KHÔNG đổi (thùng nằm trên mặt đất; rơi/chồng thùng xem
+   edPhysicsCrateStep). Chữ ký giữ nguyên đợt 3 — code cũ gọi vẫn chạy,
+   chỉ thêm field rotY/angVel/velY/height vào object crate trả về.
+   - Đang bị đẩy: vel = dir * pushSpeed; đẩy lệch tâm sinh mô-men
+     (xem edPhysicsPushTorque) làm angVel tăng, rotY đổi theo.
+   - Không bị đẩy: ma sát tuyến tính trừ dần tốc độ tới 0; ma sát góc
+     trừ dần angVel về 0 (thùng dừng xoay hẳn sau khi buông).
+   - Gặp vật cản: đẩy AABB ra theo trục xuyên ít nhất, vel trục đó = 0.
+   Trả {crate:{pos, vel, velY, rotY, angVel, size, height}, moved, blocked}. ---- */
+function edPhysicsPushCrate(crate, dir, dt, boxes, opts) {
+  var c = edPhysicsNormalizeCrate(crate);
+  return edPhysicsCrateSlideStep(c, dir, dt, boxes, opts);
+}
+
+/* ---- Đợt 5 — mặt đỡ dưới 1 thùng: max(đất, mặt trên crate dưới). ----
+   crates: các thùng khác (cùng dạng crate, đã có pos/size/height).
+   Chỉ tính crate dưới khi XZ chồng lấn VÀ mặt trên của nó không cao hơn
+   đáy thùng đang xét quá ED_PHYSICS_GROUND_SNAP (nó là "sàn", không phải
+   "tường" bên cạnh). Trả {support, supportedBy} (supportedBy = id của
+   crate đỡ, hoặc null khi đỡ bởi mặt đất). Thuần. ---- */
+function edPhysicsCrateSupport(crate, crates, groundY) {
+  var support = (typeof groundY === 'number' && isFinite(groundY)) ? groundY : 0;
+  var supportedBy = null;
+  var hx = crate.size[0] / 2, hz = crate.size[1] / 2;
+  for (var i = 0; i < (crates || []).length; i++) {
+    var o = crates[i];
+    if (!o || o === crate) continue;
+    if (crate.id != null && o.id != null && o.id === crate.id) continue;
+    var oc = edPhysicsNormalizeCrate(o);
+    if (Math.abs(oc.pos[0] - crate.pos[0]) >= hx + oc.size[0] / 2) continue;
+    if (Math.abs(oc.pos[2] - crate.pos[2]) >= hz + oc.size[1] / 2) continue;
+    var top = oc.pos[1] + oc.height;
+    if (top > crate.pos[1] + ED_PHYSICS_GROUND_SNAP) continue;
+    if (top > support) { support = top; supportedBy = (o.id != null ? o.id : null); }
+  }
+  return { support: support, supportedBy: supportedBy };
+}
+
+/* ---- Đợt 5 — 1 bước cập nhật đầy đủ cho 1 thùng: trượt + xoay +
+   chồng + rơi (API thuần để Play Mode gọi mỗi frame, qua guard typeof).
+   crate: như edPhysicsPushCrate (thêm velY? khi đang rơi).
+   dt: giây. boxes: box tĩnh. crates: các thùng khác (kể cả thùng đang
+   đỡ crate này — chồng nhau theo trục Y).
+   opts (optional): như edPhysicsPushCrate + {dir (hướng đẩy, nếu có),
+     gravity (mặc định 20), groundY (mặt đất, mặc định 0),
+     heights/size/segments (địa hình — groundY lấy max với heightAt)}.
+   Thứ tự 1 bước: trượt + xoay (như pushCrate, dir lấy từ opts.dir) ->
+   tính mặt đỡ tại XZ mới (đất / mặt trên crate dưới) -> trọng lực:
+   chưa chạm mặt đỡ thì velY -= g*dt, y += velY*dt; chạm mặt đỡ thì
+   y = mặt đỡ, velY = 0, resting = true. Crate dưới bị đẩy đi (không
+   còn chồng XZ) -> mặt đỡ tụt về đất -> crate trên rơi (y giảm).
+   LITE: chồng thùng chỉ là resting contact theo trục Y — crate trên
+   KHÔNG bị kéo theo khi crate dưới trượt ngang, và 2 thùng cạnh nhau
+   theo XZ không đẩy nhau (không có va chạm ngang thùng-thùng).
+   Trả {crate:{pos, vel, velY, rotY, angVel, size, height},
+     moved, blocked, resting, supportedBy}. ---- */
+function edPhysicsCrateStep(crate, dt, boxes, crates, opts) {
+  var o = opts || {};
+  var c = edPhysicsNormalizeCrate(crate);
+  var dt2 = (Number(dt) > 0) ? Math.min(0.1, Number(dt)) : 0.016;
+  var g = (Number(o.gravity) > 0) ? Number(o.gravity) : ED_PHYSICS_GRAVITY;
+  var slide = edPhysicsCrateSlideStep(c, o.dir || null, dt, boxes, o);
+  var nc = slide.crate;
+  var groundY = (typeof o.groundY === 'number' && isFinite(o.groundY)) ? o.groundY : 0;
+  if (o.heights) {
+    var gh = edPhysicsHeightAt(o.heights, nc.pos[0], nc.pos[2], o.size, o.segments);
+    if (gh > groundY) groundY = gh;
+  }
+  /* Mặt đỡ tính với crate đã trượt (XZ mới) — crate dưới vừa bị đẩy
+     đi thì XZ không còn chồng, mặt đỡ tụt về đất, crate trên rơi. */
+  var sup = edPhysicsCrateSupport(
+    { pos: nc.pos, size: nc.size, height: nc.height, id: (crate && crate.id != null) ? crate.id : null },
+    crates, groundY);
+  var vy = nc.velY;
+  var y0 = nc.pos[1];
+  var resting = false;
+  if (nc.pos[1] <= sup.support + 1e-9 && vy <= 0) {
+    nc.pos[1] = sup.support;
+    vy = 0;
+    resting = true;
+  } else {
+    vy -= g * dt2;
+    if (vy < -ED_PHYSICS_TERMINAL) vy = -ED_PHYSICS_TERMINAL;
+    nc.pos[1] += vy * dt2;
+    if (nc.pos[1] <= sup.support) {
+      nc.pos[1] = sup.support;
+      vy = 0;
+      resting = true;
+    }
+  }
+  nc.velY = vy;
+  var moved = slide.moved || Math.abs(nc.pos[1] - y0) > 1e-9;
+  return { crate: nc, moved: moved, blocked: slide.blocked, resting: resting, supportedBy: sup.supportedBy };
 }
 
 /* ---- 1 bước rơi cho 1 prop.
@@ -382,6 +593,10 @@ ED.Physics = {
   GROUND_SNAP: ED_PHYSICS_GROUND_SNAP,
   CRATE_PUSH_SPEED: ED_PHYSICS_CRATE_PUSH_SPEED,
   CRATE_FRICTION: ED_PHYSICS_CRATE_FRICTION,
+  /* Đợt 5 — xoay/quán tính góc + label physics-lite cho panel Play. */
+  CRATE_ANGULAR_FRICTION: ED_PHYSICS_CRATE_ANGULAR_FRICTION,
+  CRATE_MAX_ANG_VEL: ED_PHYSICS_CRATE_MAX_ANG_VEL,
+  LITE_LABEL: ED_PHYSICS_LITE_LABEL,
   NON_SOLID_TYPES: ED_PHYSICS_NON_SOLID_TYPES,
   /* Hàm thuần — test được bằng vm + stub THREE (không cần DOM/THREE). */
   heightAt: edPhysicsHeightAt,
@@ -395,7 +610,13 @@ ED.Physics = {
   resolveCapsule: edPhysicsResolveCapsule,
   moveCapsule: edPhysicsMoveCapsule,
   pushCrate: edPhysicsPushCrate,
-  stepFallingProp: edPhysicsStepFallingProp
+  stepFallingProp: edPhysicsStepFallingProp,
+  /* Đợt 5 — thùng xoay/quán tính + chồng/rơi. */
+  crateStep: edPhysicsCrateStep,
+  crateHeight: edPhysicsCrateHeight,
+  crateSupport: edPhysicsCrateSupport,
+  pushTorque: edPhysicsPushTorque,
+  pushOffset: edPhysicsPushOffset
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = ED;

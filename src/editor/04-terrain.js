@@ -12,6 +12,12 @@
    16-bit LE (parseRawHeightmap thuần), chia mặt đất thành chunk 4×4
    (16 mesh riêng, getChunkInfo), xói mòn thủy lực giọt nước
    (erodeStep thuần + erodeDropletsAsync chạy từng đợt, có Hủy).
+   Đợt 5: LOD 3 mức cho từng chunk (edTerrainLodLevel thuần +
+   updateLod/getLodInfo, mép chunk snap để không hở khe, hysteresis
+   ±10%, chỉ rebuild chunk đổi mức + chunk kề), xói mòn dòng chảy tích
+   lũy (edTerrainFlowMap D8 + edTerrainErodeFlow thuần, deterministic,
+   chạy từng lượt không khoá UI, có Hủy). Mức LOD chỉ sống trong phiên,
+   không lưu vào project JSON.
    Quy tắc DESIGN.md: KHÔNG truy cập document/window/THREE ở top-level.
    ========================================================================== */
 var ED = (typeof ED !== 'undefined') ? ED : {};
@@ -226,6 +232,136 @@ ED.Terrain = (function () {
     return { heights: h, paints: p };
   }
 
+  /* ---- Logic thuần đợt 5: LOD chunk. ----
+     Mỗi chunk có 3 mức: 0 = đủ lưới (16 segment), 1 = một nửa
+     (8 segment, giữ mỗi đỉnh chẵn), 2 = ~1/4 (4 segment, giữ đỉnh góc
+     + vài đỉnh giữa). Mọi mức đều giữ đỉnh góc chunk (0 và 16) nên
+     lưới con luôn khớp lưới cha tại góc; đỉnh biên của chunk mịn hơn
+     mà nằm giữa 2 đỉnh của chunk kề thô hơn thì được snap về nội suy
+     tuyến tính theo 2 đỉnh thô đó, nên 2 mép trùng khít, không hở khe. */
+
+  /* Số segment mỗi cạnh chunk theo mức LOD (0/1/2). */
+  var LOD_SEGMENTS = [16, 8, 4];
+  var LOD_STEPS = [1, 2, 4]; // bước lấy mẫu đỉnh theo mức
+  var LOD_DEFAULT_NEAR = 35; // gần hơn: mức 0
+  var LOD_DEFAULT_FAR = 70;  // xa hơn: mức 2
+  function lodLevelClamped(level) {
+    level = Math.round(Number(level) || 0);
+    return level < 0 ? 0 : (level > 2 ? 2 : level);
+  }
+  /* Chuẩn hoá ngưỡng: nhận {near, far} | {mid, far} | [near, far] | null.
+     Luôn trả {near, far} với far > near. */
+  function normalizeLodThresholds(thresholds) {
+    var near = LOD_DEFAULT_NEAR, far = LOD_DEFAULT_FAR;
+    if (thresholds) {
+      if (typeof thresholds.length === 'number' && thresholds.length >= 2) {
+        near = Number(thresholds[0]); far = Number(thresholds[1]);
+      } else {
+        if (thresholds.near != null) near = Number(thresholds.near);
+        else if (thresholds.mid != null) near = Number(thresholds.mid);
+        if (thresholds.far != null) far = Number(thresholds.far);
+      }
+    }
+    if (!isFinite(near) || near < 0) near = LOD_DEFAULT_NEAR;
+    if (!isFinite(far) || far <= near) far = near + 5;
+    return { near: near, far: far };
+  }
+  /* edTerrainLodLevel(dist, thresholds): mức LOD theo khoảng cách, KHÔNG
+     hysteresis (dùng để test bảng mức). dist < near -> 0, < far -> 1,
+     còn lại -> 2. thresholds mặc định {near:35, far:70}. */
+  function edTerrainLodLevel(dist, thresholds) {
+    var t = normalizeLodThresholds(thresholds);
+    dist = Number(dist) || 0;
+    if (dist < 0) dist = 0;
+    if (dist < t.near) return 0;
+    if (dist < t.far) return 1;
+    return 2;
+  }
+  /* edTerrainLodNextLevel(dist, currentLevel, thresholds): mức tiếp theo
+     CÓ hysteresis ±10% — đổi mức chỉ khi vượt ngưỡng:
+     - thô dần (0->1, 1->2): cần dist > ngưỡng * 1.1;
+     - mịn dần (1->0, 2->1): cần dist < ngưỡng * 0.9;
+     - nhảy 2 mức 1 lần thì đi từng mức (0->2 thành 1 nếu chưa vượt
+       ngưỡng far * 1.1; 2->0 thành 1 nếu chưa xuống dưới near * 0.9). */
+  function edTerrainLodNextLevel(dist, currentLevel, thresholds) {
+    var t = normalizeLodThresholds(thresholds);
+    var cur = lodLevelClamped(currentLevel);
+    var target = edTerrainLodLevel(dist, t);
+    if (target === cur) return cur;
+    if (target > cur) {
+      var bUp = (target === 2) ? t.far : t.near;
+      if (dist > bUp * 1.1) return target;
+      if (cur === 0 && target === 2 && dist > t.near * 1.1) return 1;
+      return cur;
+    }
+    var bDown = (target === 0) ? t.near : t.far;
+    if (dist < bDown * 0.9) return target;
+    if (cur === 2 && target === 0 && dist < t.far * 0.9) return 1;
+    return cur;
+  }
+
+  /* edTerrainLodGrid(heights, paints, cx, cz, level, neighborLevels):
+     lưới đỉnh của 1 chunk ở 1 mức LOD, thứ tự hàng mặt phẳng như
+     chunkCells (iz cục bộ 0..segs, ix cục bộ 0..segs; đỉnh (ix, iz)
+     lấy heights[idx(gx, SEGMENTS-gz)]).
+     neighborLevels: {left, right, top, bottom} = mức LOD của chunk kề
+     (null = không có chunk kề / cùng mức). Chunk kề thô hơn thì đỉnh
+     biên nằm giữa 2 đỉnh thô được snap về nội suy tuyến tính.
+     Trả về {segments, vertsPerSide, step, level, heights, paints}.
+     heights/paints sai độ dài -> lưới 0 (như chunkCells). */
+  function edTerrainLodGrid(heights, paints, cx, cz, level, neighborLevels) {
+    level = lodLevelClamped(level);
+    var step = LOD_STEPS[level];
+    var segs = LOD_SEGMENTS[level];
+    var vps = segs + 1;
+    var h = new Array(vps * vps), p = new Array(vps * vps);
+    for (var i = 0; i < h.length; i++) { h[i] = 0; p[i] = 0; }
+    cx = clamp(Math.round(Number(cx) || 0), 0, CHUNK_COUNT - 1);
+    cz = clamp(Math.round(Number(cz) || 0), 0, CHUNK_COUNT - 1);
+    var okH = heights && heights.length === COUNT;
+    var okP = paints && paints.length === COUNT;
+    for (var iz = 0; iz < vps; iz++) {
+      var gz = cz * CHUNK_SEGMENTS + iz * step;
+      var izH = SEGMENTS - gz;
+      for (var ix = 0; ix < vps; ix++) {
+        var gx = cx * CHUNK_SEGMENTS + ix * step;
+        var k = iz * vps + ix;
+        if (okH) h[k] = heights[idx(gx, izH)];
+        if (okP) p[k] = paints[idx(gx, izH)];
+      }
+    }
+    neighborLevels = neighborLevels || {};
+    function nStepOf(key) {
+      var v = neighborLevels[key];
+      if (v == null) return step;
+      return LOD_STEPS[lodLevelClamped(v)];
+    }
+    /* Snap 1 mép: s chạy theo đơn vị segment gốc (0..16); đỉnh tại s
+       mà s % nStep !== 0 thì nội suy giữa 2 đỉnh thô s0, s1 gần nhất.
+       s0/s1 là bội của nStep nên không bao giờ tự bị snap -> đọc h
+       gốc tại đó là an toàn. */
+    function snapEdge(edge, nStep) {
+      if (nStep <= step) return;
+      for (var s = step; s < CHUNK_SEGMENTS; s += step) {
+        if (s % nStep === 0) continue;
+        var s0 = Math.floor(s / nStep) * nStep, s1 = s0 + nStep;
+        var f = (s - s0) / nStep;
+        var u0 = s0 / step, u1 = s1 / step, u = s / step;
+        var k0, k1, k;
+        if (edge === 'left') { k0 = u0 * vps; k1 = u1 * vps; k = u * vps; }
+        else if (edge === 'right') { k0 = u0 * vps + (vps - 1); k1 = u1 * vps + (vps - 1); k = u * vps + (vps - 1); }
+        else if (edge === 'top') { k0 = u0; k1 = u1; k = u; }
+        else { k0 = (vps - 1) * vps + u0; k1 = (vps - 1) * vps + u1; k = (vps - 1) * vps + u; }
+        h[k] = h[k0] + (h[k1] - h[k0]) * f;
+      }
+    }
+    snapEdge('left', nStepOf('left'));
+    snapEdge('right', nStepOf('right'));
+    snapEdge('top', nStepOf('top'));
+    snapEdge('bottom', nStepOf('bottom'));
+    return { segments: segs, vertsPerSide: vps, step: step, level: level, heights: h, paints: p };
+  }
+
   /* paintGridToTexturePlan(paints, size, heights?, opts?): mô tả từng ô của
      texture đất lớn để vẽ canvas mà không cần canvas (test được).
      - size: số ô mỗi cạnh (mặc định SEGMENTS = 64); paints dài (size+1)^2.
@@ -400,6 +536,100 @@ ED.Terrain = (function () {
     return out;
   }
 
+  /* ---- Logic thuần đợt 5: bản đồ dòng chảy + xói mòn theo dòng chảy. ----
+     Không random, deterministic hoàn toàn (hòa hướng dốc phá theo thứ
+     tự hướng D8 cố định + sắp xếp cao->thấp phá theo index). */
+
+  /* 8 hướng kề D8: [dx, dz], thứ tự cố định. dir[i] = chỉ số hướng
+     chảy của ô i (dốc nhất xuống) hoặc -1 nếu ô trũng/phẳng. */
+  var FLOW_DIRS = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
+
+  /* edTerrainFlowMap(heights, size): bản đồ dòng chảy tích lũy (D8).
+     - size: số segment mỗi cạnh (mặc định SEGMENTS); heights dài
+       (size+1)^2, sai độ dài -> flow toàn 1, dir toàn -1.
+     - Mỗi ô bắt đầu với 1 đơn vị nước của chính nó; xử lý ô cao
+       trước, đổ toàn bộ flow của ô đó xuống ô đích (hướng dốc nhất).
+     Trả về {flow: [tổng nước chảy qua mỗi ô, tính cả nước của ô đó],
+     dir: [hướng chảy 0..7 hoặc -1]}. */
+  function edTerrainFlowMap(heights, size) {
+    size = Math.max(1, Math.round(Number(size) || SEGMENTS));
+    var side = size + 1, n = side * side;
+    var flow = new Array(n), dir = new Array(n);
+    for (var i = 0; i < n; i++) { flow[i] = 1; dir[i] = -1; }
+    if (!heights || heights.length !== n) return { flow: flow, dir: dir };
+    for (var iz = 0; iz < side; iz++) {
+      for (var ix = 0; ix < side; ix++) {
+        var i0 = iz * side + ix, h0 = heights[i0], best = -1, bestSlope = 0;
+        for (var d = 0; d < 8; d++) {
+          var nx = ix + FLOW_DIRS[d][0], nz = iz + FLOW_DIRS[d][1];
+          if (nx < 0 || nx > size || nz < 0 || nz > size) continue;
+          var dh = h0 - heights[nz * side + nx];
+          if (dh <= 0) continue;
+          var dist = (FLOW_DIRS[d][0] !== 0 && FLOW_DIRS[d][1] !== 0) ? Math.SQRT2 : 1;
+          var slope = dh / dist;
+          if (slope > bestSlope) { bestSlope = slope; best = d; }
+        }
+        dir[i0] = best;
+      }
+    }
+    var order = new Array(n);
+    for (var k = 0; k < n; k++) order[k] = k;
+    order.sort(function (a, b) { return (heights[b] - heights[a]) || (a - b); });
+    for (var o = 0; o < n; o++) {
+      var cell = order[o], dd = dir[cell];
+      if (dd < 0) continue;
+      var cx2 = cell % side, cz2 = Math.floor(cell / side);
+      var tx = cx2 + FLOW_DIRS[dd][0], tz = cz2 + FLOW_DIRS[dd][1];
+      flow[tz * side + tx] += flow[cell];
+    }
+    return { flow: flow, dir: dir };
+  }
+
+  /* edTerrainErodeFlow(heights, size, opts): 1 lượt xói mòn theo bản đồ
+     dòng chảy, trả về mảng heights MỚI (không sửa mảng gốc).
+     - Ô có dòng chảy lớn (w ~ 1, w = log(1+flow)/log(1+maxFlow)) và
+       dốc thì xói mạnh -> tạo rãnh dọc dốc; ô flow nhỏ xói ít.
+     - Ô trũng/phẳng (dir = -1, không có hướng chảy) thì lắng đọng,
+       mạnh hơn khi dòng chảy tới lớn.
+     - Đất phẳng hoàn toàn (maxFlow = 1, không có dòng chảy) thì không
+       đổi gì.
+     opts: {strength 0..5 (mặc định 1), erodeRate 0..1 (mặc định 0.1),
+     depositRate 0..1 (mặc định 0.05)}. heights sai độ dài -> mảng 0. */
+  function edTerrainErodeFlow(heights, size, opts) {
+    size = Math.max(1, Math.round(Number(size) || SEGMENTS));
+    var side = size + 1, n = side * side;
+    var out = new Array(n);
+    for (var i = 0; i < n; i++) out[i] = 0;
+    if (!heights || heights.length !== n) return out;
+    for (var j = 0; j < n; j++) out[j] = heights[j];
+    opts = opts || {};
+    var strength = (opts.strength == null ? 1 : clamp(Number(opts.strength) || 0, 0, 5));
+    var erodeRate = (opts.erodeRate == null ? 0.1 : clamp(Number(opts.erodeRate) || 0, 0, 1));
+    var depositRate = (opts.depositRate == null ? 0.05 : clamp(Number(opts.depositRate) || 0, 0, 1));
+    if (strength === 0) return out;
+    var fm = edTerrainFlowMap(heights, size);
+    var maxFlow = 1;
+    for (var k = 0; k < n; k++) if (fm.flow[k] > maxFlow) maxFlow = fm.flow[k];
+    if (maxFlow <= 1) return out; // phẳng: không có dòng chảy
+    var logMax = Math.log(1 + maxFlow);
+    for (var iz = 0; iz < side; iz++) {
+      for (var ix = 0; ix < side; ix++) {
+        var i0 = iz * side + ix;
+        var w = Math.log(1 + fm.flow[i0]) / logMax; // 0..1
+        var d = fm.dir[i0];
+        if (d === -1) {
+          out[i0] += strength * depositRate * (0.5 + 0.5 * w);
+        } else {
+          var nx = ix + FLOW_DIRS[d][0], nz = iz + FLOW_DIRS[d][1];
+          var descent = heights[i0] - heights[nz * side + nx]; // >= 0
+          var slopeF = clamp(descent / 1, 0, 1);
+          out[i0] -= strength * erodeRate * w * (0.25 + 0.75 * slopeF);
+        }
+      }
+    }
+    return out;
+  }
+
   /* ---- Logic thuần đợt 2: heightmap import + erosion. ----
      edTerrainHeightsFromPixels(pixels, w, h, segments, maxHeight):
      pixels là mảng grayscale 0–255 (độ dài w*h) hoặc RGBA (độ dài
@@ -543,6 +773,12 @@ ED.Terrain = (function () {
   var _rawGridSize = 0;           // 0 = tự động theo file; 64/96/128
   var _hydro = { droplets: 2000, strength: 1 }; // slider xói mòn thủy lực
   var _erodeJob = null;           // job xói mòn bất đồng bộ đang chạy
+  /* ---- Đợt 5: state LOD + xói mòn dòng chảy (chỉ sống trong phiên,
+     KHÔNG lưu vào project JSON). ---- */
+  var _lodLevels = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; // 16 chunk, index cz*4+cx
+  var _lodThresholds = { near: LOD_DEFAULT_NEAR, far: LOD_DEFAULT_FAR };
+  var _flowJob = null;            // job xói mòn dòng chảy đang chạy
+  var _flowSettings = { passes: 5, strength: 1 }; // slider xói mòn dòng chảy
   function getHeightmapMax() { return _maxHeight; }
   function setHeightmapMax(v) { v = Number(v); _maxHeight = clamp(isFinite(v) ? v : 8, 1, 20); return _maxHeight; }
   function getErodeIterations() { return _erodeIterations; }
@@ -642,6 +878,67 @@ ED.Terrain = (function () {
     return true;
   }
   function isEroding() { return !!_erodeJob; }
+
+  /* ---- Đợt 5: xói mòn dòng chảy trên state (bất đồng bộ, từng lượt). ---- */
+  function getFlowSettings() { return { passes: _flowSettings.passes, strength: _flowSettings.strength }; }
+  function setFlowSettings(partial) {
+    if (!partial) return getFlowSettings();
+    if (partial.passes != null) _flowSettings.passes = clamp(Math.round(Number(partial.passes) || 5), 1, 20);
+    if (partial.strength != null) _flowSettings.strength = clamp(Number(partial.strength) || 1, 0.1, 2);
+    return getFlowSettings();
+  }
+  /* Xói mòn dòng chảy bất đồng bộ: chạy từng lượt 1 bằng setTimeout
+     (không khoá UI), onProgress(done, total), onDone({cancelled, done}).
+     pushHistory chụp TRƯỚC khi chạy; địa hình chỉ áp dụng 1 lần khi
+     xong (hủy giữa chừng thì địa hình giữ nguyên). Trả về job
+     {cancelled, timer, total}. */
+  function erodeFlowAsync(passes, strength, onProgress, onDone) {
+    var total = clamp(Math.round(Number(passes) || 5), 1, 20);
+    var str = clamp(Number(strength) || 1, 0.1, 2);
+    cancelErodeFlow();
+    if (ED.Core && typeof ED.Core.pushHistory === 'function') ED.Core.pushHistory('Terrain: xói mòn dòng chảy');
+    var base = _heights.slice();
+    var done = 0;
+    var job = { cancelled: false, timer: null, total: total, done: 0 };
+    function callDone(res) {
+      if (job._doneCalled) return;
+      job._doneCalled = true;
+      if (typeof onDone === 'function') { try { onDone(res); } catch (e) {} }
+    }
+    job._callDone = callDone;
+    function tick() {
+      if (job.cancelled) { callDone({ cancelled: true, done: job.done }); return; }
+      base = edTerrainErodeFlow(base, SEGMENTS, { strength: str });
+      done++;
+      job.done = done;
+      if (typeof onProgress === 'function') { try { onProgress(done, total); } catch (e) {} }
+      if (job.cancelled) return; // cancelErodeFlow đã gọi onDone
+      if (done < total) {
+        job.timer = setTimeout(tick, 0);
+      } else {
+        _heights = base;
+        _groundTextureDirty = true;
+        syncToProject(); markDirtyPush(); rebuildMesh(); refreshViewportTerrain();
+        _flowJob = null;
+        callDone({ cancelled: false, done: done });
+      }
+    }
+    _flowJob = job;
+    job.timer = setTimeout(tick, 0);
+    return job;
+  }
+  /* Hủy job xói mòn dòng chảy đang chạy (địa hình giữ nguyên). onDone
+     của job vẫn được gọi 1 lần với {cancelled: true} để UI cập nhật. */
+  function cancelErodeFlow() {
+    if (!_flowJob) return false;
+    var job = _flowJob;
+    job.cancelled = true;
+    if (job.timer) { try { clearTimeout(job.timer); } catch (e) {} }
+    _flowJob = null;
+    if (typeof job._callDone === 'function') { try { job._callDone({ cancelled: true, done: job.done || 0 }); } catch (e) {} }
+    return true;
+  }
+  function isErodingFlow() { return !!_flowJob; }
   function setUseGroundTexture(v) {
     _useGroundTexture = !!v;
     _groundTextureDirty = true;
@@ -688,51 +985,91 @@ ED.Terrain = (function () {
     _chunks = [];
     _mesh = null;
   }
+  /* Mức LOD của chunk kề (null = không có chunk kề ở mép map). */
+  function neighborLodLevels(cx, cz) {
+    function lv(x, z) {
+      if (x < 0 || x >= CHUNK_COUNT || z < 0 || z >= CHUNK_COUNT) return null;
+      return _lodLevels[z * CHUNK_COUNT + x];
+    }
+    return { left: lv(cx - 1, cz), right: lv(cx + 1, cz), top: lv(cx, cz - 1), bottom: lv(cx, cz + 1) };
+  }
+  /* Dựng 1 mesh chunk ở 1 mức LOD (lưới lấy từ edTerrainLodGrid, đã
+     snap mép theo chunk kề). Không thêm vào scene, không chạm _chunks. */
+  function buildChunkMesh(cx, cz, level) {
+    var grid = edTerrainLodGrid(_heights, _paints, cx, cz, level, neighborLodLevels(cx, cz));
+    var vps = grid.vertsPerSide;
+    var geo = new THREE.PlaneGeometry(SIZE / CHUNK_COUNT, SIZE / CHUNK_COUNT, grid.segments, grid.segments);
+    var tex = _useGroundTexture ? getGroundTexture() : null;
+    var mat = new THREE.MeshStandardMaterial({ vertexColors: !tex, roughness: 0.9 });
+    if (tex) mat.map = tex;
+    var mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(
+      (cx * CHUNK_SEGMENTS + CHUNK_SEGMENTS / 2) / SEGMENTS * SIZE - SIZE / 2, 0,
+      (cz * CHUNK_SEGMENTS + CHUNK_SEGMENTS / 2) / SEGMENTS * SIZE - SIZE / 2);
+    mesh.receiveShadow = true;
+    mesh.userData.isTerrain = true;
+    mesh.userData.chunkX = cx;
+    mesh.userData.chunkZ = cz;
+    mesh.userData.lodLevel = grid.level;
+    var pos = geo.attributes.position;
+    var uv = geo.attributes.uv;
+    var colors = new Float32Array(pos.count * 3);
+    for (var v = 0; v < pos.count; v++) {
+      var ix = v % vps;
+      var iz = Math.floor(v / vps);
+      var gx = cx * CHUNK_SEGMENTS + ix * grid.step;
+      var gz = cz * CHUNK_SEGMENTS + iz * grid.step;
+      pos.setZ(v, grid.heights[iz * vps + ix]);
+      var c = PAINT_COLORS[grid.paints[iz * vps + ix] || 0];
+      colors[v * 3] = c[0]; colors[v * 3 + 1] = c[1]; colors[v * 3 + 2] = c[2];
+      if (uv && uv.setXY) uv.setXY(v, gx / SEGMENTS, 1 - gz / SEGMENTS);
+    }
+    pos.needsUpdate = true;
+    if (uv) uv.needsUpdate = true;
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
+    return mesh;
+  }
+  /* Dựng lại riêng 1 chunk đã có trong _chunks (đổi mức LOD hoặc đổi
+     mép snap). Trả về mesh mới, null khi chưa có viewport/mesh. */
+  function rebuildChunkMesh(cx, cz) {
+    if (typeof THREE === 'undefined') return null;
+    var scene = ED.Viewport && ED.Viewport.scene;
+    if (!scene) return null;
+    for (var i = 0; i < _chunks.length; i++) {
+      if (_chunks[i].cx === cx && _chunks[i].cz === cz) {
+        var old = _chunks[i].mesh;
+        if (old) {
+          try { scene.remove(old); } catch (e) {}
+          try { if (old.geometry && old.geometry.dispose) old.geometry.dispose(); } catch (e) {}
+          try { if (old.material && old.material.dispose) old.material.dispose(); } catch (e) {}
+        }
+        var mesh = buildChunkMesh(cx, cz, _lodLevels[cz * CHUNK_COUNT + cx]);
+        scene.add(mesh);
+        _chunks[i].mesh = mesh;
+        if (i === 0) _mesh = mesh;
+        return mesh;
+      }
+    }
+    return null;
+  }
   function rebuildMesh() {
     if (typeof THREE === 'undefined') return null;
     var scene = ED.Viewport && ED.Viewport.scene;
     if (!scene) return null;
     disposeChunks();
-    var tex = _useGroundTexture ? getGroundTexture() : null;
     for (var cz = 0; cz < CHUNK_COUNT; cz++) {
       for (var cx = 0; cx < CHUNK_COUNT; cx++) {
-        var cell = chunkCells(_heights, _paints, cx, cz);
-        var geo = new THREE.PlaneGeometry(SIZE / CHUNK_COUNT, SIZE / CHUNK_COUNT, CHUNK_SEGMENTS, CHUNK_SEGMENTS);
-        var mat = new THREE.MeshStandardMaterial({ vertexColors: !tex, roughness: 0.9 });
-        if (tex) mat.map = tex;
-        var mesh = new THREE.Mesh(geo, mat);
-        mesh.rotation.x = -Math.PI / 2;
-        mesh.position.set(
-          (cx * CHUNK_SEGMENTS + CHUNK_SEGMENTS / 2) / SEGMENTS * SIZE - SIZE / 2, 0,
-          (cz * CHUNK_SEGMENTS + CHUNK_SEGMENTS / 2) / SEGMENTS * SIZE - SIZE / 2);
-        mesh.receiveShadow = true;
-        mesh.userData.isTerrain = true;
-        mesh.userData.chunkX = cx;
-        mesh.userData.chunkZ = cz;
-        var pos = geo.attributes.position;
-        var uv = geo.attributes.uv;
-        var colors = new Float32Array(pos.count * 3);
-        for (var v = 0; v < pos.count; v++) {
-          var ix = v % CHUNK_VERTS;
-          var iz = Math.floor(v / CHUNK_VERTS);
-          var gx = cx * CHUNK_SEGMENTS + ix;
-          var gz = cz * CHUNK_SEGMENTS + iz;
-          pos.setZ(v, cell.heights[iz * CHUNK_VERTS + ix]);
-          var c = PAINT_COLORS[cell.paints[iz * CHUNK_VERTS + ix] || 0];
-          colors[v * 3] = c[0]; colors[v * 3 + 1] = c[1]; colors[v * 3 + 2] = c[2];
-          if (uv && uv.setXY) uv.setXY(v, gx / SEGMENTS, 1 - gz / SEGMENTS);
-        }
-        pos.needsUpdate = true;
-        if (uv) uv.needsUpdate = true;
-        geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-        geo.computeVertexNormals();
-        geo.computeBoundingSphere();
+        var mesh = buildChunkMesh(cx, cz, _lodLevels[cz * CHUNK_COUNT + cx]);
         scene.add(mesh);
         _chunks.push({ cx: cx, cz: cz, mesh: mesh });
       }
     }
     _mesh = _chunks.length ? _chunks[0].mesh : null;
     updateChunkInfoLine();
+    updateLodInfoLine();
     return _mesh;
   }
   function getMesh() { return _mesh; }
@@ -762,6 +1099,76 @@ ED.Terrain = (function () {
     if (!el) return;
     var info = getChunkInfo();
     el.textContent = 'Chunk: ' + info.chunks + ' · hiện: ' + info.visible + ' · đỉnh: ' + info.totalVerts;
+  }
+
+  /* ---- Đợt 5: LOD runtime. ----
+     updateLod(cameraPos): tính mức LOD mới cho 16 chunk theo khoảng
+     cách từ camera tới tâm chunk (tâm lấy cao độ thực tế), có
+     hysteresis ±10% qua edTerrainLodNextLevel. Chỉ rebuild chunk đổi
+     mức + chunk kề của nó (mép snap của chunk kề phụ thuộc mức mới).
+     Không có viewport/mesh thì vẫn cập nhật mức + trả changed (để
+     test Node + để coordinator đọc getLodInfo). Gọi mỗi frame hoặc
+     mỗi 0.25s từ vòng lặp chính. Trả về {changed: [index chunk đổi
+     mức], levels: [16 mức hiện tại]}. */
+  function getLodLevels() { return _lodLevels.slice(); }
+  function getLodThresholds() { return { near: _lodThresholds.near, far: _lodThresholds.far }; }
+  function setLodThresholds(partial) {
+    if (!partial) return getLodThresholds();
+    if (partial.near != null) _lodThresholds.near = clamp(Number(partial.near) || LOD_DEFAULT_NEAR, 5, 200);
+    else if (partial.mid != null) _lodThresholds.near = clamp(Number(partial.mid) || LOD_DEFAULT_NEAR, 5, 200);
+    if (partial.far != null) _lodThresholds.far = clamp(Number(partial.far) || LOD_DEFAULT_FAR, 5, 300);
+    if (_lodThresholds.far <= _lodThresholds.near) _lodThresholds.far = _lodThresholds.near + 5;
+    return getLodThresholds();
+  }
+  /* getLodInfo(): {levels: [số chunk mức 0, mức 1, mức 2], total: 16}
+     cho coordinator hiện trong panel perf. Mức LOD không lưu project. */
+  function getLodInfo() {
+    var counts = [0, 0, 0];
+    for (var i = 0; i < _lodLevels.length; i++) counts[lodLevelClamped(_lodLevels[i])]++;
+    return { levels: counts, total: CHUNK_TOTAL };
+  }
+  function updateLod(cameraPos) {
+    if (!cameraPos) return { changed: [], levels: getLodLevels() };
+    var px = Number(cameraPos.x) || 0, py = Number(cameraPos.y) || 0, pz = Number(cameraPos.z) || 0;
+    var newLevels = new Array(CHUNK_TOTAL);
+    for (var cz = 0; cz < CHUNK_COUNT; cz++) {
+      for (var cx = 0; cx < CHUNK_COUNT; cx++) {
+        var centerX = (cx * CHUNK_SEGMENTS + CHUNK_SEGMENTS / 2) / SEGMENTS * SIZE - SIZE / 2;
+        var centerZ = (cz * CHUNK_SEGMENTS + CHUNK_SEGMENTS / 2) / SEGMENTS * SIZE - SIZE / 2;
+        var cy = heightAtArray(_heights, centerX, centerZ);
+        var dx = px - centerX, dy = py - cy, dz = pz - centerZ;
+        var dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        newLevels[cz * CHUNK_COUNT + cx] = edTerrainLodNextLevel(dist, _lodLevels[cz * CHUNK_COUNT + cx], _lodThresholds);
+      }
+    }
+    var changed = [];
+    for (var i = 0; i < CHUNK_TOTAL; i++) if (newLevels[i] !== _lodLevels[i]) changed.push(i);
+    if (!changed.length) return { changed: [], levels: getLodLevels() };
+    _lodLevels = newLevels;
+    var toRebuild = {}, n;
+    for (n = 0; n < changed.length; n++) {
+      var ci = changed[n];
+      var ccx = ci % CHUNK_COUNT, ccz = Math.floor(ci / CHUNK_COUNT);
+      toRebuild[ci] = true;
+      if (ccx > 0) toRebuild[ci - 1] = true;
+      if (ccx < CHUNK_COUNT - 1) toRebuild[ci + 1] = true;
+      if (ccz > 0) toRebuild[ci - CHUNK_COUNT] = true;
+      if (ccz < CHUNK_COUNT - 1) toRebuild[ci + CHUNK_COUNT] = true;
+    }
+    for (var key in toRebuild) {
+      var idx2 = Number(key);
+      rebuildChunkMesh(idx2 % CHUNK_COUNT, Math.floor(idx2 / CHUNK_COUNT));
+    }
+    updateChunkInfoLine();
+    updateLodInfoLine();
+    return { changed: changed, levels: getLodLevels() };
+  }
+  function updateLodInfoLine() {
+    if (typeof document === 'undefined' || !_panel) return;
+    var el = _panel.querySelector ? _panel.querySelector('#ed-lod-info') : null;
+    if (!el) return;
+    var info = getLodInfo();
+    el.textContent = 'LOD: ' + info.levels[0] + '×mức 0 · ' + info.levels[1] + '×mức 1 · ' + info.levels[2] + '×mức 2';
   }
 
   /* ---- Texture đất procedural (chỉ chạy trong browser, có canvas). ----
@@ -969,6 +1376,16 @@ ED.Terrain = (function () {
       '<button id="ed-hydro-cancel">Hủy</button></div>' +
       '<div class="ed-progress"><div id="ed-hydro-fill" class="ed-progress-fill"></div></div>' +
       '<div class="ed-row"><span id="ed-hydro-status" class="ed-hint">Chưa chạy.</span></div>' +
+      '<div class="ed-panel-title">🌊 Xói mòn dòng chảy (đợt 5)</div>' +
+      '<div class="ed-row"><label>Số lượt <span id="ed-flow-passes-v">5</span></label>' +
+      '<input id="ed-flow-passes" type="range" min="1" max="20" step="1" value="5"></div>' +
+      '<div class="ed-row"><label>Cường độ <span id="ed-flow-str-v">1.0</span></label>' +
+      '<input id="ed-flow-str" type="range" min="0.1" max="2" step="0.1" value="1"></div>' +
+      '<div class="ed-row"><button id="ed-flow-erode">🌊 Xói mòn dòng chảy</button>' +
+      '<button id="ed-flow-cancel">Hủy</button></div>' +
+      '<div class="ed-progress"><div id="ed-flow-fill" class="ed-progress-fill"></div></div>' +
+      '<div class="ed-row"><span id="ed-flow-status" class="ed-hint">Chưa chạy.</span></div>' +
+      '<div class="ed-row"><span id="ed-lod-info" class="ed-hint">LOD: 16×mức 0 · 0×mức 1 · 0×mức 2</span></div>' +
       '<div class="ed-hint">Kéo chuột trên viewport ở chế độ Địa hình để nâng/hạ đất; giữ để tô. Heightmap: ảnh xám, trắng = cao nhất, đen = thấp nhất; ảnh lớn tự thu nhỏ về 512px.</div>';
     panel.innerHTML = h;
     var mode = panel.querySelector('#ed-brush-mode');
@@ -1075,6 +1492,7 @@ ED.Terrain = (function () {
       toast(texToggle.checked ? 'Đã bật texture đất.' : 'Đã tắt texture đất (màu đỉnh).');
     });
     updateChunkInfoLine();
+    updateLodInfoLine();
     var rawGrid = panel.querySelector('#ed-raw-grid');
     rawGrid.value = String(_rawGridSize);
     rawGrid.addEventListener('change', function () { setRawGridSize(Number(rawGrid.value)); });
@@ -1150,6 +1568,58 @@ ED.Terrain = (function () {
         hydroStatus.textContent = 'Đã hủy (địa hình giữ nguyên).';
       }
     });
+
+    /* ---- Đợt 5: xói mòn dòng chảy (từng lượt, có Hủy) + dòng LOD. ---- */
+    var flowPasses = panel.querySelector('#ed-flow-passes');
+    var flowPassesLab = panel.querySelector('#ed-flow-passes-v');
+    var flowStr = panel.querySelector('#ed-flow-str');
+    var flowStrLab = panel.querySelector('#ed-flow-str-v');
+    var flowBtn = panel.querySelector('#ed-flow-erode');
+    var flowCancel = panel.querySelector('#ed-flow-cancel');
+    var flowFill = panel.querySelector('#ed-flow-fill');
+    var flowStatus = panel.querySelector('#ed-flow-status');
+    flowPasses.addEventListener('input', function () {
+      setFlowSettings({ passes: Number(flowPasses.value) });
+      flowPassesLab.textContent = String(_flowSettings.passes);
+    });
+    flowStr.addEventListener('input', function () {
+      setFlowSettings({ strength: Number(flowStr.value) });
+      flowStrLab.textContent = Number(_flowSettings.strength).toFixed(1);
+    });
+    flowCancel.disabled = true;
+    flowBtn.addEventListener('click', function () {
+      if (isErodingFlow()) return;
+      flowBtn.disabled = true;
+      flowCancel.disabled = false;
+      flowFill.style.width = '0%';
+      flowStatus.textContent = 'Đang xói mòn dòng chảy: 0/' + _flowSettings.passes + ' lượt…';
+      erodeFlowAsync(_flowSettings.passes, _flowSettings.strength, function (done, total) {
+        var pct = Math.round(done / total * 100);
+        flowFill.style.width = pct + '%';
+        flowStatus.textContent = 'Đang xói mòn dòng chảy: ' + done + '/' + total + ' lượt (' + pct + '%)…';
+      }, function (res) {
+        flowBtn.disabled = false;
+        flowCancel.disabled = true;
+        if (res.cancelled) {
+          flowStatus.textContent = 'Đã hủy sau ' + res.done + ' lượt (địa hình giữ nguyên).';
+          toast('Đã hủy xói mòn dòng chảy.');
+        } else {
+          flowFill.style.width = '100%';
+          var fm = edTerrainFlowMap(_heights, SEGMENTS);
+          var mf = 0;
+          for (var i = 0; i < fm.flow.length; i++) if (fm.flow[i] > mf) mf = fm.flow[i];
+          flowStatus.textContent = 'Xong: ' + res.done + ' lượt · dòng chảy lớn nhất: ' + mf + '.';
+          toast('Đã xói mòn dòng chảy (' + res.done + ' lượt).');
+        }
+      });
+    });
+    flowCancel.addEventListener('click', function () {
+      if (cancelErodeFlow()) {
+        flowBtn.disabled = false;
+        flowCancel.disabled = true;
+        flowStatus.textContent = 'Đã hủy (địa hình giữ nguyên).';
+      }
+    });
   }
 
   return {
@@ -1169,12 +1639,23 @@ ED.Terrain = (function () {
     importRawHeightmap: importRawHeightmap,
     chunkLayout: chunkLayout, chunkCells: chunkCells,
     getChunkInfo: getChunkInfo, getChunkMeshes: getChunkMeshes,
+    LOD_SEGMENTS: LOD_SEGMENTS, LOD_STEPS: LOD_STEPS,
+    edTerrainLodLevel: edTerrainLodLevel, edTerrainLodNextLevel: edTerrainLodNextLevel,
+    edTerrainLodGrid: edTerrainLodGrid,
+    updateLod: updateLod, getLodInfo: getLodInfo, getLodLevels: getLodLevels,
+    getLodThresholds: getLodThresholds, setLodThresholds: setLodThresholds,
+    rebuildChunkMesh: rebuildChunkMesh,
     setUseGroundTexture: setUseGroundTexture, getUseGroundTexture: getUseGroundTexture,
     getGroundTexture: getGroundTexture, buildGroundTextureCanvas: buildGroundTextureCanvas,
     getRawGridSize: getRawGridSize, setRawGridSize: setRawGridSize,
     getHydroSettings: getHydroSettings, setHydroSettings: setHydroSettings,
     erodeStep: erodeStep, erodeDropletsAsync: erodeDropletsAsync,
     cancelErodeDroplets: cancelErodeDroplets, isEroding: isEroding,
+    FLOW_DIRS: FLOW_DIRS, edTerrainFlowMap: edTerrainFlowMap,
+    edTerrainErodeFlow: edTerrainErodeFlow,
+    getFlowSettings: getFlowSettings, setFlowSettings: setFlowSettings,
+    erodeFlowAsync: erodeFlowAsync, cancelErodeFlow: cancelErodeFlow,
+    isErodingFlow: isErodingFlow,
     importHeightmap: importHeightmap, erode: erode,
     getHeightmapMax: getHeightmapMax, setHeightmapMax: setHeightmapMax,
     getErodeIterations: getErodeIterations, setErodeIterations: setErodeIterations,

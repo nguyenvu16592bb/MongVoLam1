@@ -979,7 +979,8 @@ ED.UI = (function () {
     _els.perfHud.textContent =
       'FPS ' + p.fps + ' · Draw ' + p.calls + ' · Tri ' + p.tris +
       ' · Vert ' + p.verts + (p.mem ? ' · ' + p.mem + ' MB' : '') +
-      (p.chunks ? ' · Chunk ' + p.chunks : '');
+      (p.chunks ? ' · Chunk ' + p.chunks : '') +
+      (p.lod ? ' · LOD ' + p.lod : '');
   }
 
   return {

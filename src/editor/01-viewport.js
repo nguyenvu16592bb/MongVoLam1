@@ -18,12 +18,13 @@ ED.Viewport = (function () {
 
   var _meshes = {}; // id -> THREE.Group
   var _terrainMesh = null;
+  var _rectAreaLibInit = false; // Đợt 5: RectAreaLightUniformsLib.init() chỉ gọi 1 lần
   var _gizmo = null; // THREE.Group chứa handle
   var _gizmoHandles = []; // mesh có userData.axis
   var _selectionBox = null; // THREE.BoxHelper
   var _selectedId = null;
 
-  var _raf = 0, _frames = 0, _lastPerf = 0, _lastTime = 0;
+  var _raf = 0, _frames = 0, _lastPerf = 0, _lastTime = 0, _lastLod = 0, _lodInfo = null;
   var _pointers = {}; // pointerId -> {x, y}
   var _pinchDist = 0;
   var _dragging = null; // {kind:'orbit'|'pan'|'gizmo', ...}
@@ -52,6 +53,20 @@ ED.Viewport = (function () {
     _scene = new THREE.Scene();
     _scene.background = new THREE.Color(0x1a1d21);
     _scene.fog = new THREE.Fog(0x1a1d21, 60, 140);
+
+    /* Đợt 5 — RectAreaLight: khởi tạo uniforms lib (LTC texture) 1 lần,
+       ngay khi viewport init (boot chạy Viewport trước Environment nên
+       đèn diện tích có lib sẵn khi Environment.applyToScene chạy).
+       Build chưa nối lib/RectAreaLightUniformsLib.js thì
+       THREE.RectAreaLightUniformsLib undefined -> bỏ qua êm; panel
+       Environment sẽ khoá nút bật đèn cho tới khi build nối lib. */
+    try {
+      if (!_rectAreaLibInit && THREE.RectAreaLightUniformsLib &&
+          typeof THREE.RectAreaLightUniformsLib.init === 'function') {
+        THREE.RectAreaLightUniformsLib.init();
+        _rectAreaLibInit = true;
+      }
+    } catch (e) { /* lib lỗi -> đèn diện tích không sáng, các đèn khác vẫn chạy */ }
 
     var amb = new THREE.AmbientLight(0xffffff, 0.55);
     _scene.add(amb);
@@ -92,6 +107,17 @@ ED.Viewport = (function () {
       _lastTime = t;
       try { if (ED.Fx && typeof ED.Fx.tick === 'function') ED.Fx.tick(dt); } catch (e) {}
       try { if (ED.Environment && typeof ED.Environment.tick === 'function') ED.Environment.tick(dt); } catch (e) {}
+      /* Đợt 5 — cập nhật LOD terrain mỗi 0.25s (guard typeof; chỉ rebuild
+         chunk đổi mức, xem 04-terrain.js updateLod). */
+      if (t - _lastLod >= 250) {
+        _lastLod = t;
+        try {
+          if (typeof ED !== 'undefined' && ED.Terrain && typeof ED.Terrain.updateLod === 'function' && _camera) {
+            ED.Terrain.updateLod(_camera.position);
+            if (typeof ED.Terrain.getLodInfo === 'function') _lodInfo = ED.Terrain.getLodInfo();
+          }
+        } catch (e) {}
+      }
       _updateGizmoScale();
       _renderer.render(_scene, _activeCamera());
       if (t - _lastPerf >= 500) {
@@ -121,7 +147,10 @@ ED.Viewport = (function () {
                 }
               } catch (e) {}
               return null;
-            })()
+            })(),
+            /* Đợt 5 — LOD terrain "L<so chunk muc 0>/<muc 1>/<muc 2>". */
+            lod: (_lodInfo && Array.isArray(_lodInfo.levels))
+              ? ('L' + _lodInfo.levels[0] + '/' + _lodInfo.levels[1] + '/' + _lodInfo.levels[2]) : null
           });
         }
       }
@@ -666,6 +695,9 @@ ED.Viewport = (function () {
   function getScene() { return _scene; }
   function getCamera() { return _activeCamera(); }
   function getRenderer() { return _renderer; }
+  /* Đợt 5 — lib RectAreaLight đã init xong chưa (ED.Environment dùng để
+     quyết định có khoá nút bật đèn diện tích trong panel hay không). */
+  function isRectAreaLibReady() { return _rectAreaLibInit; }
   // Điểm trên mặt đất từ tọa độ màn hình: raycast terrain nếu có, không thì mặt phẳng y=0.
   /* Đợt 4 — target raycast là 16 chunk mesh của ED.Terrain (nếu có),
      không thì mesh đất đơn _terrainMesh (fallback khi Terrain chưa load).
@@ -1031,6 +1063,8 @@ ED.Viewport = (function () {
     /* Đợt 3 — mặt nước phản chiếu thật (THREE.Reflector r128). */
     buildWaterShader: buildWaterShader, refreshWater: refreshWater,
     updateWaterMaterial: updateWaterMaterial,
+    /* Đợt 5 — RectAreaLightUniformsLib đã init 1 lần ở Viewport.init. */
+    isRectAreaLibReady: isRectAreaLibReady,
     get scene() { return _scene; },
     get camera() { return _activeCamera(); },
     get renderer() { return _renderer; }
