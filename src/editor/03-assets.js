@@ -10,6 +10,11 @@
    Import model theo đúng cách src/11-fbx.js: validate đuôi + <=20MB,
    parse rồi chuẩn hoá cao 1.8, căn giữa x/z, đáy y = 0; bytes lưu vào
    IndexedDB 'mongvolam_editor_v1' store 'assets' (keyPath 'key').
+   ĐỢT 7: thư viện vũ khí/phụ kiện (BUILDERS 'weapon-sword', 'weapon-blade',
+   'weapon-staff', 'weapon-bow', 'weapon-shield', 'weapon-hat',
+   'weapon-cape' — gốc group = điểm gắn lên xương, kích thước theo
+   nhân vật cao ~1.8) + importWeapon(file) import .fbx/.glb làm vũ khí
+   (validate đuôi + <=20MB, scale cạnh dài nhất -> 1.0, tâm về gốc).
    ========================================================================== */
 var ED = (typeof ED !== 'undefined') ? ED : {};
 
@@ -522,6 +527,123 @@ ED.Assets = (function () {
       var ring = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.05, 8, 20), mat('#facc15', { emissive: '#facc15', emissiveIntensity: 0.4 }));
       ring.rotation.x = Math.PI / 2; ring.position.y = 0.08; g.add(ring);
       return g;
+    },
+    /* ---- Vũ khí / phụ kiện (đợt 7): primitive để ED.Character gắn
+       vào xương (gọi ED.Assets.buildMesh(type)). Gốc group = điểm gắn:
+       kiếm/đao/trượng/cung: giữa chuôi (tay cầm); khiên: tay cầm sau
+       khiên; nón: đáy nón (đặt lên đầu); áo choàng: gáy/cổ (mép trên).
+       Kích thước theo nhân vật cao ~1.8 (ghi rõ từng món bên dưới).
+       KHÔNG đưa vào CATALOG (không phải asset đặt xuống đất trong
+       scene) — chỉ gọi qua buildMesh khi gắn lên nhân vật. ---- */
+    /* Kiếm: dài tổng ~1,04 (lưỡi 0,72 + chuôi 0,18 + đốc). Gốc = giữa chuôi. */
+    'weapon-sword': function (o) {
+      var g = new THREE.Group();
+      var steel = mat(o.color || '#cfd6dd', { metalness: 0.85, roughness: 0.25 });
+      var wood = mat(PALETTE.wood);
+      var gold = mat(PALETTE.gold, { metalness: 0.55, roughness: 0.35 });
+      g.add(cyl(0.025, 0.028, 0.18, wood, 0, 0, 0, 8));                 // chuôi (gốc)
+      g.add(sph(0.032, gold, 0, -0.11, 0, 8, 8));                       // đốc kiếm
+      g.add(box(0.17, 0.03, 0.045, gold, 0, 0.105, 0));                 // guard ngang
+      g.add(box(0.055, 0.72, 0.014, steel, 0, 0.48, 0));                // lưỡi
+      var tip = cone(0.028, 0.09, steel, 0, 0.885, 0, 4);
+      tip.rotation.y = Math.PI / 4; g.add(tip);                          // mũi nhọn
+      return g;
+    },
+    /* Đao: dài tổng ~1,08; lưỡi cong gần đúng bằng 2 đoạn hộp xoay lệch
+       nhau (đoạn dưới -0,10 rad, đoạn trên +0,16 rad). Gốc = giữa chuôi. */
+    'weapon-blade': function (o) {
+      var g = new THREE.Group();
+      var steel = mat(o.color || '#cfd6dd', { metalness: 0.85, roughness: 0.25 });
+      var wood = mat(PALETTE.wood);
+      var gold = mat(PALETTE.gold, { metalness: 0.55, roughness: 0.35 });
+      g.add(cyl(0.026, 0.03, 0.2, wood, 0, 0, 0, 8));                   // chuôi (gốc)
+      g.add(sph(0.03, gold, 0, -0.12, 0, 8, 8));                        // đốc đao
+      g.add(box(0.14, 0.025, 0.04, gold, 0, 0.11, 0));                  // guard
+      var low = box(0.075, 0.42, 0.016, steel, 0, 0.33, 0);             // lưỡi dưới
+      low.rotation.z = -0.10; g.add(low);
+      var up = box(0.065, 0.36, 0.016, steel, 0.045, 0.68, 0);          // lưỡi trên
+      up.rotation.z = 0.16; g.add(up);
+      var tip = cone(0.03, 0.08, steel, 0.09, 0.89, 0, 4);              // mũi
+      tip.rotation.y = Math.PI / 4; tip.rotation.z = 0.16; g.add(tip);
+      return g;
+    },
+    /* Trượng: dài tổng ~2,0 (thân 1,8 + đầu ngọc); gốc = giữa thân
+       (tay cầm ngang tầm tay khi đứng). Đầu ngọc phát sáng nhẹ. */
+    'weapon-staff': function (o) {
+      var g = new THREE.Group();
+      var wood = mat(PALETTE.wood);
+      var gold = mat(PALETTE.gold, { metalness: 0.55, roughness: 0.35 });
+      g.add(cyl(0.028, 0.032, 1.8, wood, 0, 0, 0, 8));                  // thân (gốc ở giữa)
+      g.add(sph(0.04, gold, 0, -0.92, 0, 8, 8));                        // đế dưới
+      [-0.82, 0.82].forEach(function (y) {                               // vòng đai 2 đầu
+        var r = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.008, 6, 12), gold);
+        r.rotation.x = Math.PI / 2; r.position.y = y; g.add(r);
+      });
+      g.add(cyl(0.04, 0.04, 0.06, gold, 0, 0.92, 0, 8));                // cổ đầu trượng
+      var halo = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.018, 8, 20), gold);
+      halo.position.y = 0.99; g.add(halo);                               // vòng vàng đầu trượng
+      g.add(sph(0.075, mat(o.color || '#38bdf8', { emissive: '#0ea5e9', emissiveIntensity: 0.7 }), 0, 1.0, 0, 12, 10)); // ngọc
+      return g;
+    },
+    /* Cung: cao ~1,27, cánh cung là nửa Torus (bụng cung +X 0,6), dây
+       thẳng theo Y qua 2 đầu. Gốc = giữa dây (tay cầm). */
+    'weapon-bow': function (o) {
+      var g = new THREE.Group();
+      var wood = mat(o.color || PALETTE.wood);
+      var gold = mat(PALETTE.gold, { metalness: 0.55, roughness: 0.35 });
+      var limb = new THREE.Mesh(new THREE.TorusGeometry(0.6, 0.03, 8, 24, Math.PI), wood);
+      limb.rotation.z = -Math.PI / 2; /* 2 đầu lên/xuống, bụng cung +X */
+      limb.castShadow = true; g.add(limb);
+      g.add(cyl(0.006, 0.006, 1.2, mat('#e5e0d0', { roughness: 0.9 }), 0, 0, 0, 6)); // dây
+      g.add(box(0.07, 0.16, 0.05, mat('#3b2414'), 0, 0, 0));             // tay cầm (gốc)
+      g.add(sph(0.035, gold, 0, 0.6, 0, 8, 8));                         // đầu cung
+      g.add(sph(0.035, gold, 0, -0.6, 0, 8, 8));
+      return g;
+    },
+    /* Khiên tròn: đường kính 0,7, mặt thép + viền vàng + núm giữa.
+       Gốc = tay cầm sau lưng khiên (mặt khiên hướng +Z). */
+    'weapon-shield': function (o) {
+      var g = new THREE.Group();
+      var steel = mat(o.color || PALETTE.stone, { metalness: 0.4, roughness: 0.5 });
+      var gold = mat(PALETTE.gold, { metalness: 0.6, roughness: 0.3 });
+      var face = cyl(0.35, 0.35, 0.04, steel, 0, 0, 0, 20);
+      face.rotation.x = Math.PI / 2; g.add(face);                        // mặt khiên (đĩa XY)
+      var rim = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.022, 8, 28), gold);
+      rim.castShadow = true; g.add(rim);                                // viền
+      var boss = sph(0.09, gold, 0, 0, 0.05, 12, 10);                  // núm giữa
+      boss.scale.set(1, 1, 0.55); g.add(boss);
+      [[0.2, 0.2], [-0.2, 0.2], [0.2, -0.2], [-0.2, -0.2]].forEach(function (p) {
+        g.add(sph(0.02, gold, p[0], p[1], 0.03, 6, 6));                 // đinh tán
+      });
+      g.add(box(0.05, 0.22, 0.05, mat(PALETTE.wood), 0, 0, -0.06));      // tay cầm (gốc)
+      return g;
+    },
+    /* Nón lá: đường kính 0,7, cao ~0,15, chóp nón dẹt + vành.
+       Gốc = tâm đáy nón (đặt lên đỉnh đầu). */
+    'weapon-hat': function (o) {
+      var g = new THREE.Group();
+      var straw = mat(o.color || '#d9c27a', { roughness: 0.9 });
+      g.add(cone(0.35, 0.12, straw, 0, 0.06, 0, 16));                   // chóp nón (đáy y=0)
+      var rim = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.015, 6, 24), mat('#b89b55', { roughness: 0.9 }));
+      rim.rotation.x = Math.PI / 2; rim.position.y = 0.01; g.add(rim);   // vành
+      g.add(sph(0.03, mat('#8a6d2f', { roughness: 0.8 }), 0, 0.13, 0, 8, 8)); // núm đỉnh
+      return g;
+    },
+    /* Áo choàng: tấm cong sau lưng, dài ~1,2 (từ cổ xuống), rộng 0,68
+       trên / 1,0 dưới (loé ra). Gốc = gáy/cổ (mép trên). Giả định nhân
+       vật quay mặt +Z (chuẩn Mixamo) nên mặt sau là -Z. */
+    'weapon-cape': function (o) {
+      var g = new THREE.Group();
+      var cloth = new THREE.MeshStandardMaterial({
+        color: 0x7f1d1d, roughness: 0.9, metalness: 0, side: THREE.DoubleSide
+      });
+      cloth.userData = { baseColor: '#7f1d1d' };
+      var shell = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.34, 0.5, 1.2, 12, 1, true, Math.PI - 1.0, 2.0), cloth);
+      shell.position.y = -0.6; /* mép trên ở y=0 (cổ), rủ xuống -1,2 */
+      shell.castShadow = true; g.add(shell);
+      g.add(sph(0.035, mat(PALETTE.gold, { metalness: 0.6, roughness: 0.3 }), 0, -0.03, 0.32, 8, 8)); // khuy cổ
+      return g;
     }
   };
 
@@ -817,8 +939,10 @@ ED.Assets = (function () {
   }
 
   /* Parse ArrayBuffer theo đuôi. FBX: parse đồng bộ. GLB: GLTFLoader.parse
-     (callback). OBJ: decode text rồi OBJLoader.parse. Lỗi -> Error tiếng Việt. */
-  function parseArrayBuffer(ab, ext) {
+     (callback). OBJ: decode text rồi OBJLoader.parse. Lỗi -> Error tiếng Việt.
+     opts.normalize === false thì KHÔNG chuẩn hoá cao 1.8 (dùng cho
+     importWeapon — vũ khí không scale theo chiều cao nhân vật). */
+  function parseArrayBuffer(ab, ext, opts) {
     var buf = null;
     if (ab && typeof ab === 'object') {
       if (typeof ab.byteLength === 'number' && typeof ab.slice === 'function' && !ab.buffer) buf = ab;
@@ -828,6 +952,7 @@ ED.Assets = (function () {
     }
     if (!buf) throw new Error('Dữ liệu model không hợp lệ.');
     if (typeof THREE === 'undefined') throw new Error('Chưa tải được three.js.');
+    var norm = (opts && opts.normalize === false) ? function (g) { return g; } : normalizeGroup;
     if (ext === 'fbx') {
       if (!THREE.FBXLoader) throw new Error('Chưa tải được bộ đọc .fbx, thử tải lại trang.');
       var group;
@@ -835,14 +960,14 @@ ED.Assets = (function () {
         throw new Error('Không đọc được file .fbx này (' + (e && e.message ? e.message : 'định dạng không hỗ trợ') + ').');
       }
       if (!group) throw new Error('Không đọc được file .fbx này (file rỗng).');
-      return { group: normalizeGroup(group), animations: group.animations || [] };
+      return { group: norm(group), animations: group.animations || [] };
     }
     if (ext === 'glb') {
       if (!THREE.GLTFLoader) throw new Error('Chưa tải được bộ đọc .glb, thử tải lại trang.');
       return new Promise(function (resolve, reject) {
         try {
           new THREE.GLTFLoader().parse(buf, '', function (gltf) {
-            try { resolve({ group: normalizeGroup(gltf.scene), animations: gltf.animations || [] }); }
+            try { resolve({ group: norm(gltf.scene), animations: gltf.animations || [] }); }
             catch (e) { reject(new Error('Không chuẩn hoá được model .glb: ' + (e && e.message ? e.message : ''))); }
           }, function (e) { reject(new Error('Không đọc được file .glb này (' + (e && e.message ? e.message : 'định dạng không hỗ trợ') + ').')); });
         } catch (e) { reject(new Error('Không đọc được file .glb này (' + (e && e.message ? e.message : '') + ').')); }
@@ -857,9 +982,85 @@ ED.Assets = (function () {
         throw new Error('Không đọc được file .obj này (' + (e && e.message ? e.message : 'định dạng không hỗ trợ') + ').');
       }
       if (!obj) throw new Error('Không đọc được file .obj này (file rỗng).');
-      return { group: normalizeGroup(obj), animations: [] };
+      return { group: norm(obj), animations: [] };
     }
     throw new Error('Định dạng chưa hỗ trợ: .' + ext);
+  }
+
+  /* ---- Import vũ khí (đợt 7): model .fbx/.glb làm vũ khí gắn xương.
+     Chỉ validate + parse, KHÔNG vẽ nút import giả — ED.Character gọi
+     hàm này khi người dùng chọn file vũ khí. Model import không scale
+     theo cao 1.8 như nhân vật mà theo normalizeWeaponGroup (cạnh dài
+     nhất -> 1.0, tâm bounding box về gốc) để vừa tay nhân vật ~1.8.
+     Trả Promise<{ok:true, group, name} | {ok:false, reason}> (không
+     reject — tầng gọi chỉ cần đọc ok/reason để báo tiếng Việt). ---- */
+  function validateWeaponFile(file) {
+    if (!file || typeof file !== 'object' || typeof file.name !== 'string' || !file.name) {
+      return { ok: false, reason: 'Chưa chọn file nào.' };
+    }
+    if (!/\.(fbx|glb)$/i.test(file.name)) {
+      return { ok: false, reason: 'File "' + file.name + '" không phải .fbx / .glb (vũ khí chỉ nhận 2 định dạng này).' };
+    }
+    var size = Number(file.size);
+    if (!size || size < 1) return { ok: false, reason: 'File rỗng, không đọc được.' };
+    if (size > MAX_BYTES) return { ok: false, reason: 'File vũ khí quá lớn (' + (size / 1048576).toFixed(1) + ' MB, tối đa 20 MB).' };
+    return { ok: true, ext: file.name.split('.').pop().toLowerCase() };
+  }
+
+  /* Scale vũ khí import: cạnh dài nhất của bounding box -> 1.0 (vừa
+     tay nhân vật cao ~1.8), tâm box về gốc (điểm gắn ở giữa vũ khí;
+     ED.Character có thể dịch thêm để khớp tay cầm). Trả group đã scale. */
+  function normalizeWeaponGroup(group) {
+    if (typeof THREE === 'undefined' || !THREE.Box3 || !THREE.Vector3) {
+      throw new Error('Chưa tải được three.js.');
+    }
+    var box3 = new THREE.Box3().setFromObject(group);
+    var size = new THREE.Vector3(); box3.getSize(size);
+    var center = new THREE.Vector3(); box3.getCenter(center);
+    var longest = Math.max(size.x, size.y, size.z);
+    if (!isFinite(longest) || longest <= 0) throw new Error('Model vũ khí không có hình dạng nào để hiển thị.');
+    var s = 1.0 / longest;
+    group.scale.setScalar(s);
+    group.position.x -= center.x * s;
+    group.position.y -= center.y * s;
+    group.position.z -= center.z * s;
+    group.updateMatrixWorld(true);
+    return group;
+  }
+
+  function importWeapon(file) {
+    var v = validateWeaponFile(file);
+    if (!v.ok) return Promise.resolve({ ok: false, reason: v.reason });
+    if (typeof FileReader === 'undefined') {
+      return Promise.resolve({ ok: false, reason: 'Trình duyệt này không đọc được file (thiếu FileReader).' });
+    }
+    return new Promise(function (resolve) {
+      var reader = new FileReader();
+      reader.onerror = function () { resolve({ ok: false, reason: 'Không đọc được file từ máy.' }); };
+      reader.onload = function () {
+        var parsed;
+        try {
+          parsed = parseArrayBuffer(reader.result, v.ext, { normalize: false });
+        } catch (e) {
+          resolve({ ok: false, reason: e && e.message ? e.message : 'Không đọc được file vũ khí này.' });
+          return;
+        }
+        Promise.resolve(parsed).then(function (r) {
+          var group = null;
+          try { group = normalizeWeaponGroup(r.group); } catch (e) {
+            resolve({ ok: false, reason: e && e.message ? e.message : 'Không chuẩn hoá được model vũ khí.' });
+            return;
+          }
+          if (!group) { resolve({ ok: false, reason: 'Không đọc được file vũ khí này (file rỗng).' }); return; }
+          resolve({ ok: true, group: group, name: file.name.replace(/\.(fbx|glb)$/i, '') });
+        }).catch(function (e) {
+          resolve({ ok: false, reason: e && e.message ? e.message : 'Không đọc được file vũ khí này.' });
+        });
+      };
+      try { reader.readAsArrayBuffer(file); } catch (e) {
+        resolve({ ok: false, reason: 'Không đọc được file từ máy.' });
+      }
+    });
   }
 
   function importFile(file) {
@@ -976,6 +1177,9 @@ ED.Assets = (function () {
     loadImportedModel: loadImportedModel, addImportedAtCamera: addImportedAtCamera,
     buildImportedMesh: buildImportedMesh, parseArrayBuffer: parseArrayBuffer,
     normalizeGroup: normalizeGroup, DB_NAME: DB_NAME, STORE: STORE, MAX_BYTES: MAX_BYTES,
+    /* Đợt 7 — thư viện vũ khí: buildMesh('weapon-*') + import .fbx/.glb làm vũ khí. */
+    importWeapon: importWeapon, validateWeaponFile: validateWeaponFile,
+    normalizeWeaponGroup: normalizeWeaponGroup,
     init: init
   };
 })();

@@ -21,12 +21,19 @@
      copy-paste như pos/rot, clip tự tạo phát scale bằng
      NumberKeyframeTrack thật, project JSON lưu cùng định dạng tracks[]
      (project cũ không có track scale vẫn mở được).
+   - ĐỢT 7: track morph trong clip tự tạo ('morph.<tên>', giá trị 0..1,
+     phát cùng pos/rot/scale bằng NumberKeyframeTrack thật
+     '.morphTargetInfluences[<index>]'); biểu cảm vui/giận/buồn/ngạc
+     nhiên áp 1 chạm lên preview qua ED.Character.applyMorphValuesToMesh.
+     GIỚI HẠN: morph chỉ phát khi mixer tìm đúng mesh có morph theo tên
+     node của track (tên mesh lấy từ ED.Character.collectMorphTargets);
+     tên morph trùng nhau giữa nhiều mesh thì mesh đầu tiên thắng.
    QUY TẮC DESIGN.md: KHÔNG truy cập document/window/THREE ở top-level;
    mọi khởi tạo trong init(). Logic thuần expose để test bằng vm + stub
    THREE. Chỉ sửa file này. Không sửa file nhóm khác. GIỚI HẠN: chưa render
    thử trên trình duyệt/điện thoại thật; root motion chỉ có tác dụng khi
    clip có track vị trí của xương Hips; clip tự tạo chỉ đổi pos/rot/scale
-   (không morph, không IK). */
+   + morph (không IK). */
 
 var ED = (typeof ED !== 'undefined' && ED) ? ED : {};
 
@@ -126,6 +133,7 @@ function edAnimTrackProps(targetType) {
 }
 
 function edAnimPropLabel(prop) {
+  if (edAnimIsMorphProp(prop)) return 'Morph: ' + (edAnimMorphName(prop) || prop);
   var map = {
     'pos.x': 'Vị trí X', 'pos.y': 'Vị trí Y', 'pos.z': 'Vị trí Z',
     'rot.x': 'Xoay X', 'rot.y': 'Xoay Y', 'rot.z': 'Xoay Z',
@@ -134,15 +142,195 @@ function edAnimPropLabel(prop) {
   return map[prop] || prop;
 }
 
+/* ---------------- Đợt 7: morph target trong clip (thuần) ----------------
+   Track morph có prop 'morph.<tên>' (vd 'morph.smile'), giá trị 0..1.
+   THREE r128 bind morph qua PropertyBinding '.morphTargetInfluences[i]'
+   (bind() đổi propertyIndex tên -> index qua mesh.morphTargetDictionary,
+   nên track 'node.morphTargetInfluences[0]' phát đúng vào mesh có tên
+   node đó — xem three.min.js PropertyBinding.bind + GLTFLoader tạo track
+   'targetName.morphTargetInfluences').
+   Tên -> index resolve qua danh sách morphNames truyền vào buildClip:
+   mảng tên ['smile', ...] (index = vị trí trong mảng), mảng
+   [{name, index, meshName}] (kết quả ED.Character.collectMorphTargets —
+   dùng đúng index trong dictionary) hoặc dictionary {tên: index}.
+   Không truyền morphNames thì prop morph chỉ hợp lệ về mặt cú pháp
+   (validateAnim không có morphNames chấp nhận, addKey từ chối vì chưa
+   resolve được index để phát clip). */
+
+/* Prop có phải track morph không ('morph.<tên>', tên khác rỗng). */
+function edAnimIsMorphProp(prop) {
+  return typeof prop === 'string' && /^morph\..+/.test(prop);
+}
+
+/* Tên morph trong prop ('morph.smile' -> 'smile'), không phải morph -> null. */
+function edAnimMorphName(prop) {
+  if (!edAnimIsMorphProp(prop)) return null;
+  var n = prop.slice(6).replace(/^\s+|\s+$/g, '');
+  return n || null;
+}
+
+/* Bỏ dấu tiếng Việt + thường hoá để khớp tên morph không phân biệt
+   hoa/thường/dấu (vd 'Cười' khớp 'cuoi'). */
+function edAnimStripAccents(s) {
+  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+}
+
+/* Index của tên morph trong danh sách morphNames (khớp đúng tên trước,
+   rồi mới khớp không phân biệt hoa/thường/dấu). Trả index >= 0,
+   hoặc -1 nếu không có. */
+function edAnimMorphIndex(name, morphNames) {
+  if (typeof name !== 'string' || !name || morphNames == null) return -1;
+  var i, entry;
+  if (Array.isArray(morphNames)) {
+    for (i = 0; i < morphNames.length; i++) {
+      entry = morphNames[i];
+      if (typeof entry === 'string' && entry === name) return i;
+      if (entry && typeof entry.name === 'string' && entry.name === name &&
+          isFinite(Number(entry.index))) return Number(entry.index);
+    }
+    var want = edAnimStripAccents(name);
+    for (i = 0; i < morphNames.length; i++) {
+      entry = morphNames[i];
+      var en = (typeof entry === 'string') ? entry
+        : (entry && typeof entry.name === 'string' ? entry.name : null);
+      if (en !== null && edAnimStripAccents(en) === want) {
+        if (typeof entry === 'string') return i;
+        if (isFinite(Number(entry.index))) return Number(entry.index);
+      }
+    }
+    return -1;
+  }
+  if (typeof morphNames === 'object') {
+    if (isFinite(Number(morphNames[name]))) return Number(morphNames[name]);
+    var keys = Object.keys(morphNames);
+    var w2 = edAnimStripAccents(name);
+    for (i = 0; i < keys.length; i++) {
+      if (edAnimStripAccents(keys[i]) === w2 && isFinite(Number(morphNames[keys[i]]))) {
+        return Number(morphNames[keys[i]]);
+      }
+    }
+  }
+  return -1;
+}
+
+/* Tên mesh chứa morph (để ghi vào track.node — mixer tìm đúng mesh đó).
+   morphNames dạng mảng [{name, meshName}]; không có meshName -> null
+   (track dùng targetId như track thường). */
+function edAnimMorphMeshName(name, morphNames) {
+  if (typeof name !== 'string' || !name || !Array.isArray(morphNames)) return null;
+  for (var i = 0; i < morphNames.length; i++) {
+    var entry = morphNames[i];
+    if (entry && typeof entry.name === 'string' && entry.name === name &&
+        typeof entry.meshName === 'string' && entry.meshName) return entry.meshName;
+  }
+  var want = edAnimStripAccents(name);
+  for (var j = 0; j < morphNames.length; j++) {
+    var e2 = morphNames[j];
+    if (e2 && typeof e2.name === 'string' && edAnimStripAccents(e2.name) === want &&
+        typeof e2.meshName === 'string' && e2.meshName) return e2.meshName;
+  }
+  return null;
+}
+
+/* Property THREE của 1 morph target: '.morphTargetInfluences[<index>]'
+   (dạng PropertyBinding r128). Tên không có trong morphNames -> null. */
+function morphTrackProp(name, morphNames) {
+  var idx = edAnimMorphIndex(name, morphNames);
+  return idx >= 0 ? '.morphTargetInfluences[' + idx + ']' : null;
+}
+
 /* Tên property THREE tương ứng: 'pos.x' -> 'position[x]',
-   'scale.y' -> 'scale[y]'. */
-function edAnimPropBinding(prop) {
+   'scale.y' -> 'scale[y]', 'morph.smile' -> '.morphTargetInfluences[i]'
+   (cần morphNames để resolve tên -> index; không truyền morphNames thì
+   prop morph trả null — chưa resolve được index). */
+function edAnimPropBinding(prop, morphNames) {
   var map = {
     'pos.x': 'position[x]', 'pos.y': 'position[y]', 'pos.z': 'position[z]',
     'rot.x': 'rotation[x]', 'rot.y': 'rotation[y]', 'rot.z': 'rotation[z]',
     'scale.x': 'scale[x]', 'scale.y': 'scale[y]', 'scale.z': 'scale[z]'
   };
-  return map[prop] || null;
+  if (map[prop]) return map[prop];
+  if (edAnimIsMorphProp(prop)) {
+    var name = edAnimMorphName(prop);
+    if (!name) return null;
+    if (morphNames === undefined || morphNames === null) return null;
+    return morphTrackProp(name, morphNames);
+  }
+  return null;
+}
+
+/* Tạo track morph thuần {prop:'morph.<tên>', node:<tên mesh>, keys:[{t,v}]}:
+   keys kẹp 0..1, sắp xếp theo t, trùng t thì key sau ghi đè key trước.
+   morphNames bắt buộc (để resolve index + mesh chứa morph); tên không có
+   trong danh sách -> null (không tạo track giả). */
+function buildMorphTrack(name, keys, morphNames) {
+  if (typeof name !== 'string' || !name) return null;
+  if (edAnimMorphIndex(name, morphNames) < 0) return null;
+  var list = [];
+  (Array.isArray(keys) ? keys : []).forEach(function (k) {
+    if (!k || !isFinite(Number(k.t)) || !isFinite(Number(k.v))) return;
+    var v = Math.min(1, Math.max(0, Number(k.v)));
+    for (var i = 0; i < list.length; i++) {
+      if (Math.abs(list[i].t - Number(k.t)) < 1e-6) { list[i].v = v; return; }
+    }
+    list.push({ t: Number(k.t), v: v });
+  });
+  list.sort(function (a, b) { return a.t - b.t; });
+  var tr = { prop: 'morph.' + name, keys: list };
+  var meshName = edAnimMorphMeshName(name, morphNames);
+  if (meshName) tr.node = meshName;
+  return tr;
+}
+
+/* Biểu cảm mặt (đợt 7): mỗi preset là {tên morph: giá trị 0..1}.
+   Khớp tên morph không phân biệt hoa/thường/dấu, khớp cả từ khoá tiếng
+   Anh lẫn tiếng Việt (smile/happy/joy, angry/mad, sad/cry,
+   surprise/shock/wow, cười/giận/buồn/khóc/ngạc nhiên...).
+   Trả đủ 4 preset {vui, gian, buon, ngacNhien}; preset rỗng {} nghĩa là
+   model không có morph mặt phù hợp cho biểu cảm đó. morphNames: mảng
+   tên, mảng [{name}] hoặc dictionary {tên: index}. */
+var ED_ANIM_EXPRESSIONS = [
+  { id: 'vui', label: 'Vui', emoji: '😊',
+    keywords: ['smile', 'happy', 'joy', 'grin', 'laugh', 'cuoi', 'vui'] },
+  { id: 'gian', label: 'Giận', emoji: '😠',
+    keywords: ['angry', 'anger', 'mad', 'frown', 'gian', 'tuc', 'cau'] },
+  { id: 'buon', label: 'Buồn', emoji: '😢',
+    keywords: ['sad', 'cry', 'sorrow', 'buon', 'khoc'] },
+  { id: 'ngacNhien', label: 'Ngạc nhiên', emoji: '😲',
+    keywords: ['surpris', 'shock', 'wow', 'amaz', 'ngac', 'sung'] }
+];
+var ED_ANIM_EXPRESSION_LABELS = { vui: 'Vui', gian: 'Giận', buon: 'Buồn', ngacNhien: 'Ngạc nhiên' };
+
+function edAnimMorphNamesList(morphNames) {
+  var out = [];
+  if (!morphNames) return out;
+  if (Array.isArray(morphNames)) {
+    morphNames.forEach(function (e) {
+      if (typeof e === 'string') out.push(e);
+      else if (e && typeof e.name === 'string') out.push(e.name);
+    });
+  } else if (typeof morphNames === 'object') {
+    out = Object.keys(morphNames);
+  }
+  return out;
+}
+
+function expressionMorphMap(morphNames, exprId) {
+  var names = edAnimMorphNamesList(morphNames);
+  var all = {};
+  ED_ANIM_EXPRESSIONS.forEach(function (ex) {
+    var preset = {};
+    names.forEach(function (n) {
+      var flat = edAnimStripAccents(n);
+      for (var i = 0; i < ex.keywords.length; i++) {
+        if (flat.indexOf(ex.keywords[i]) >= 0) { preset[n] = 1; break; }
+      }
+    });
+    all[ex.id] = preset;
+  });
+  if (exprId) return all[exprId] || {};
+  return all;
 }
 
 function edAnimFindTrack(anim, prop) {
@@ -163,14 +351,18 @@ function edAnimGetOrCreateTrack(anim, prop) {
 
 /* Thêm keyframe tại thời gian t (giây), giá trị v. Chèn đúng thứ tự thời
    gian; trùng thời gian (sai số 1e-6) thì ghi đè giá trị cũ. Tự kéo dài
-   duration nếu key nằm ngoài. Trả key vừa thêm hoặc null nếu prop sai. */
-function edAnimAddKey(anim, prop, t, v) {
+   duration nếu key nằm ngoài. Trả key vừa thêm hoặc null nếu prop sai.
+   Prop morph ('morph.<tên>') kẹp giá trị 0..1 và cần morphNames để
+   resolve tên -> index (không truyền thì từ chối, vì clip phát không
+   được nếu chưa biết index). */
+function edAnimAddKey(anim, prop, t, v, morphNames) {
   if (!anim || !Array.isArray(anim.tracks)) return null;
-  if (!edAnimPropBinding(prop)) return null;
+  if (!edAnimPropBinding(prop, morphNames)) return null;
   var tt = Number(t);
   var vv = Number(v);
   if (!isFinite(tt) || !isFinite(vv)) return null;
   if (tt < 0) tt = 0;
+  if (edAnimIsMorphProp(prop)) vv = Math.min(1, Math.max(0, vv));
   var tr = edAnimGetOrCreateTrack(anim, prop);
   for (var i = 0; i < tr.keys.length; i++) {
     if (Math.abs(tr.keys[i].t - tt) < 1e-6) {
@@ -292,7 +484,7 @@ function edAnimCopyKeys(anim, selection) {
    key cũ trên cùng track thì ghi đè key cũ (đếm vào overwritten).
    Key paste vượt quá duration thì tự kéo dài duration (như addKey).
    Trả {ok, added:[key...], overwritten, reason?}. */
-function edAnimPasteKeys(anim, clipboard, playheadT) {
+function edAnimPasteKeys(anim, clipboard, playheadT, morphNames) {
   if (!anim || !Array.isArray(anim.tracks)) {
     return { ok: false, added: [], overwritten: 0, reason: 'Animation không hợp lệ.' };
   }
@@ -303,7 +495,7 @@ function edAnimPasteKeys(anim, clipboard, playheadT) {
   var t0 = edAnimClampTime(playheadT, anim.duration);
   var added = [], overwritten = 0;
   clipboard.keys.forEach(function (k) {
-    if (!k || !edAnimPropBinding(k.prop)) return;
+    if (!k || !edAnimPropBinding(k.prop, morphNames)) return;
     var tt = t0 + (Number(k.t) - base);
     if (tt < 0) tt = 0;
     var tr = edAnimFindTrack(anim, k.prop);
@@ -312,7 +504,7 @@ function edAnimPasteKeys(anim, clipboard, playheadT) {
         if (Math.abs(tr.keys[i].t - tt) < 1e-6) { overwritten++; break; }
       }
     }
-    var nk = edAnimAddKey(anim, k.prop, tt, k.v);
+    var nk = edAnimAddKey(anim, k.prop, tt, k.v, morphNames);
     if (nk) added.push(nk);
   });
   return { ok: added.length > 0, added: added, overwritten: overwritten };
@@ -354,24 +546,31 @@ function edAnimSetDuration(anim, d) {
 
 /* Dữ liệu track thuần để build clip (không cần THREE): mỗi track là 1
    NumberKeyframeTrack — tên node = targetId để mixer tìm đúng
-   object/bone, property dạng 'position[x]' / 'rotation[y]'. */
-function edAnimBuildClipData(anim) {
+   object/bone, property dạng 'position[x]' / 'rotation[y]'.
+   Đợt 7: track morph ('morph.<tên>') cần morphNames để resolve tên ->
+   index ('.morphTargetInfluences[i]'); tên không resolve được thì track
+   đó bị loại (không tạo track giả). Node của track morph lấy từ
+   track.node (tên mesh chứa morph, do buildMorphTrack ghi) nếu có,
+   không thì targetId như track thường. */
+function edAnimBuildClipData(anim, morphNames) {
   var out = { name: '', duration: 0, tracks: [] };
   if (!anim || typeof anim !== 'object') return out;
   out.name = (typeof anim.name === 'string' && anim.name) ? anim.name : 'Anim';
   out.duration = isFinite(Number(anim.duration)) ? Math.max(0.1, Number(anim.duration)) : 0.1;
   var tracks = Array.isArray(anim.tracks) ? anim.tracks : [];
   tracks.forEach(function (tr) {
-    if (!tr || !edAnimPropBinding(tr.prop)) return;
+    if (!tr || !edAnimPropBinding(tr.prop, morphNames)) return;
     var keys = (Array.isArray(tr.keys) ? tr.keys.slice() : [])
       .filter(function (k) { return k && isFinite(Number(k.t)) && isFinite(Number(k.v)); })
       .sort(function (a, b) { return a.t - b.t; });
     if (!keys.length) return;
     var times = [], values = [];
     keys.forEach(function (k) { times.push(Number(k.t)); values.push(Number(k.v)); });
+    var node = (tr.node && typeof tr.node === 'string' && tr.node)
+      ? tr.node : String(anim.targetId || '');
     out.tracks.push({
-      node: String(anim.targetId || ''),
-      property: edAnimPropBinding(tr.prop),
+      node: node,
+      property: edAnimPropBinding(tr.prop, morphNames),
       times: times, values: values
     });
   });
@@ -379,18 +578,26 @@ function edAnimBuildClipData(anim) {
 }
 
 /* Build THREE.AnimationClip THẬT từ animation tự tạo. Cần THREE đã load;
-   chưa load thì trả null (không throw). */
-function edAnimCreateClip(anim) {
+   chưa load thì trả null (không throw). morphNames (tuỳ chọn): danh sách
+   morph để resolve track morph tên -> index; không truyền thì track
+   morph bị loại, track pos/rot/scale vẫn phát như cũ. */
+function edAnimCreateClip(anim, morphNames) {
   if (typeof THREE === 'undefined' || !THREE.AnimationClip || !THREE.NumberKeyframeTrack) return null;
-  var data = edAnimBuildClipData(anim);
+  var data = edAnimBuildClipData(anim, morphNames);
   if (!data.tracks.length) return null;
   var tracks = [];
   for (var i = 0; i < data.tracks.length; i++) {
     var tr = data.tracks[i];
     var times = (typeof Float32Array !== 'undefined') ? new Float32Array(tr.times) : tr.times;
     var values = (typeof Float32Array !== 'undefined') ? new Float32Array(tr.values) : tr.values;
+    /* Property morph đã có dấu chấm đầu ('.morphTargetInfluences[0]')
+       nên nối trực tiếp với node — 'node..morph...' sẽ không parse được
+       (PropertyBinding r128). Node rỗng thì tên track là
+       '.morphTargetInfluences[0]' (bind vào root của mixer). */
+    var trackName = (tr.property.charAt(0) === '.')
+      ? (tr.node + tr.property) : (tr.node + '.' + tr.property);
     try {
-      tracks.push(new THREE.NumberKeyframeTrack(tr.node + '.' + tr.property, times, values));
+      tracks.push(new THREE.NumberKeyframeTrack(trackName, times, values));
     } catch (e) { return null; }
   }
   try {
@@ -412,12 +619,33 @@ function edAnimHipsDelta(anim, t0, t1) {
   return { dx: dx, dz: dz };
 }
 
-function edAnimValidateAnim(anim) {
+function edAnimValidateAnim(anim, morphNames) {
   if (!anim || typeof anim !== 'object') return { ok: false, reason: 'Animation không hợp lệ.' };
   if (!anim.id || typeof anim.id !== 'string') return { ok: false, reason: 'Animation thiếu id.' };
   if (anim.targetType !== 'object' && anim.targetType !== 'bone') return { ok: false, reason: 'targetType phải là "object" hoặc "bone".' };
   if (!anim.targetId || typeof anim.targetId !== 'string') return { ok: false, reason: 'Animation chưa có target (object/xương).' };
   if (!Array.isArray(anim.tracks)) return { ok: false, reason: 'Animation thiếu danh sách track.' };
+  /* Đợt 7: kiểm tra từng track. Prop morph ('morph.<tên>') hợp lệ khi
+     tên khác rỗng; nếu có morphNames thì tên phải resolve được trong
+     model, không thì báo rõ morph đó không có trong model. */
+  var hasMorphNames = (morphNames !== undefined && morphNames !== null);
+  for (var i = 0; i < anim.tracks.length; i++) {
+    var tr = anim.tracks[i];
+    if (!tr || typeof tr.prop !== 'string' || !tr.prop) {
+      return { ok: false, reason: 'Track thứ ' + (i + 1) + ' thiếu prop.' };
+    }
+    if (edAnimIsMorphProp(tr.prop)) {
+      var mname = edAnimMorphName(tr.prop);
+      if (!mname) return { ok: false, reason: 'Track morph thiếu tên (dạng "morph.<tên>").' };
+      if (hasMorphNames && edAnimMorphIndex(mname, morphNames) < 0) {
+        return { ok: false, reason: 'Morph "' + mname + '" không có trong model.' };
+      }
+      continue;
+    }
+    if (!edAnimPropBinding(tr.prop)) {
+      return { ok: false, reason: 'Track "' + tr.prop + '" không hợp lệ.' };
+    }
+  }
   return { ok: true };
 }
 
@@ -567,6 +795,15 @@ ED.Animation = {
   trackProps: edAnimTrackProps,
   propLabel: edAnimPropLabel,
   propBinding: edAnimPropBinding,
+  /* Đợt 7 — morph trong clip + biểu cảm (thuần, test được bằng vm). */
+  isMorphProp: edAnimIsMorphProp,
+  morphName: edAnimMorphName,
+  morphIndex: edAnimMorphIndex,
+  morphTrackProp: morphTrackProp,
+  buildMorphTrack: buildMorphTrack,
+  expressionMorphMap: expressionMorphMap,
+  expressions: ED_ANIM_EXPRESSIONS,
+  expressionLabels: ED_ANIM_EXPRESSION_LABELS,
   findTrack: edAnimFindTrack,
   addKey: edAnimAddKey,
   removeKey: edAnimRemoveKey,
@@ -1021,64 +1258,162 @@ ED.Animation = {
       return;
     }
     var self = this;
-    var S = this._state;
     var props = edAnimTrackProps(anim.targetType);
     props.forEach(function (prop) {
-      var row = document.createElement('div');
-      row.className = 'ed-anim-track';
-      var lab = document.createElement('span');
-      lab.className = 'ed-anim-track-label';
-      lab.textContent = edAnimPropLabel(prop);
-      row.appendChild(lab);
-      var lane = document.createElement('div');
-      lane.className = 'ed-anim-lane';
-      var tr = edAnimFindTrack(anim, prop);
-      var keys = tr ? tr.keys : [];
-      keys.forEach(function (k) {
-        var dot = document.createElement('button');
-        var isSel = false;
-        (S.selectedKeys || []).forEach(function (sk) {
-          if (sk.prop === prop && Math.abs(sk.t - k.t) < 1e-6) isSel = true;
-        });
-        if (!isSel && S.selectedKey && S.selectedKey.prop === prop &&
-          Math.abs(S.selectedKey.t - k.t) < 1e-6) isSel = true;
-        dot.className = 'ed-anim-key' + (isSel ? ' selected' : '');
-        dot.style.left = (anim.duration > 0 ? (k.t / anim.duration * 100) : 0) + '%';
-        dot.title = edAnimPropLabel(prop) + ' @ ' + k.t.toFixed(2) + 's = ' + Number(k.v).toFixed(2) +
-          ' — bấm-giữ rồi kéo ngang để đổi thời gian';
-        var inner = document.createElement('span');
-        inner.className = 'ed-anim-key-dot';
-        dot.appendChild(inner);
-        /* Kéo keyframe trực tiếp (chuột + chạm, pointer events). */
-        dot.addEventListener('pointerdown', function (ev) {
-          self._keyDragStart(ev, prop, k.t, lane, dot);
-        });
-        dot.addEventListener('click', function (ev) {
-          if (S.suppressClick) { S.suppressClick = false; return; }
-          /* Shift-click: thêm/bỏ key khỏi vùng chọn nhiều key (đợt 3);
-             click thường: chỉ chọn key này. */
-          if (ev && ev.shiftKey) self._toggleKeySelection(prop, k.t);
-          else self._selectKeys([{ prop: prop, t: k.t }]);
-          self._renderKeyInfo();
-          self.renderTracks();
-        });
-        lane.appendChild(dot);
-      });
-      row.appendChild(lane);
-      var val = document.createElement('span');
-      val.className = 'ed-anim-track-val';
-      var sv = edAnimSampleAnim(anim, prop, S.time);
-      val.textContent = (sv === null || sv === undefined) ? '—' : Number(sv).toFixed(2);
-      row.appendChild(val);
-      var addBtn = document.createElement('button');
-      addBtn.className = 'ed-btn';
-      addBtn.style.minHeight = '40px';
-      addBtn.textContent = '+ Key';
-      addBtn.addEventListener('click', function () { self.addKeyNow(prop); });
-      row.appendChild(addBtn);
-      tracksEl.appendChild(row);
+      tracksEl.appendChild(self._renderTrackRow(anim, prop));
     });
+    /* ---- Đợt 7: track morph (đã có trong animation) + thêm track
+       morph mới + biểu cảm áp 1 chạm lên preview. ---- */
+    var morphTargets = this._morphTargetsForAnim(anim);
+    var morphNames = [];
+    morphTargets.forEach(function (t) {
+      if (t && t.name && morphNames.indexOf(t.name) < 0) morphNames.push(t.name);
+    });
+    var morphProps = [];
+    (anim.tracks || []).forEach(function (tr) {
+      if (tr && edAnimIsMorphProp(tr.prop) && morphProps.indexOf(tr.prop) < 0) morphProps.push(tr.prop);
+    });
+    morphProps.forEach(function (prop) {
+      tracksEl.appendChild(self._renderTrackRow(anim, prop));
+    });
+    if (morphNames.length) {
+      tracksEl.appendChild(this._renderMorphAddRow(anim, morphNames));
+    } else if (!morphProps.length) {
+      var noMorph = document.createElement('div');
+      noMorph.className = 'ed-anim-hint';
+      noMorph.textContent = (anim.targetType === 'bone')
+        ? 'Nhân vật preview không có morph mặt — nhập model .glb/.fbx có morph (cười, giận...) để ghi biểu cảm vào clip.'
+        : 'Object này không có morph target.';
+      tracksEl.appendChild(noMorph);
+    }
+    tracksEl.appendChild(this._renderExpressionRow());
     this._renderKeyInfo();
+  },
+
+  /* 1 hàng track (lane keyframe + giá trị tại playhead + nút + Key).
+     Dùng chung cho track pos/rot/scale lẫn track morph (đợt 7). */
+  _renderTrackRow: function (anim, prop) {
+    var self = this;
+    var S = this._state;
+    var row = document.createElement('div');
+    row.className = 'ed-anim-track';
+    var lab = document.createElement('span');
+    lab.className = 'ed-anim-track-label';
+    var label = edAnimPropLabel(prop);
+    if (edAnimIsMorphProp(prop)) {
+      /* Track morph tên không còn trong model thì ghi rõ (clip build sẽ
+         loại track đó, không tạo track giả). */
+      var mname = edAnimMorphName(prop);
+      var inModel = false;
+      this._morphNamesForAnim(anim).forEach(function (n) { if (n === mname) inModel = true; });
+      if (!inModel) label += ' (không có trong model)';
+    }
+    lab.textContent = label;
+    row.appendChild(lab);
+    var lane = document.createElement('div');
+    lane.className = 'ed-anim-lane';
+    var tr = edAnimFindTrack(anim, prop);
+    var keys = tr ? tr.keys : [];
+    keys.forEach(function (k) {
+      var dot = document.createElement('button');
+      var isSel = false;
+      (S.selectedKeys || []).forEach(function (sk) {
+        if (sk.prop === prop && Math.abs(sk.t - k.t) < 1e-6) isSel = true;
+      });
+      if (!isSel && S.selectedKey && S.selectedKey.prop === prop &&
+        Math.abs(S.selectedKey.t - k.t) < 1e-6) isSel = true;
+      dot.className = 'ed-anim-key' + (isSel ? ' selected' : '');
+      dot.style.left = (anim.duration > 0 ? (k.t / anim.duration * 100) : 0) + '%';
+      dot.title = edAnimPropLabel(prop) + ' @ ' + k.t.toFixed(2) + 's = ' + Number(k.v).toFixed(2) +
+        ' — bấm-giữ rồi kéo ngang để đổi thời gian';
+      var inner = document.createElement('span');
+      inner.className = 'ed-anim-key-dot';
+      dot.appendChild(inner);
+      /* Kéo keyframe trực tiếp (chuột + chạm, pointer events). */
+      dot.addEventListener('pointerdown', function (ev) {
+        self._keyDragStart(ev, prop, k.t, lane, dot);
+      });
+      dot.addEventListener('click', function (ev) {
+        if (S.suppressClick) { S.suppressClick = false; return; }
+        /* Shift-click: thêm/bỏ key khỏi vùng chọn nhiều key (đợt 3);
+           click thường: chỉ chọn key này. */
+        if (ev && ev.shiftKey) self._toggleKeySelection(prop, k.t);
+        else self._selectKeys([{ prop: prop, t: k.t }]);
+        self._renderKeyInfo();
+        self.renderTracks();
+      });
+      lane.appendChild(dot);
+    });
+    row.appendChild(lane);
+    var val = document.createElement('span');
+    val.className = 'ed-anim-track-val';
+    var sv = edAnimSampleAnim(anim, prop, S.time);
+    val.textContent = (sv === null || sv === undefined) ? '—' : Number(sv).toFixed(2);
+    row.appendChild(val);
+    var addBtn = document.createElement('button');
+    addBtn.className = 'ed-btn';
+    addBtn.style.minHeight = '40px';
+    addBtn.textContent = '+ Key';
+    addBtn.addEventListener('click', function () { self.addKeyNow(prop); });
+    row.appendChild(addBtn);
+    return row;
+  },
+
+  /* Hàng thêm track morph: chọn tên morph chưa có track + nút thêm. */
+  _renderMorphAddRow: function (anim, morphNames) {
+    var self = this;
+    var row = document.createElement('div');
+    row.className = 'ed-anim-track';
+    var lab = document.createElement('span');
+    lab.className = 'ed-anim-track-label';
+    lab.textContent = '＋ Track morph';
+    row.appendChild(lab);
+    var sel = document.createElement('select');
+    sel.style.minHeight = '40px';
+    sel.style.flex = '1';
+    var hasOption = false;
+    morphNames.forEach(function (n) {
+      if (edAnimFindTrack(anim, 'morph.' + n)) return; /* đã có track */
+      var o = document.createElement('option');
+      o.value = n;
+      o.textContent = 'Morph: ' + n;
+      sel.appendChild(o);
+      hasOption = true;
+    });
+    if (!hasOption) {
+      var done = document.createElement('span');
+      done.className = 'ed-anim-hint';
+      done.textContent = 'Đã có track cho mọi morph của model.';
+      row.appendChild(done);
+      return row;
+    }
+    row.appendChild(sel);
+    var addBtn = document.createElement('button');
+    addBtn.className = 'ed-btn';
+    addBtn.style.minHeight = '40px';
+    addBtn.textContent = '+ Track morph';
+    addBtn.addEventListener('click', function () { self.addMorphTrack(sel.value); });
+    row.appendChild(addBtn);
+    return row;
+  },
+
+  /* Hàng biểu cảm: 4 nút áp preset lên preview (vui/giận/buồn/ngạc nhiên). */
+  _renderExpressionRow: function () {
+    var self = this;
+    var row = document.createElement('div');
+    row.className = 'ed-row ed-anim-row';
+    var lab = document.createElement('span');
+    lab.textContent = 'Biểu cảm (áp lên preview):';
+    row.appendChild(lab);
+    ED_ANIM_EXPRESSIONS.forEach(function (ex) {
+      var b = document.createElement('button');
+      b.className = 'ed-btn';
+      b.style.minHeight = '40px';
+      b.textContent = ex.emoji + ' ' + ex.label;
+      b.addEventListener('click', function () { self.applyExpression(ex.id); });
+      row.appendChild(b);
+    });
+    return row;
   },
 
   _renderKeyInfo: function () {
@@ -1110,6 +1445,108 @@ ED.Animation = {
         ? ('Đã copy: ' + cb.count + ' keyframe — bấm Paste để dán tại playhead.')
         : '';
     }
+  },
+
+  /* ---------------- Đợt 7: morph trong clip + biểu cảm ---------------- */
+
+  /* Danh sách morph của target: bone -> model đang preview; object ->
+     mesh trong scene. Trả [{meshName, name, index, value}] (collectMorphTargets
+     của ED.Character) hoặc [] khi không có/không lấy được. */
+  _morphTargetsForAnim: function (anim) {
+    if (!anim || !anim.targetId) return [];
+    var group = null;
+    try {
+      if (anim.targetType === 'bone') {
+        if (ED.Character && typeof ED.Character.getPreview === 'function') {
+          var pv = ED.Character.getPreview();
+          if (pv && pv.group) group = pv.group;
+        }
+      } else if (ED.Viewport && ED.Viewport.meshes) {
+        group = ED.Viewport.meshes[anim.targetId] || null;
+      }
+    } catch (e) { group = null; }
+    if (!group) return [];
+    try {
+      if (ED.Character && typeof ED.Character.collectMorphTargets === 'function') {
+        var list = ED.Character.collectMorphTargets(group);
+        return Array.isArray(list) ? list : [];
+      }
+    } catch (e) {}
+    return [];
+  },
+
+  /* Tên morph duy nhất của target (theo thứ tự xuất hiện). */
+  _morphNamesForAnim: function (anim) {
+    var names = [];
+    this._morphTargetsForAnim(anim).forEach(function (t) {
+      if (t && t.name && names.indexOf(t.name) < 0) names.push(t.name);
+    });
+    return names;
+  },
+
+  /* Thêm track morph vào animation đang chọn (tên morph phải có trong
+     model). Trả true nếu thêm được. */
+  addMorphTrack: function (name) {
+    var anim = this.currentAnim();
+    if (!anim) { this.toast('Chưa chọn animation nào.'); return false; }
+    var targets = this._morphTargetsForAnim(anim);
+    if (!targets.length) {
+      this.toast('Model này không có morph target — nhập model .glb/.fbx có morph trước.');
+      return false;
+    }
+    var prop = 'morph.' + name;
+    if (edAnimFindTrack(anim, prop)) { this.toast('Đã có track morph "' + name + '" rồi.'); return false; }
+    var tr = buildMorphTrack(name, [], targets);
+    if (!tr) { this.toast('Morph "' + name + '" không có trong model.'); return false; }
+    anim.tracks.push(tr);
+    this.commit('Thêm track morph ' + name);
+    this.renderTracks();
+    return true;
+  },
+
+  /* Áp biểu cảm (vui/giận/buồn/ngạc nhiên) 1 chạm lên preview: ghi giá
+     trị preset vào morphTargetInfluences của mọi mesh preview qua
+     ED.Character.applyMorphValuesToMesh (guard). Model không có morph
+     mặt phù hợp thì báo rõ "không có morph mặt", không áp gì.
+     Trả {ok, applied, values, reason?}. */
+  applyExpression: function (exprId) {
+    var label = ED_ANIM_EXPRESSION_LABELS[exprId] || String(exprId || '');
+    var pv = null;
+    try {
+      if (ED.Character && typeof ED.Character.getPreview === 'function') pv = ED.Character.getPreview();
+    } catch (e) { pv = null; }
+    if (!pv || !pv.group) {
+      this.toast('Chưa có nhân vật trong preview — sang tab Character Editor, nhập model trước.');
+      return { ok: false, applied: 0, values: {}, reason: 'Chưa có nhân vật trong preview.' };
+    }
+    var names = [];
+    try {
+      if (ED.Character && typeof ED.Character.morphTargetNames === 'function') {
+        names = ED.Character.morphTargetNames(pv.group) || [];
+      }
+    } catch (e) { names = []; }
+    if (!names.length) {
+      this.toast('Không có morph mặt — model này không có morph target.');
+      return { ok: false, applied: 0, values: {}, reason: 'không có morph mặt — model này không có morph target.' };
+    }
+    var preset = expressionMorphMap(names, exprId);
+    if (!preset || !Object.keys(preset).length) {
+      this.toast('Không có morph mặt cho biểu cảm "' + label + '" — model không có morph ' + label.toLowerCase() + '.');
+      return { ok: false, applied: 0, values: {}, reason: 'không có morph mặt cho biểu cảm "' + label + '" — model không có morph ' + label.toLowerCase() + '.' };
+    }
+    if (!ED.Character || typeof ED.Character.applyMorphValuesToMesh !== 'function') {
+      this.toast('Chưa tải được Character Editor (applyMorphValuesToMesh).');
+      return { ok: false, applied: 0, values: {}, reason: 'ED.Character.applyMorphValuesToMesh chưa có.' };
+    }
+    var applied = 0;
+    pv.group.traverse(function (obj) {
+      if (!obj || !obj.isMesh) return;
+      try { applied += ED.Character.applyMorphValuesToMesh(obj, preset) || 0; } catch (e) {}
+    });
+    if (!pv.morphValues) pv.morphValues = {};
+    Object.keys(preset).forEach(function (n) { pv.morphValues[n] = preset[n]; });
+    this.toast('Đã áp biểu cảm "' + label + '" (' + applied + ' morph).');
+    return { ok: true, applied: applied, values: preset };
   },
 
   /* Chọn đúng danh sách key (đồng bộ cả selectedKey đợt 2). */
@@ -1230,7 +1667,7 @@ ED.Animation = {
     if (!anim) { this.toast('Chưa chọn animation nào.'); return false; }
     var S = this._state;
     if (!S.clipboard || !S.clipboard.count) { this.toast('Chưa copy keyframe nào — chọn key rồi bấm Copy (hoặc Ctrl+C) trước.'); return false; }
-    var r = edAnimPasteKeys(anim, S.clipboard, S.time);
+    var r = edAnimPasteKeys(anim, S.clipboard, S.time, this._morphNamesForAnim(anim));
     if (!r.ok) { this.toast(r.reason || 'Không paste được keyframe.'); return false; }
     this.commit('Paste ' + r.added.length + ' keyframe tại ' + Number(S.time).toFixed(2) + 's');
     /* addKey chỉ trả {t, v} (không có prop): lấy lại prop từ clipboard
@@ -1464,6 +1901,32 @@ ED.Animation = {
   _currentValue: function (prop) {
     var anim = this.currentAnim();
     if (!anim) return null;
+    /* Đợt 7 — track morph: lấy giá trị morph hiện tại trong preview
+       (target bone) hoặc trên mesh scene (target object). Morph không có
+       trong model -> null (không thêm key giả). */
+    if (edAnimIsMorphProp(prop)) {
+      var mname = edAnimMorphName(prop);
+      if (!mname) return null;
+      var mnames = this._morphNamesForAnim(anim);
+      if (mnames.indexOf(mname) < 0) return null;
+      var vals = null;
+      try {
+        if (anim.targetType === 'bone') {
+          if (ED.Character && typeof ED.Character.getMorphValues === 'function') {
+            vals = ED.Character.getMorphValues();
+          }
+        } else {
+          var mmesh = (ED.Viewport && ED.Viewport.meshes) ? ED.Viewport.meshes[anim.targetId] : null;
+          if (mmesh && ED.Character && typeof ED.Character.collectMorphTargets === 'function') {
+            var mlist = ED.Character.collectMorphTargets(mmesh) || [];
+            vals = {};
+            mlist.forEach(function (t) { if (vals[t.name] === undefined) vals[t.name] = t.value; });
+          }
+        }
+      } catch (e) { vals = null; }
+      if (vals && isFinite(Number(vals[mname]))) return Number(vals[mname]);
+      return 0; /* morph có trong model nhưng chưa từng set -> 0 */
+    }
     var parts = String(prop || '').split('.');
     if (parts.length !== 2) return null;
     var kind = parts[0]; /* 'pos' | 'rot' | 'scale' */
@@ -1512,7 +1975,7 @@ ED.Animation = {
       this.toast('Không đọc được giá trị hiện tại của ' + anim.targetId + ' — kiểm tra object/xương còn trong scene/preview không.');
       return false;
     }
-    var key = edAnimAddKey(anim, prop, this._state.time, value);
+    var key = edAnimAddKey(anim, prop, this._state.time, value, this._morphNamesForAnim(anim));
     if (!key) { this.toast('Không thêm được keyframe (prop không hợp lệ).'); return false; }
     this._selectKeys([{ prop: prop, t: key.t }]);
     this.commit('Thêm keyframe ' + prop + ' @ ' + key.t.toFixed(2) + 's');
@@ -1634,7 +2097,7 @@ ED.Animation = {
       try { pv.mixer = new THREE.AnimationMixer(pv.group); } catch (e) { pv.mixer = null; }
       if (!pv.mixer) { this.toast('Không tạo được mixer cho preview.'); return false; }
     }
-    var clip = edAnimCreateClip(anim);
+    var clip = edAnimCreateClip(anim, this._morphTargetsForAnim(anim));
     if (!clip) {
       this.toast('Animation chưa có keyframe nào — bấm “+ Key” trên track để thêm.');
       return false;
@@ -1674,7 +2137,7 @@ ED.Animation = {
       this.toast('Object "' + anim.targetId + '" chưa có trong scene (có thể đã bị xoá).');
       return false;
     }
-    var clip = edAnimCreateClip(anim);
+    var clip = edAnimCreateClip(anim, this._morphTargetsForAnim(anim));
     if (!clip) {
       this.toast('Animation chưa có keyframe nào — bấm “+ Key” trên track để thêm.');
       return false;

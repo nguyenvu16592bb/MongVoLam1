@@ -57,6 +57,9 @@
    17-physics.js chưa nối vào build (coordinator nối sau) thì chơi như
    cũ, không crash. Space khi vật lý bật = nhảy (đánh chuyển sang phím
    X / nút ⚔️); vật lý tắt thì Space = đánh như cũ.
+   ĐỢT 7: getHeroPos() thật — trả bản sao [x, z] của _heroPos (minimap
+   đã dùng qua guard typeof từ đợt 6, giờ có hàm thật); camera follow
+   qua ED.Viewport.followHero(x, z) thật (01-viewport.js đợt 7).
    QUY TẮC DESIGN.md: KHÔNG truy cập document/window/THREE ở top-level;
    logic thuần expose để nhóm D test bằng vm + stub THREE.
    GIỚI HẠN: chưa render thử trên trình duyệt/điện thoại thật; click-to-
@@ -583,6 +586,19 @@ ED.Play = {
 
   isPlaying: function () { return this._playing; },
   isPaused: function () { return this._paused; },
+
+  /* Đợt 7 — vị trí hero [x, z] (bản sao của _heroPos, đổi mảng trả về
+     không ảnh hưởng state trong). _heroPos được cập nhật ở _ensureHero
+     (lúc vào Play), mỗi frame di chuyển (WASD/click-to-move/vật lý) và
+     khi hồi sinh; ngoài phiên Play thì trả vị trí cuối cùng (mặc định
+     [0, 0]). Minimap (19-minimap.js) dùng hàm này qua guard typeof. */
+  getHeroPos: function () {
+    var p = this._heroPos;
+    if (Array.isArray(p) && p.length >= 2) {
+      return [Number(p[0]) || 0, Number(p[1]) || 0];
+    }
+    return [0, 0];
+  },
 
   /* Tìm object type 'character' đầu tiên; không có thì tạo hero chibi tạm
      tại spawn (0,0) — xoá khi Stop. */

@@ -4,7 +4,10 @@
    KHÔNG truy cập document/window/THREE ở top-level; mọi khởi tạo trong init().
    Đợt 6 (nhóm Viewport): post-processing (EffectComposer/UnrealBloomPass
    r128 + vignette tự viết), chế độ đi bộ FPS/TPS, bookmark camera,
-   đường camera điện ảnh (Catmull-Rom thuần), hook ED.Terrain.tick. */
+   đường camera điện ảnh (Catmull-Rom thuần), hook ED.Terrain.tick.
+   Đợt 7: followHero(x, z) — camera orbit đi theo hero trong Play Mode
+   (chỉ dời _target, giữ nguyên _radius/_theta/_phi nên không phá orbit);
+   getCanvas() trả renderer.domElement (null khi chưa init). */
 var ED = ED || {};
 
 /* ---------- Hàm thuần đợt 6 (không DOM/THREE, test được bằng vm) ---------- */
@@ -1118,6 +1121,23 @@ ED.Viewport = (function () {
     _applyCamera();
   }
 
+  /* Đợt 7 — camera đi theo hero trong Play Mode (ED.Play._followCamera
+     gọi mỗi frame). Chỉ dời _target tới vị trí hero rồi áp camera theo
+     kiểu orbit hiện tại (_radius/_theta/_phi giữ nguyên nên người dùng
+     vẫn xoay/zoom quanh hero được — không phá orbit; focus() thu hẹp
+     radius, followHero thì KHÔNG đổi radius). Đang đi bộ FPS/TPS hoặc
+     đang phát đường camera thì camera do _updateWalk/_updatePathPlay
+     lái nên bỏ qua (trả false). Trả true khi đã dời camera. */
+  function followHero(x, z) {
+    if (!_camera || !_target) return false;
+    if (_walk.mode !== 'off' || _pathPlay) return false;
+    var hx = Number(x), hz = Number(z);
+    if (!isFinite(hx) || !isFinite(hz)) return false;
+    _target.set(hx, _target.y, hz);
+    _applyCamera();
+    return true;
+  }
+
   function setPlayMode(b) {
     _playMode = !!b;
     if (_gizmo) _gizmo.visible = !_playMode && !!_selectedId;
@@ -1161,6 +1181,8 @@ ED.Viewport = (function () {
   function getScene() { return _scene; }
   function getCamera() { return _activeCamera(); }
   function getRenderer() { return _renderer; }
+  /* Đợt 7 — canvas của viewport (renderer.domElement), null khi chưa init. */
+  function getCanvas() { return _canvas; }
   /* Đợt 5 — lib RectAreaLight đã init xong chưa (ED.Environment dùng để
      quyết định có khoá nút bật đèn diện tích trong panel hay không). */
   function isRectAreaLibReady() { return _rectAreaLibInit; }
@@ -2933,6 +2955,7 @@ ED.Viewport = (function () {
     getTerrainMesh: getTerrainMesh,
     setGizmoMode: setGizmoMode, getGizmoMode: getGizmoMode,
     focus: focus, setCameraPreset: setCameraPreset, getCameraPreset: getCameraPreset,
+    followHero: followHero, getCanvas: getCanvas,
     setPlayMode: setPlayMode, resyncAll: resyncAll,
     getScene: getScene, getCamera: getCamera, getRenderer: getRenderer,
     screenToGround: screenToGround, raycastGround: raycastGround,

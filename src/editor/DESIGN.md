@@ -286,3 +286,43 @@
   (trả THREE.Group hoặc null khi không có THREE); ED.Viewport.syncObject
   nối 2 type này; ED.Terrain.tick(dt) cập nhật flow sông (viewport gọi
   qua guard trong render loop).
+
+## Đợt 7 — ownership bổ sung (coordinator tích hợp)
+- Bones+Pose+Attach+Preset: 07-character.js (chỉ 1 file: tạo/đổi cha/xoá xương
+  tự tạo, gizmo sửa xương trong preview, pose library + mirror, gắn vũ khí
+  vào xương, preset nhân vật, API getPreview()/getPreviewBones()/
+  getPreviewSkinnedMeshes()/getPreviewGroup()/refreshBoneTree()).
+- IK toàn thân: 21-ik.js (mới, chỉ 1 file) — CCD thuần làm việc trong world,
+  chuỗi tay/chân/cột sống + chuỗi tuỳ ý, kéo target trong preview.
+- Weight+Retarget: 22-weight.js + 23-retarget.js (mới) — cọ tô skin weight
+  (cộng/trừ/làm mịn, chuẩn hoá về 1, undo riêng + reset) + retarget khác
+  skeleton (bảng map sửa tay, scale theo tỉ lệ dài xương, guard humanoid).
+- Morph+Weapons+Bugs: 11-animation.js (track morph trong clip tự tạo +
+  expression vui/giận/buồn/ngạc nhiên) + 03-assets.js (7 builder vũ khí
+  weapon-sword/blade/staff/bow/shield/hat/cape + importWeapon) +
+  09-play.js (getHeroPos() thật) + 01-viewport.js (followHero() +
+  getCanvas() thật).
+- Tích hợp (coordinator, không worker nào được sửa): tools/build-editor.mjs
+  (thêm 21-ik.js, 22-weight.js, 23-retarget.js vào ORDERED sau
+  11-animation.js), 99-boot.js (_callInit('Ik'/'Weight'/'Retarget') sau
+  Animation), editor.css (append CSS đợt 7), 07-character.js (chỉ sửa 4
+  ghi chú morph lỗi thời: clip tự tạo từ đợt 7 đã ghi được morph),
+  DESIGN.md, README.md, tools/test-mapeditor7.cjs (harness đợt 7).
+- Quy tắc đợt 7: KHÔNG sửa src/original/, KHÔNG sửa mongvolam.html hay
+  index.html hay tools/build.mjs — game giữ nguyên (hash mongvolam.html vẫn
+  8792425df06eca92538eba790eaf4dec798a0c8c, commit 692a790f).
+  Project JSON v1 mở rộng field (project cũ vẫn mở được):
+  characters[].customBones [{name, parent, pos}] (xương tự tạo, chỉ custom
+  mới lưu; đổi cha xương gốc chỉ trong phiên), characters[].poses
+  [{name, rotations}], characters[].attachments [{bone, type, key, offset}],
+  characterPresets [{id, name, data}] (project-level: fbxKey, colors,
+  attachments, pose, boneConstraints, customBones),
+  animations[].tracks[] thêm prop 'morph.<tên>' (giá trị 0..1).
+  ED.Ik.solveCCD(chain, target, opts) làm việc HOÀN TOÀN trong world
+  (chain[i].pos = vị trí world, rot = Euler XYZ độ của hướng world);
+  ED.Weight.paintWeights/normalizeWeights/smoothWeights;
+  ED.Retarget.autoMapBones/applyMapping/boneLength/validateHumanoid;
+  ED.Animation.morphTrackProp/expressionMorphMap/buildMorphTrack;
+  ED.Assets.importWeapon(file); ED.Play.getHeroPos() -> [x, z] (bản sao);
+  ED.Viewport.followHero(x, z) (chỉ orbit, bỏ qua khi FPS/TPS hoặc camera
+  path) + getCanvas() (renderer.domElement hoặc null).

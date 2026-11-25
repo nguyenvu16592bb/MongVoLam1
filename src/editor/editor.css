@@ -421,3 +421,28 @@ body > #viewport-fx-panel.ed-viewport-panel { position: fixed; right: 8px; top: 
   display: block; width: 100%; min-height: 40px; margin-bottom: 6px;
   padding: 8px 10px; font-size: 13px; border-radius: 6px; cursor: pointer;
 }
+
+/* ===== Đợt 7 — Character Editor + xương ===== */
+.ed-char-hint { font-size: 12px; color: #9ca3af; line-height: 1.5; margin: 4px 0 8px; }
+.ed-char-ik-full, .ed-weight-panel, .ed-retarget-panel, .ed-panel-character, .ed-tab-character {
+  display: flex; flex-direction: column; gap: 6px;
+  background: #1a1d21; border: 1px solid #374151; border-radius: 8px;
+  padding: 10px; margin: 8px 0;
+}
+.ed-char-bone-tree, .ed-char-pose-list, .ed-char-preset-list, .ed-char-attach-list {
+  display: flex; flex-direction: column; gap: 4px; margin: 6px 0;
+  max-height: 220px; overflow-y: auto;
+}
+.ed-char-bone-tree button, .ed-char-pose-list button, .ed-char-preset-list button, .ed-char-attach-list button {
+  min-height: 40px; text-align: left; padding: 6px 10px;
+  background: #24282e; border: 1px solid #4b5563; border-radius: 6px;
+  color: #e5e7eb; cursor: pointer; font-size: 13px;
+}
+.ed-char-bone-tree button:hover, .ed-char-pose-list button:hover, .ed-char-preset-list button:hover, .ed-char-attach-list button:hover { border-color: #ffd76b; }
+.ed-ik-chain-select, .ed-ik-custom-root, .ed-ik-custom-end, .ed-char-attach-bone, .ed-char-attach-type, .ed-char-bone-parent, .ed-char-select, .ed-char-retarget-select {
+  min-height: 40px; background: #24282e; color: #e5e7eb;
+  border: 1px solid #4b5563; border-radius: 6px; padding: 6px 8px; font-size: 13px;
+}
+.ed-bone-btn { min-height: 40px; padding: 6px 10px; }
+.ed-char-preview { position: relative; }
+.ed-char-preview-host { position: relative; min-height: 260px; }

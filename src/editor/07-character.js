@@ -63,11 +63,42 @@
        character.extra.morphValues {tên: giá trị} (project cũ không có
        extra -> tự tạo, vẫn mở được); mở lại project / loadStoredModel
        khôi phục qua edCharMorphNormalize.
-       LƯU Ý GHI RÕ TRONG UI: clip tự tạo vẫn chỉ ghi pos/rot/scale,
-       KHÔNG ghi morph vào clip.
+       Từ đợt 7, clip tự tạo đã ghi được morph (thêm track morph trong Timeline).
    GIỚI HẠN ĐỢT 5: morph chỉ áp cho model đang preview (không áp lên
    object trong scene chính); tên morph trùng nhau giữa nhiều mesh thì
    1 slider điều khiển tất cả mesh có tên đó, giá trị lưu theo tên;
+   chưa test trên trình duyệt/điện thoại thật.
+   ĐỢT 7 (xương + tư thế + gắn đồ + preset, chỉ sửa file này):
+   (a) Tạo/sửa xương: addBone (xương con của xương đang chọn, tên tự sinh
+       "Xương N", offset mặc định [0, 0.2, 0] theo không gian cha,
+       userData.custom=true), setBoneParent (chặn vòng lặp), removeBone
+       (CHỈ xương tự tạo; con về làm con của ông). Lưu vào
+       characters[].customBones, dựng lại khi mở project/import
+       (applyCustomBones). Kéo tay cầm XANH trong preview: kéo ngang =
+       xoay Y, kéo dọc = xoay X, snap 5° (giữ Shift = 1°), kèm ô nhập
+       số pos/rot; tôn trọng boneConstraints (clampRotationDeg).
+   (b) Pose library: tư thế = rotations {tên xương: [x, y, z]} (độ, Euler
+       cục bộ); 6 preset T-pose / A-pose / Đứng / Chiến đấu / Ngồi / Chào;
+       savePose / applyPose / deletePose / mirrorPose (đổi Left↔Right +
+       đảo dấu X, Z — xem mirrorPoseData); lưu characters[].poses; áp
+       được cho preview lẫn nhân vật trong scene (ED.Viewport.meshes).
+   (c) Gắn vũ khí/phụ kiện: attachWeapon gắn THREE.Group từ
+       ED.Assets.buildMesh(type) làm con của xương đích (preview + scene,
+       đi theo animation tay); type vũ khí do nhóm khác thêm vào
+       03-assets.js ('weapon-sword' | 'weapon-blade' | 'weapon-staff' |
+       'weapon-bow' | 'weapon-shield' | 'weapon-hat' | 'weapon-cape') —
+       chưa có thì toast rõ, không vẽ đồ giả. Lưu characters[].attachments.
+   (d) Preset nhân vật: saveCharacterPreset chụp {fbxKey, colors/materials,
+       attachments, pose, boneConstraints, customBones};
+       applyCharacterPreset khôi phục 1 chạm; lưu project-level
+       characterPresets [{id, name, data}] (project cũ không có -> []).
+   (e) API cho nhóm khác: getPreviewBones / getPreviewSkinnedMeshes /
+       getPreviewGroup / refreshBoneTree (getPreview đã có từ trước).
+   GIỚI HẠN ĐỢT 7: xương tự tạo chưa có skin weight nên mesh không bị
+   ảnh hưởng cho tới khi tô weight (Weight Painting); đổi cha của xương
+   GỐC chỉ áp trong phiên preview (không lưu — chỉ customBones mới lưu);
+   preset nạp model khác cần file đã lưu trong IndexedDB (GLB qua
+   loadStoredModel hiện chỉ parse FBX nên có thể báo modelLoadError);
    chưa test trên trình duyệt/điện thoại thật.
    QUY TẮC DESIGN.md: KHÔNG truy cập document/window/THREE ở top-level;
    mọi khởi tạo DOM/THREE trong init(). Logic thuần expose để nhóm D test
@@ -179,6 +210,9 @@ function edCharNewCharacter(id, name) {
     id: id, name: name || 'Nhân vật mới', level: 1, faction: 'Thiếu Lâm',
     hp: 100, atk: 10, def: 5, speed: 5, fbxKey: null, color: '#334155',
     boneConstraints: {}, /* đợt 3: { boneName: {min:[x,y,z], max:[x,y,z]} (độ, delta so với tư thế gốc) } */
+    poses: [], /* đợt 7: [{name, rotations:{bone:[x,y,z] độ}}] — pose library */
+    customBones: [], /* đợt 7: [{name, parent, pos:[x,y,z]}] — xương tự tạo (custom=true) */
+    attachments: [], /* đợt 7: [{bone, type, key, offset:{pos, rot(độ), scale}}] — vũ khí/phụ kiện */
     extra: { morphValues: {} } /* đợt 5: { morphName: 0..1 } — khôi phục morph khi mở lại project */
   };
 }
@@ -687,6 +721,449 @@ function edCharApplyMorphValuesToMesh(mesh, values) {
   return n;
 }
 
+
+/* ---------------- Đợt 7 — Xương + Tư thế + Gắn đồ + Preset (logic thuần) ----------------
+   (1) XƯƠNG: cây xương thuần là danh sách [{name, parent, pos, custom}]
+       (parent null = gốc của group). createBoneData / setBoneParentData /
+       deleteBoneData KHÔNG sửa danh sách gốc — trả danh sách mới.
+       - Tên tự sinh "Xương N" (N nhỏ nhất chưa dùng).
+       - Offset mặc định [0, 0.2, 0] theo không gian cha.
+       - setBoneParentData từ chối khi cha mới là chính xương đó hoặc là
+         con/cháu của nó (vòng lặp) — trả {ok:false, reason}.
+       - deleteBoneData CHỈ xoá xương custom (custom === true); xương gốc
+         Mixamo bị từ chối + báo rõ. Con của xương bị xoá được đưa về làm
+         con của ông (grandparent, có thể null = gốc).
+   (2) TƯ THẾ: tư thế = rotations {tên xương: [x, y, z]} — góc Euler CỤC BỘ
+       (độ). QUY ƯỚC MIRROR (mirrorPoseData): đổi tên mixamorig:Left* ↔
+       mixamorig:Right* (cả dạng không prefix), đảo dấu góc X và Z, giữ
+       nguyên Y (nhân vật nhìn +Z, Y-up). Xương giữa (Hips/Spine/Head...)
+       không đổi tên, chỉ đảo dấu X/Z.
+       capturePoseData nhận xương dạng THREE ({name, rotation:{x,y,z} rad})
+       hoặc dạng thuần ({name, rotDeg:[x,y,z] độ} / {name, rotation:[x,y,z] rad}).
+   (3) GẮN ĐỒ: attachment thuần {bone, type, key, offset:{pos, rot(độ), scale}}.
+   (4) PRESET: snapshot nhân vật {fbxKey, color, materialColors, attachments,
+       pose (rotations), boneConstraints, customBones}.
+   GIỚI HẠN: xương tự tạo chưa có skin weight nên mesh không bị ảnh hưởng
+   cho tới khi tô weight; preset "Đứng" ghi 0° tường minh cho các xương
+   chính để reset tư thế; các góc preset nằm trong giới hạn mặc định đợt 3
+   để áp 1 chạm không bị kẹp; góc T/A là Euler cục bộ theo quy ước trên,
+   model ngược hướng thì đổi dấu Z của 2 tay. */
+
+function _edCloneJson(v) {
+  if (v === undefined) return undefined;
+  try { return JSON.parse(JSON.stringify(v)); } catch (e) { return v; }
+}
+
+function _edNum3(arr, fallback) {
+  var fb = fallback || [0, 0, 0];
+  if (!Array.isArray(arr)) return fb.slice();
+  var out = [0, 0, 0];
+  for (var i = 0; i < 3; i++) {
+    var n = Number(arr[i]);
+    out[i] = isFinite(n) ? n : fb[i];
+  }
+  return out;
+}
+
+function _edBoneListByName(list) {
+  var map = {};
+  (list || []).forEach(function (b) { if (b && typeof b.name === 'string') map[b.name] = b; });
+  return map;
+}
+
+/* Con trực tiếp của 1 xương (theo parent). */
+function edCharBoneChildren(list, name) {
+  var out = [];
+  (list || []).forEach(function (b) {
+    if (b && b.parent === name) out.push(b.name);
+  });
+  return out;
+}
+
+/* Mọi con/cháu của 1 xương (duyệt theo chiều rộng, chống lặp). */
+function edCharBoneDescendants(list, name) {
+  var out = [], seen = {};
+  var queue = edCharBoneChildren(list, name);
+  while (queue.length) {
+    var cur = queue.shift();
+    if (seen[cur]) continue;
+    seen[cur] = true;
+    out.push(cur);
+    edCharBoneChildren(list, cur).forEach(function (c) { if (!seen[c]) queue.push(c); });
+  }
+  return out;
+}
+
+/* Kiểm tra cây xương thuần: trùng tên, cha không tồn tại, vòng lặp.
+   Trả {ok, errors:[...], cycles:[[tên...]]}. */
+function edCharValidateBoneTree(list) {
+  var errors = [], cycles = [];
+  if (!Array.isArray(list)) return { ok: false, errors: ['Danh sách xương không phải mảng.'], cycles: [] };
+  var seen = {};
+  list.forEach(function (b, i) {
+    if (!b || typeof b.name !== 'string' || !b.name) { errors.push('Xương thứ ' + (i + 1) + ' thiếu tên.'); return; }
+    if (seen[b.name]) errors.push('Trùng tên xương "' + b.name + '".');
+    seen[b.name] = true;
+    if (b.parent !== null && b.parent !== undefined && typeof b.parent !== 'string') errors.push('Cha của xương "' + b.name + '" không hợp lệ.');
+  });
+  list.forEach(function (b) {
+    if (!b || typeof b.name !== 'string') return;
+    if (b.parent !== null && b.parent !== undefined && !seen[b.parent]) errors.push('Xương "' + b.name + '" có cha "' + b.parent + '" không có trong danh sách.');
+  });
+  var byName = _edBoneListByName(list);
+  var seenCycles = {};
+  list.forEach(function (b) {
+    if (!b || typeof b.name !== 'string') return;
+    var chain = [b.name], cur = b.parent, guard = 0;
+    while (cur !== null && cur !== undefined && guard < 1000) {
+      guard++;
+      if (chain.indexOf(cur) >= 0) {
+        var cyc = chain.slice(chain.indexOf(cur));
+        cyc.push(cur);
+        /* Khử trùng: cùng 1 vòng lặp báo 1 lần dù bắt đầu từ xương nào. */
+        var key = cyc.slice(0, -1).slice().sort().join('|');
+        if (!seenCycles[key]) {
+          seenCycles[key] = true;
+          cycles.push(cyc);
+          errors.push('Vòng lặp xương: ' + cyc.join(' → ') + '.');
+        }
+        return;
+      }
+      chain.push(cur);
+      var parentEntry = byName[cur];
+      cur = parentEntry ? parentEntry.parent : null;
+    }
+  });
+  return { ok: errors.length === 0, errors: errors, cycles: cycles };
+}
+
+function edCharNextBoneName(list, base) {
+  var prefix = (typeof base === 'string' && base) ? base : 'Xương ';
+  var used = {};
+  (list || []).forEach(function (b) { if (b && b.name) used[b.name] = true; });
+  var n = 1;
+  while (used[prefix + n]) n++;
+  return prefix + n;
+}
+
+/* Tạo dữ liệu xương mới (thuần): parentName null = gốc; name trống ->
+   tự sinh "Xương N"; offset mặc định [0, 0.2, 0].
+   Trả {ok, bone:{name,parent,pos,custom:true}, list} hoặc {ok:false, reason}. */
+function edCharCreateBoneData(list, parentName, name, offset) {
+  var src = Array.isArray(list) ? list : [];
+  var parent = (parentName === null || parentName === undefined) ? null : String(parentName);
+  if (parent !== null) {
+    var found = false;
+    src.forEach(function (b) { if (b && b.name === parent) found = true; });
+    if (!found) return { ok: false, reason: 'Không tìm thấy xương cha "' + parent + '".' };
+  }
+  var boneName = (typeof name === 'string' && name.trim()) ? name.trim() : edCharNextBoneName(src);
+  var dup = false;
+  src.forEach(function (b) { if (b && b.name === boneName) dup = true; });
+  if (dup) return { ok: false, reason: 'Đã có xương tên "' + boneName + '" — đặt tên khác.' };
+  var pos = _edNum3(offset, [0, 0.2, 0]);
+  var bone = { name: boneName, parent: parent, pos: pos, custom: true };
+  var out = src.map(function (b) {
+    return { name: b.name, parent: (b.parent === undefined ? null : b.parent), pos: _edNum3(b.pos, [0, 0, 0]), custom: !!b.custom };
+  });
+  out.push(bone);
+  return { ok: true, bone: bone, list: out };
+}
+
+/* Đổi cha (thuần): newParentName null/rỗng = về gốc. Từ chối khi cha mới
+   là chính xương đó hoặc là con/cháu của nó (vòng lặp).
+   Trả {ok, list} hoặc {ok:false, reason}. */
+function edCharSetBoneParentData(list, name, newParentName) {
+  var src = Array.isArray(list) ? list : [];
+  var target = null;
+  src.forEach(function (b) { if (b && b.name === name) target = b; });
+  if (!target) return { ok: false, reason: 'Không tìm thấy xương "' + name + '".' };
+  var np = (newParentName === null || newParentName === undefined || newParentName === '') ? null : String(newParentName);
+  if (np === name) return { ok: false, reason: 'Không đổi cha được: xương không thể làm cha của chính nó.' };
+  if (np !== null) {
+    var found = false;
+    src.forEach(function (b) { if (b && b.name === np) found = true; });
+    if (!found) return { ok: false, reason: 'Không tìm thấy xương cha mới "' + np + '".' };
+    var desc = edCharBoneDescendants(src, name);
+    if (desc.indexOf(np) >= 0) return { ok: false, reason: 'Không đổi cha được: "' + np + '" là con/cháu của "' + name + '" — sẽ tạo vòng lặp.' };
+  }
+  var out = src.map(function (b) {
+    var c = { name: b.name, parent: (b.parent === undefined ? null : b.parent), pos: _edNum3(b.pos, [0, 0, 0]), custom: !!b.custom };
+    if (b.name === name) c.parent = np;
+    return c;
+  });
+  return { ok: true, list: out };
+}
+
+/* Xoá xương (thuần): CHỈ xương custom mới xoá được; con của xương bị xoá
+   được đưa về làm con của ông (grandparent, có thể null = gốc).
+   Trả {ok, list, reparented:[tên con], grandparent} hoặc {ok:false, reason}. */
+function edCharDeleteBoneData(list, name) {
+  var src = Array.isArray(list) ? list : [];
+  var target = null;
+  src.forEach(function (b) { if (b && b.name === name) target = b; });
+  if (!target) return { ok: false, reason: 'Không tìm thấy xương "' + name + '".' };
+  if (!target.custom) return { ok: false, reason: 'Chỉ xoá được xương tự tạo. "' + name + '" là xương gốc Mixamo — không xoá được.' };
+  var grandparent = (target.parent === undefined ? null : target.parent);
+  var reparented = edCharBoneChildren(src, name);
+  var out = [];
+  src.forEach(function (b) {
+    if (!b || b.name === name) return;
+    var c = { name: b.name, parent: (b.parent === undefined ? null : b.parent), pos: _edNum3(b.pos, [0, 0, 0]), custom: !!b.custom };
+    if (c.parent === name) c.parent = grandparent;
+    out.push(c);
+  });
+  return { ok: true, list: out, reparented: reparented, grandparent: grandparent };
+}
+
+/* Làm tròn góc về bội số của snap (độ). snap <= 0 thì giữ nguyên. */
+function edCharSnapAngle(value, snap) {
+  var s = Number(snap);
+  if (!isFinite(s) || s <= 0) return Number(value) || 0;
+  return Math.round((Number(value) || 0) / s) * s;
+}
+
+/* Kéo gizmo xương: dx (px, ngang) -> xoay Y, dy (px, dọc) -> xoay X;
+   0.5°/px; snap mặc định 5°, giữ Shift = 1°. Trả {rot:[x,y,z] (độ), snap}. */
+function edCharGizmoDragRot(startRotDeg, dxPx, dyPx, shiftKey) {
+  var start = _edNum3(startRotDeg, [0, 0, 0]);
+  var snap = shiftKey ? 1 : 5;
+  var x = edCharSnapAngle(start[0] + (Number(dyPx) || 0) * 0.5, snap);
+  var y = edCharSnapAngle(start[1] + (Number(dxPx) || 0) * 0.5, snap);
+  return { rot: [x, y, start[2]], snap: snap };
+}
+
+/* ---- Tư thế: preset có sẵn (góc Euler cục bộ, độ) ---- */
+var ED_CHAR_POSE_PRESETS = [
+  { name: 'T-pose', rotations: {
+    'mixamorig:LeftArm': [0, 0, 80], 'mixamorig:RightArm': [0, 0, -80],
+    'mixamorig:LeftForeArm': [0, 0, 0], 'mixamorig:RightForeArm': [0, 0, 0],
+    'mixamorig:LeftUpLeg': [0, 0, 6], 'mixamorig:RightUpLeg': [0, 0, -6]
+  } },
+  { name: 'A-pose', rotations: {
+    'mixamorig:LeftArm': [0, 0, 40], 'mixamorig:RightArm': [0, 0, -40],
+    'mixamorig:LeftForeArm': [0, 0, 0], 'mixamorig:RightForeArm': [0, 0, 0],
+    'mixamorig:LeftUpLeg': [0, 0, 8], 'mixamorig:RightUpLeg': [0, 0, -8]
+  } },
+  { name: 'Đứng', rotations: {
+    'mixamorig:Hips': [0, 0, 0], 'mixamorig:Spine': [0, 0, 0], 'mixamorig:Head': [0, 0, 0],
+    'mixamorig:LeftArm': [0, 0, 0], 'mixamorig:RightArm': [0, 0, 0],
+    'mixamorig:LeftForeArm': [0, 0, 0], 'mixamorig:RightForeArm': [0, 0, 0],
+    'mixamorig:LeftUpLeg': [0, 0, 0], 'mixamorig:RightUpLeg': [0, 0, 0],
+    'mixamorig:LeftLeg': [0, 0, 0], 'mixamorig:RightLeg': [0, 0, 0]
+  } },
+  { name: 'Chiến đấu', rotations: {
+    'mixamorig:Hips': [-5, 0, 0], 'mixamorig:Spine': [12, 0, 0], 'mixamorig:Head': [-5, 0, 0],
+    'mixamorig:LeftArm': [-55, 0, 25], 'mixamorig:RightArm': [-55, 0, -25],
+    'mixamorig:LeftForeArm': [35, 0, 0], 'mixamorig:RightForeArm': [35, 0, 0],
+    'mixamorig:LeftUpLeg': [-25, 0, 5], 'mixamorig:RightUpLeg': [20, 0, -5],
+    'mixamorig:LeftLeg': [-30, 0, 0], 'mixamorig:RightLeg': [-15, 0, 0]
+  } },
+  { name: 'Ngồi', rotations: {
+    'mixamorig:Spine': [15, 0, 0], 'mixamorig:Head': [10, 0, 0],
+    'mixamorig:LeftArm': [0, 0, 10], 'mixamorig:RightArm': [0, 0, -10],
+    'mixamorig:LeftForeArm': [25, 0, 0], 'mixamorig:RightForeArm': [25, 0, 0],
+    'mixamorig:LeftUpLeg': [-85, 0, 5], 'mixamorig:RightUpLeg': [-85, 0, -5],
+    'mixamorig:LeftLeg': [-85, 0, 0], 'mixamorig:RightLeg': [-85, 0, 0]
+  } },
+  { name: 'Chào', rotations: {
+    'mixamorig:Spine': [8, 0, 0], 'mixamorig:Head': [5, 0, 0],
+    'mixamorig:LeftArm': [0, 0, 12], 'mixamorig:LeftForeArm': [10, 0, 0],
+    'mixamorig:RightArm': [-80, 0, -25], 'mixamorig:RightForeArm': [25, 0, -25],
+    'mixamorig:LeftUpLeg': [0, 0, 4], 'mixamorig:RightUpLeg': [0, 0, -4]
+  } }
+];
+
+function edCharPosePresets() { return _edCloneJson(ED_CHAR_POSE_PRESETS); }
+
+function edCharPosePreset(name) {
+  for (var i = 0; i < ED_CHAR_POSE_PRESETS.length; i++) {
+    if (ED_CHAR_POSE_PRESETS[i].name === name) return _edCloneJson(ED_CHAR_POSE_PRESETS[i]);
+  }
+  return null;
+}
+
+/* Chụp tư thế hiện tại của danh sách xương -> rotations {tên: [x,y,z] (độ)}.
+   Xương THREE: rotation {x,y,z} radian; xương thuần: rotDeg [x,y,z] độ
+   hoặc rotation [x,y,z] radian. Góc làm tròn 0.1°. */
+function edCharCapturePoseData(bones) {
+  var rotations = {};
+  (bones || []).forEach(function (b) {
+    if (!b || typeof b.name !== 'string' || !b.name) return;
+    var deg = null;
+    if (Array.isArray(b.rotDeg)) deg = _edNum3(b.rotDeg, [0, 0, 0]);
+    else if (b.rotation && typeof b.rotation === 'object' && !Array.isArray(b.rotation) && isFinite(Number(b.rotation.x))) {
+      deg = [edCharRadToDeg(b.rotation.x), edCharRadToDeg(b.rotation.y), edCharRadToDeg(b.rotation.z)];
+    } else if (Array.isArray(b.rotation)) {
+      deg = [edCharRadToDeg(b.rotation[0]), edCharRadToDeg(b.rotation[1]), edCharRadToDeg(b.rotation[2])];
+    }
+    if (!deg) return;
+    rotations[b.name] = [Math.round(deg[0] * 10) / 10, Math.round(deg[1] * 10) / 10, Math.round(deg[2] * 10) / 10];
+  });
+  return rotations;
+}
+
+/* Áp tư thế (độ) lên danh sách xương (ghi rotation radian cho xương THREE,
+   rotDeg cho xương thuần). pose là {rotations:{...}} hoặc map rotations
+   trực tiếp. Trả {applied:[tên xương đã áp], missing:[tên không có xương]}. */
+function edCharApplyPoseData(bones, pose) {
+  var rotations = (pose && pose.rotations) ? pose.rotations : (pose || {});
+  var applied = [], missing = [];
+  Object.keys(rotations).forEach(function (name) {
+    var deg = _edNum3(rotations[name], [0, 0, 0]);
+    var found = null;
+    (bones || []).forEach(function (b) { if (!found && b && b.name === name) found = b; });
+    if (!found) { missing.push(name); return; }
+    var rad = [edCharDegToRad(deg[0]), edCharDegToRad(deg[1]), edCharDegToRad(deg[2])];
+    if (found.rotation && typeof found.rotation.set === 'function') {
+      try { found.rotation.set(rad[0], rad[1], rad[2]); } catch (e) {}
+    } else if (found.rotation && typeof found.rotation === 'object') {
+      found.rotation.x = rad[0]; found.rotation.y = rad[1]; found.rotation.z = rad[2];
+    } else if (Array.isArray(found.rotation)) {
+      found.rotation[0] = rad[0]; found.rotation[1] = rad[1]; found.rotation[2] = rad[2];
+    }
+    if (found.rotDeg !== undefined) found.rotDeg = deg.slice();
+    applied.push(name);
+  });
+  return { applied: applied, missing: missing };
+}
+
+/* Đổi tên xương sang phía đối diện: mixamorig:LeftArm <-> mixamorig:RightArm
+   (cả dạng không prefix). Xương giữa (Hips/Spine/...) giữ nguyên tên. */
+function edCharMirrorBoneName(name) {
+  var s = String(name || '');
+  var m = s.match(/^(mixamorig:)?(Left|Right)(.*)$/i);
+  if (!m) return s;
+  var other = (/^left$/i.test(m[2])) ? 'Right' : 'Left';
+  return (m[1] || '') + other + m[3];
+}
+
+/* Mirror tư thế (thuần): đổi tên Left<->Right, đảo dấu góc X và Z, giữ Y.
+   Trả {name: tên cũ + " (gương)" (nếu có), rotations} — không sửa pose gốc. */
+function edCharMirrorPoseData(pose) {
+  var rotations = (pose && pose.rotations) ? pose.rotations : (pose || {});
+  var out = {};
+  Object.keys(rotations).forEach(function (name) {
+    var deg = _edNum3(rotations[name], [0, 0, 0]);
+    out[edCharMirrorBoneName(name)] = [-deg[0], deg[1], -deg[2]];
+  });
+  var res = { rotations: out };
+  if (pose && typeof pose.name === 'string' && pose.name) res.name = pose.name + ' (gương)';
+  return res;
+}
+
+/* ---- Gắn đồ: loại vũ khí/phụ kiện (builder do nhóm khác thêm vào 03-assets.js) ---- */
+var ED_CHAR_WEAPON_TYPES = [
+  { type: 'weapon-sword', label: 'Kiếm' },
+  { type: 'weapon-blade', label: 'Đao' },
+  { type: 'weapon-staff', label: 'Trượng' },
+  { type: 'weapon-bow', label: 'Cung' },
+  { type: 'weapon-shield', label: 'Khiên' },
+  { type: 'weapon-hat', label: 'Mũ' },
+  { type: 'weapon-cape', label: 'Áo choàng' }
+];
+
+function edCharWeaponTypes() { return _edCloneJson(ED_CHAR_WEAPON_TYPES); }
+
+function edCharWeaponTypeLabel(type) {
+  for (var i = 0; i < ED_CHAR_WEAPON_TYPES.length; i++) {
+    if (ED_CHAR_WEAPON_TYPES[i].type === type) return ED_CHAR_WEAPON_TYPES[i].label;
+  }
+  return String(type || '');
+}
+
+function edCharNormalizeAttachmentOffset(offset) {
+  var o = (offset && typeof offset === 'object') ? offset : {};
+  return { pos: _edNum3(o.pos, [0, 0, 0]), rot: _edNum3(o.rot, [0, 0, 0]), scale: _edNum3(o.scale, [1, 1, 1]) };
+}
+
+/* Chuẩn hoá 1 attachment -> {bone, type, key, offset} hoặc null (thiếu
+   xương đích hoặc loại). key mặc định "type@bone". */
+function edCharNormalizeAttachment(a) {
+  if (!a || typeof a !== 'object') return null;
+  if (typeof a.bone !== 'string' || !a.bone) return null;
+  if (typeof a.type !== 'string' || !a.type) return null;
+  var key = (typeof a.key === 'string' && a.key) ? a.key : (a.type + '@' + a.bone);
+  return { bone: a.bone, type: a.type, key: key, offset: edCharNormalizeAttachmentOffset(a.offset) };
+}
+
+/* Thêm/cập nhật attachment trong danh sách (theo key, không sửa list gốc).
+   Trả {ok, attachment, replaced, list} hoặc {ok:false, reason, list}. */
+function edCharUpsertAttachment(list, att) {
+  var norm = edCharNormalizeAttachment(att);
+  if (!norm) return { ok: false, reason: 'Attachment thiếu xương đích hoặc loại vũ khí.', list: list };
+  var out = (Array.isArray(list) ? list : []).map(function (a) { return edCharNormalizeAttachment(a); }).filter(function (a) { return !!a; });
+  var replaced = false;
+  out = out.map(function (a) { if (a.key === norm.key) { replaced = true; return norm; } return a; });
+  if (!replaced) out.push(norm);
+  return { ok: true, attachment: norm, replaced: replaced, list: out };
+}
+
+function edCharRemoveAttachment(list, key) {
+  var src = Array.isArray(list) ? list : [];
+  var out = src.filter(function (a) { return a && a.key !== key; });
+  return { removed: out.length !== src.length, list: out };
+}
+
+/* ---- Preset nhân vật (dữ liệu thuần) ---- */
+
+/* Đảm bảo nhân vật có đủ trường đợt 7 (project cũ thiếu -> mặc định []).
+   Trả chính charData đã bổ sung (để runtime ghi tiếp). */
+function edCharEnsureCharacterBoneFields(charData) {
+  if (!charData || typeof charData !== 'object') return charData;
+  if (!Array.isArray(charData.poses)) charData.poses = [];
+  if (!Array.isArray(charData.customBones)) charData.customBones = [];
+  if (!Array.isArray(charData.attachments)) charData.attachments = [];
+  if (!charData.boneConstraints || typeof charData.boneConstraints !== 'object') charData.boneConstraints = {};
+  if (!charData.extra || typeof charData.extra !== 'object') charData.extra = {};
+  if (!charData.extra.morphValues || typeof charData.extra.morphValues !== 'object') charData.extra.morphValues = {};
+  return charData;
+}
+
+function edCharEnsureProjectPresets(project) {
+  if (!project || typeof project !== 'object') return project;
+  if (!Array.isArray(project.characterPresets)) project.characterPresets = [];
+  if (!Array.isArray(project.characters)) project.characters = [];
+  return project;
+}
+
+/* Chụp snapshot nhân vật cho preset: {fbxKey, color, materialColors,
+   attachments, pose (rotations), boneConstraints, customBones}. */
+function edCharSnapshotCharacterData(charData, poseRotations, materialColors) {
+  var ch = edCharEnsureCharacterBoneFields(charData || {});
+  return {
+    fbxKey: ch.fbxKey || null,
+    color: (typeof ch.color === 'string' && ch.color) ? ch.color : '#334155',
+    materialColors: Array.isArray(materialColors) ? _edCloneJson(materialColors) : [],
+    attachments: (Array.isArray(ch.attachments) ? ch.attachments : []).map(function (a) { return edCharNormalizeAttachment(a); }).filter(function (a) { return !!a; }),
+    pose: (poseRotations && typeof poseRotations === 'object') ? _edCloneJson(poseRotations) : {},
+    boneConstraints: (ch.boneConstraints && typeof ch.boneConstraints === 'object') ? _edCloneJson(ch.boneConstraints) : {},
+    customBones: (Array.isArray(ch.customBones) ? ch.customBones : []).map(function (b) {
+      return { name: b.name, parent: (b.parent === undefined ? null : b.parent), pos: _edNum3(b.pos, [0, 0, 0]), custom: true };
+    })
+  };
+}
+
+function edCharNormalizeCharacterPreset(preset) {
+  if (!preset || typeof preset !== 'object') return null;
+  var d = (preset.data && typeof preset.data === 'object') ? preset.data : {};
+  return {
+    id: (typeof preset.id === 'string' && preset.id) ? preset.id : '',
+    name: (typeof preset.name === 'string' && preset.name) ? preset.name : 'Preset',
+    data: {
+      fbxKey: d.fbxKey || null,
+      color: (typeof d.color === 'string' && d.color) ? d.color : '#334155',
+      materialColors: Array.isArray(d.materialColors) ? _edCloneJson(d.materialColors) : [],
+      attachments: (Array.isArray(d.attachments) ? d.attachments : []).map(function (a) { return edCharNormalizeAttachment(a); }).filter(function (a) { return !!a; }),
+      pose: (d.pose && typeof d.pose === 'object') ? _edCloneJson(d.pose) : {},
+      boneConstraints: (d.boneConstraints && typeof d.boneConstraints === 'object') ? _edCloneJson(d.boneConstraints) : {},
+      customBones: (Array.isArray(d.customBones) ? d.customBones : []).map(function (b) {
+        return { name: b.name, parent: (b.parent === undefined ? null : b.parent), pos: _edNum3(b.pos, [0, 0, 0]), custom: true };
+      })
+    }
+  };
+}
+
 /* ---------------- IndexedDB riêng của editor ----------------
    DB 'mongvolam_editor_v1', store 'assets' (keyPath 'key'):
    {key, name, size, data:ArrayBuffer}. Mở trong hàm (không top-level). */
@@ -798,6 +1275,32 @@ ED.Character = {
   clampRotationDeg: edCharClampRotationDeg,
   getBoneConstraint: edCharGetBoneConstraint,
   setBoneConstraint: edCharSetBoneConstraint,
+  /* Đợt 7 — xương/tư thế/gắn đồ/preset (hàm thuần, test được bằng vm). */
+  createBoneData: edCharCreateBoneData,
+  setBoneParentData: edCharSetBoneParentData,
+  validateBoneTree: edCharValidateBoneTree,
+  deleteBoneData: edCharDeleteBoneData,
+  boneChildren: edCharBoneChildren,
+  boneDescendants: edCharBoneDescendants,
+  nextBoneName: edCharNextBoneName,
+  snapAngle: edCharSnapAngle,
+  gizmoDragRot: edCharGizmoDragRot,
+  posePresets: edCharPosePresets,
+  posePreset: edCharPosePreset,
+  capturePoseData: edCharCapturePoseData,
+  applyPoseData: edCharApplyPoseData,
+  mirrorBoneName: edCharMirrorBoneName,
+  mirrorPoseData: edCharMirrorPoseData,
+  weaponTypes: edCharWeaponTypes,
+  weaponTypeLabel: edCharWeaponTypeLabel,
+  normalizeAttachmentOffset: edCharNormalizeAttachmentOffset,
+  normalizeAttachment: edCharNormalizeAttachment,
+  upsertAttachment: edCharUpsertAttachment,
+  removeAttachment: edCharRemoveAttachment,
+  ensureCharacterBoneFields: edCharEnsureCharacterBoneFields,
+  ensureProjectPresets: edCharEnsureProjectPresets,
+  snapshotCharacterData: edCharSnapshotCharacterData,
+  normalizeCharacterPreset: edCharNormalizeCharacterPreset,
   DB_NAME: ED_CHAR_DB,
   STORE_NAME: ED_CHAR_STORE,
 
@@ -1085,6 +1588,7 @@ ED.Character = {
       this.commit('Thêm nhân vật vào scene');
       try { if (ED.Viewport && typeof ED.Viewport.syncObject === 'function') ED.Viewport.syncObject(obj); } catch (e) {}
     }
+    try { this._applyAttachmentsToSceneMeshes(ch.id); } catch (e) {} /* đợt 7: đồ gắn theo vào scene (nếu viewport đã sync mesh) */
     this.toast('Đã thêm "' + ch.name + '" vào scene (type character).');
     return obj;
   },
@@ -1124,6 +1628,14 @@ ED.Character = {
     );
     ikTarget.visible = false;
     scene.add(ikTarget);
+    /* Đợt 7 — tay cầm kéo xương (xanh dương): hiện khi chọn xương, kéo nó
+       để xoay xương (ngang = xoay Y, dọc = xoay X, snap 5° / Shift = 1°). */
+    var gizmoHandle = new THREE.Mesh(
+      new THREE.SphereGeometry(0.09, 16, 16),
+      new THREE.MeshBasicMaterial({ color: 0x22d3ee })
+    );
+    gizmoHandle.visible = false;
+    scene.add(gizmoHandle);
     var self = this;
     var pv = {
       renderer: renderer, scene: scene, camera: camera, group: null,
@@ -1134,7 +1646,9 @@ ED.Character = {
         enabled: { leftArm: true, rightArm: true, leftLeg: true, rightLeg: true },
         activeLimb: 'leftArm', targetPos: null, dragging: false, targetMesh: ikTarget
       },
-      heatmap: { on: false, bone: null }
+      heatmap: { on: false, bone: null },
+      gizmoHandle: gizmoHandle,
+      gizmo: { dragging: false, bone: null, startX: 0, startY: 0, startRot: [0, 0, 0], moved: false }
     };
     this._preview = pv;
     var cv = renderer.domElement;
@@ -1160,6 +1674,24 @@ ED.Character = {
       var n = pointerNdc(e);
       ndc.set(n.x, n.y);
       raycaster.setFromCamera(ndc, camera);
+      /* Đợt 7 — bấm trúng tay cầm XANH thì kéo xoay xương đang chọn
+         (thay vì xoay camera); bấm chỗ khác thì như cũ (IK / xoay camera). */
+      var gizHit = null;
+      if (pv.gizmoHandle && pv.gizmoHandle.visible && pv.selectedBone) {
+        try { gizHit = raycaster.intersectObject(pv.gizmoHandle, false); } catch (err) { gizHit = null; }
+      }
+      if (gizHit && gizHit.length) {
+        var bt = self.getBoneTransform(pv.selectedBone);
+        pv.gizmo.dragging = true;
+        pv.gizmo.bone = pv.selectedBone;
+        pv.gizmo.startX = posOf(e).x;
+        pv.gizmo.startY = posOf(e).y;
+        pv.gizmo.startRot = bt ? [edCharRadToDeg(bt.rot[0]), edCharRadToDeg(bt.rot[1]), edCharRadToDeg(bt.rot[2])] : [0, 0, 0];
+        pv.gizmo.moved = false;
+        pv.playing = false; /* kéo xương thì dừng clip, không thì mixer ghi đè */
+        try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+        return;
+      }
       var hit = null;
       if (pv.ik.targetMesh && pv.ik.targetMesh.visible) {
         try { hit = raycaster.intersectObject(pv.ik.targetMesh, false); } catch (err) { hit = null; }
@@ -1181,6 +1713,13 @@ ED.Character = {
       try { cv.setPointerCapture(e.pointerId); } catch (err) {}
     });
     cv.addEventListener('pointermove', function (e) {
+      if (pv.gizmo.dragging && pv.gizmo.bone) {
+        var r = edCharGizmoDragRot(pv.gizmo.startRot, posOf(e).x - pv.gizmo.startX, posOf(e).y - pv.gizmo.startY, !!(e.shiftKey));
+        pv.gizmo.moved = true;
+        self.rotateBoneManual(pv.gizmo.bone, r.rot);
+        self._refreshBoneEditPanel();
+        return;
+      }
       if (pv.ik.dragging) {
         var n2 = pointerNdc(e);
         ndc.set(n2.x, n2.y);
@@ -1195,7 +1734,11 @@ ED.Character = {
       pv.angle = pv.drag.angle + (posOf(e).x - pv.drag.x) * 0.01;
       if (pv.group) pv.group.rotation.y = pv.angle;
     });
-    function endDrag() { pv.drag = null; pv.ik.dragging = false; }
+    function endDrag() {
+      if (pv.gizmo.dragging && pv.gizmo.moved && pv.gizmo.bone) self.commit('Xoay xương ' + pv.gizmo.bone + ' bằng tay cầm');
+      pv.drag = null; pv.ik.dragging = false;
+      pv.gizmo.dragging = false; pv.gizmo.bone = null;
+    }
     cv.addEventListener('pointerup', endDrag);
     cv.addEventListener('pointercancel', endDrag);
     if (typeof requestAnimationFrame !== 'undefined') {
@@ -1265,6 +1808,7 @@ ED.Character = {
           } catch (e) {}
         }
       });
+      this._reapplyStoredBoneData(); /* đợt 7: dựng lại xương tự tạo + đồ gắn đã lưu */
       if (pv.clips.length && typeof THREE.AnimationMixer === 'function') {
         try {
           pv.mixer = new THREE.AnimationMixer(group);
@@ -1281,6 +1825,10 @@ ED.Character = {
     this._refreshConstraintPanel();
     this._restoreStoredMorphValues(); /* đợt 5: khôi phục morph đã lưu */
     this.renderMorphPanel();
+    this._refreshBoneEditPanel(); /* đợt 7 */
+    this._refreshPosePanel();
+    this._refreshAttachmentPanel();
+    this._refreshPresetPanel();
     return true;
   },
 
@@ -1294,6 +1842,8 @@ ED.Character = {
     pv.onTick = null;
     pv.customClip = null;
     pv.marker.visible = false;
+    if (pv.gizmoHandle) pv.gizmoHandle.visible = false;
+    if (pv.gizmo) { pv.gizmo.dragging = false; pv.gizmo.bone = null; }
     pv.morphValues = {}; /* đợt 5: reset morph */
     pv.heatmap = { on: false, bone: null };
     if (pv.ik) {
@@ -1310,6 +1860,10 @@ ED.Character = {
     this._refreshHeatmapPanel();
     this._refreshConstraintPanel();
     this.renderMorphPanel(); /* đợt 5: báo chưa có model */
+    this._refreshBoneEditPanel(); /* đợt 7 */
+    this._refreshPosePanel();
+    this._refreshAttachmentPanel();
+    this._refreshPresetPanel();
   },
 
   /* Phát clip theo tên (mặc định clip đầu). opts.fadeSec > 0 thì chuyển
@@ -1450,6 +2004,10 @@ ED.Character = {
     try { found.getWorldPosition(wp); } catch (e) { wp.set(0, 0, 0); }
     pv.marker.position.copy(wp);
     pv.marker.visible = true;
+    if (pv.gizmoHandle) { /* đợt 7: tay cầm kéo xương tại vị trí xương */
+      pv.gizmoHandle.position.copy(wp);
+      pv.gizmoHandle.visible = true;
+    }
     var info = {
       name: found.name,
       pos: [Number(wp.x.toFixed(2)), Number(wp.y.toFixed(2)), Number(wp.z.toFixed(2))]
@@ -1460,6 +2018,7 @@ ED.Character = {
     this._refreshConstraintPanel();
     this.renderBoneWeightStats(found.name);
     if (pv.heatmap && pv.heatmap.on) this.applyBoneWeightHeatmap(found.name);
+    this._refreshBoneEditPanel(); /* đợt 7 */
     return info;
   },
 
@@ -1657,6 +2216,7 @@ ED.Character = {
     try { found.getWorldPosition(wp); } catch (e) {}
     pv.marker.position.copy(wp);
     pv.marker.visible = true;
+    if (pv.gizmoHandle) { pv.gizmoHandle.position.copy(wp); pv.gizmoHandle.visible = true; }
     this.renderBoneInfo({
       name: found.name,
       pos: [Number(wp.x.toFixed(2)), Number(wp.y.toFixed(2)), Number(wp.z.toFixed(2))]
@@ -1963,7 +2523,7 @@ ED.Character = {
   /* Vẽ panel morph (ngay dưới panel Số liệu Bone Weight): 1 slider
      0..1 cho từng morph target; model không có morph thì báo rõ
      "Model này không có morph target" (không hiện slider giả); ghi rõ
-     clip tự tạo chỉ ghi pos/rot/scale, không ghi morph. */
+     clip tự tạo đã ghi được morph từ đợt 7 (thêm track morph trong Timeline). */
   renderMorphPanel: function () {
     var body = this._morphBodyEl;
     if (!body || typeof document === 'undefined') return;
@@ -2018,7 +2578,7 @@ ED.Character = {
       self.renderMorphPanel();
     });
     body.appendChild(resetBtn);
-    line('Lưu ý: clip tự tạo vẫn chỉ ghi pos/rot/scale, không ghi morph vào clip.');
+    line('Lưu ý: từ đợt 7, clip tự tạo đã ghi được morph (thêm track morph trong Timeline).');
   },
 
   /* ---------------- Đợt 4 (b) Retarget clip Mixamo (runtime) ----------------
@@ -2245,6 +2805,982 @@ ED.Character = {
     }
   },
 
+
+  /* ---------------- Đợt 7 — Xương + Tư thế + Gắn đồ + Preset (runtime) ---------------- */
+
+  _ensureCharBoneFields: function (ch) { return edCharEnsureCharacterBoneFields(ch); },
+
+  _ensureProjectPresets: function () { return edCharEnsureProjectPresets(this.project()); },
+
+  /* ---- API bắt buộc cho nhóm khác (IK/Weight/Retarget dùng qua guard typeof) ---- */
+
+  /* Mảng bones [{name, object, pos, depth, path}] (object null nếu chưa có
+     group) — nhóm IK/Weight/Retarget đọc xương preview qua đây. */
+  getPreviewBones: function () {
+    var pv = this._preview;
+    if (!pv) return [];
+    var map = {};
+    if (pv.group && typeof pv.group.traverse === 'function') {
+      pv.group.traverse(function (obj) { if (obj && obj.isBone) map[obj.name] = obj; });
+    }
+    return (pv.bones || []).map(function (b) {
+      return { name: b.name, pos: b.pos ? b.pos.slice() : [0, 0, 0], depth: b.depth, path: b.path, object: map[b.name] || null };
+    });
+  },
+
+  /* Mọi SkinnedMesh trong preview group (để Weight Painting tô weight). */
+  getPreviewSkinnedMeshes: function () {
+    var pv = this._preview;
+    if (!pv || !pv.group || typeof pv.group.traverse !== 'function') return [];
+    var out = [];
+    pv.group.traverse(function (obj) { if (obj && obj.isSkinnedMesh) out.push(obj); });
+    return out;
+  },
+
+  getPreviewGroup: function () {
+    var pv = this._preview;
+    return (pv && pv.group) ? pv.group : null;
+  },
+
+  /* Dựng lại cây xương trong panel (+ các panel đợt 7). Nhóm khác gọi sau
+     khi đổi skeleton (VD retarget xong, weight xong). */
+  refreshBoneTree: function () {
+    this.renderBoneTree();
+    this._refreshBoneEditPanel();
+    this._refreshPosePanel();
+    this._refreshAttachmentPanel();
+    this._refreshPresetPanel();
+  },
+
+  /* ---- Xương: helper ---- */
+
+  _findBoneObject: function (group, name) {
+    if (!group || typeof group.traverse !== 'function' || !name) return null;
+    var found = null;
+    group.traverse(function (obj) { if (!found && obj && obj.isBone && obj.name === name) found = obj; });
+    return found;
+  },
+
+  /* Danh sách xương thuần [{name, parent, pos, custom}] từ preview
+     (parent suy từ path 'Hips/Spine/...' của collectBones). */
+  _plainBoneListFromPreview: function () {
+    var pv = this._preview;
+    if (!pv || !pv.group) return [];
+    var map = {};
+    pv.group.traverse(function (obj) { if (obj && obj.isBone) map[obj.name] = obj; });
+    return (pv.bones || []).map(function (b) {
+      var parent = null;
+      if (b.path && typeof b.path === 'string') {
+        var parts = b.path.split('/');
+        if (parts.length >= 2) parent = parts[parts.length - 2];
+      }
+      var obj = map[b.name];
+      return { name: b.name, parent: parent, pos: b.pos ? b.pos.slice() : [0, 0, 0], custom: !!(obj && obj.userData && obj.userData.custom) };
+    });
+  },
+
+  _refreshPreviewBones: function () {
+    var pv = this._preview;
+    if (!pv || !pv.group) return;
+    pv.bones = edCharCollectBones(pv.group);
+  },
+
+  /* Dựng xương tự tạo đã lưu vào 1 group (preview hoặc scene): lần lượt
+     gắn xương nào cha đã có, bỏ qua xương cha không tồn tại / trùng tên.
+     Trả {applied, skipped:[{name, reason}]}. */
+  _applyCustomBonesToGroup: function (group, customBones) {
+    var skipped = [], applied = 0;
+    if (!group || typeof THREE === 'undefined' || !THREE.Bone) return { applied: 0, skipped: skipped };
+    if (!Array.isArray(customBones) || !customBones.length) return { applied: 0, skipped: skipped };
+    var pending = customBones.map(function (b) {
+      return { name: b.name, parent: (b.parent === undefined ? null : b.parent), pos: _edNum3(b.pos, [0, 0.2, 0]), custom: true };
+    }).filter(function (b) { return typeof b.name === 'string' && b.name; });
+    var guard = 0;
+    while (pending.length && guard < 100) {
+      guard++;
+      var progress = false;
+      var rest = [];
+      for (var i = 0; i < pending.length; i++) {
+        var e = pending[i];
+        if (this._findBoneObject(group, e.name)) { skipped.push({ name: e.name, reason: 'Đã có xương tên "' + e.name + '" trong model — bỏ qua.' }); progress = true; continue; }
+        var parentObj = (e.parent === null) ? group : this._findBoneObject(group, e.parent);
+        if (!parentObj) { rest.push(e); continue; }
+        try {
+          var bone = new THREE.Bone();
+          bone.name = e.name;
+          bone.position.set(e.pos[0], e.pos[1], e.pos[2]);
+          bone.userData.custom = true;
+          bone.userData._edRestEuler = [0, 0, 0];
+          bone.userData._edOrigQuat = bone.quaternion.clone();
+          parentObj.add(bone);
+          applied++;
+          progress = true;
+        } catch (err) { skipped.push({ name: e.name, reason: 'Không tạo được xương "' + e.name + '".' }); progress = true; }
+      }
+      pending = rest;
+      if (!progress) break;
+    }
+    pending.forEach(function (e) {
+      skipped.push({ name: e.name, reason: 'Cha "' + e.parent + '" không có trong model — bỏ qua xương "' + e.name + '".' });
+    });
+    try { group.updateMatrixWorld(true); } catch (e2) {}
+    return { applied: applied, skipped: skipped };
+  },
+
+  /* Dựng lại xương tự tạo đã lưu của nhân vật vào preview (gọi trong
+     showPreview / sau khi mở project). Trả {applied, skipped}. */
+  applyCustomBones: function (charId) {
+    var pv = this._preview;
+    if (!pv || !pv.group) return { applied: 0, skipped: [] };
+    var project = this.project();
+    var ch = null;
+    var id = charId || this._selectedId;
+    for (var i = 0; i < project.characters.length; i++) {
+      if (project.characters[i] && project.characters[i].id === id) { ch = project.characters[i]; break; }
+    }
+    if (!ch) return { applied: 0, skipped: [] };
+    this._ensureCharBoneFields(ch);
+    var r = this._applyCustomBonesToGroup(pv.group, ch.customBones);
+    this._refreshPreviewBones();
+    return r;
+  },
+
+  /* Dựng lại xương tự tạo + đồ gắn đã lưu vào preview (gọi trong showPreview). */
+  _reapplyStoredBoneData: function () {
+    var pv = this._preview;
+    if (!pv || !pv.group) return;
+    var ch = this._getSelectedChar();
+    if (!ch) return;
+    this._ensureCharBoneFields(ch);
+    this._applyCustomBonesToGroup(pv.group, ch.customBones);
+    this._refreshPreviewBones();
+    this._applyAttachmentsToGroup(pv.group, ch.attachments);
+  },
+
+  /* (a) Thêm xương mới làm con của xương đang chọn (parentName null ->
+     xương đang chọn -> Hips -> gốc group). Tên trống -> tự sinh "Xương N",
+     offset mặc định [0, 0.2, 0] theo không gian cha. Lưu customBones.
+     Trả {ok, bone} hoặc {ok:false, reason}. */
+  addBone: function (parentName, name, offset) {
+    var pv = this._preview;
+    if (!pv || !pv.group || typeof THREE === 'undefined' || !THREE.Bone) return { ok: false, reason: 'Chưa có model trong preview.' };
+    var parent = parentName || this.getSelectedBone() || null;
+    if (!parent) {
+      var hips = this._findBoneObject(pv.group, 'mixamorig:Hips') || this._findBoneObject(pv.group, 'Hips');
+      parent = hips ? hips.name : null;
+    }
+    var res = edCharCreateBoneData(this._plainBoneListFromPreview(), parent, name, offset);
+    if (!res.ok) return res;
+    var parentObj = parent ? this._findBoneObject(pv.group, parent) : null;
+    var bone;
+    try {
+      bone = new THREE.Bone();
+      bone.name = res.bone.name;
+      bone.position.set(res.bone.pos[0], res.bone.pos[1], res.bone.pos[2]);
+      bone.userData.custom = true;
+      bone.userData._edRestEuler = [0, 0, 0];
+      bone.userData._edOrigQuat = bone.quaternion.clone();
+    } catch (e) { return { ok: false, reason: 'Không tạo được xương mới (' + (e && e.message ? e.message : 'lỗi không rõ') + ').' }; }
+    try { if (parentObj) parentObj.add(bone); else pv.group.add(bone); }
+    catch (e) { return { ok: false, reason: 'Không gắn được xương mới vào xương cha.' }; }
+    try { pv.group.updateMatrixWorld(true); } catch (e) {}
+    var ch = this._getSelectedChar();
+    if (ch) {
+      this._ensureCharBoneFields(ch);
+      ch.customBones.push({ name: res.bone.name, parent: res.bone.parent, pos: res.bone.pos.slice() });
+    }
+    this._refreshPreviewBones();
+    this.refreshBoneTree();
+    this.selectBone(res.bone.name);
+    this.commit('Thêm xương ' + res.bone.name);
+    this.toast('Đã thêm xương "' + res.bone.name + '" (xương tự tạo — chưa có skin weight).');
+    return { ok: true, bone: res.bone };
+  },
+
+  /* (b) Đổi cha (giữ nguyên vị trí thế giới nhờ Object3D.attach).
+     Đổi cha của xương GỐC chỉ áp trong phiên preview (không lưu — chỉ
+     customBones mới được lưu). Trả {ok} hoặc {ok:false, reason}. */
+  setBoneParent: function (name, newParentName) {
+    var pv = this._preview;
+    if (!pv || !pv.group) return { ok: false, reason: 'Chưa có model trong preview.' };
+    var res = edCharSetBoneParentData(this._plainBoneListFromPreview(), name, newParentName);
+    if (!res.ok) return res;
+    var boneObj = this._findBoneObject(pv.group, name);
+    if (!boneObj) return { ok: false, reason: 'Không tìm thấy xương "' + name + '" trong preview.' };
+    var np = (newParentName === null || newParentName === undefined || newParentName === '') ? null : String(newParentName);
+    var newParentObj = np ? this._findBoneObject(pv.group, np) : null;
+    if (np && !newParentObj) return { ok: false, reason: 'Không tìm thấy xương cha mới "' + np + '".' };
+    try {
+      if (newParentObj) { if (typeof newParentObj.attach === 'function') newParentObj.attach(boneObj); else newParentObj.add(boneObj); }
+      else if (typeof pv.group.attach === 'function') pv.group.attach(boneObj);
+      else pv.group.add(boneObj);
+    } catch (e) { return { ok: false, reason: 'Không đổi cha được cho xương "' + name + '".' }; }
+    try { pv.group.updateMatrixWorld(true); } catch (e) {}
+    var ch = this._getSelectedChar();
+    if (ch) {
+      this._ensureCharBoneFields(ch);
+      for (var i = 0; i < ch.customBones.length; i++) {
+        if (ch.customBones[i].name === name) {
+          ch.customBones[i].parent = np;
+          ch.customBones[i].pos = [boneObj.position.x, boneObj.position.y, boneObj.position.z];
+        }
+      }
+    }
+    this._refreshPreviewBones();
+    this.refreshBoneTree();
+    this.commit('Đổi cha xương ' + name);
+    return { ok: true };
+  },
+
+  /* (c) Xoá xương tự tạo: con của nó về làm con của ông (giữ nguyên vị
+     trí thế giới); đồ gắn trên xương này bị tháo theo. Xương gốc Mixamo
+     bị từ chối + báo rõ. Trả {ok, reparented} hoặc {ok:false, reason}. */
+  removeBone: function (name) {
+    var pv = this._preview;
+    if (!pv || !pv.group) return { ok: false, reason: 'Chưa có model trong preview.' };
+    var res = edCharDeleteBoneData(this._plainBoneListFromPreview(), name);
+    if (!res.ok) return res;
+    var boneObj = this._findBoneObject(pv.group, name);
+    var grandObj = res.grandparent ? this._findBoneObject(pv.group, res.grandparent) : null;
+    if (boneObj) {
+      var children = [];
+      boneObj.children.slice().forEach(function (c) { if (c && c.isBone) children.push(c); });
+      children.forEach(function (c) {
+        try {
+          if (grandObj) { if (typeof grandObj.attach === 'function') grandObj.attach(c); else grandObj.add(c); }
+          else if (typeof pv.group.attach === 'function') pv.group.attach(c);
+          else pv.group.add(c);
+        } catch (e) {}
+      });
+      try { if (boneObj.parent) boneObj.parent.remove(boneObj); } catch (e) {}
+      this._removeAttachmentFromGroup(pv.group, null, name);
+    }
+    var ch = this._getSelectedChar();
+    if (ch) {
+      this._ensureCharBoneFields(ch);
+      ch.customBones = ch.customBones.filter(function (b) { return b.name !== name; });
+      ch.customBones.forEach(function (b) { if (b.parent === name) b.parent = res.grandparent; });
+      ch.attachments = ch.attachments.filter(function (a) { return a.bone !== name; });
+    }
+    if (pv.selectedBone === name) {
+      pv.selectedBone = null;
+      if (pv.gizmoHandle) pv.gizmoHandle.visible = false;
+      this.renderBoneInfo(null);
+    }
+    this._refreshPreviewBones();
+    this.refreshBoneTree();
+    this.commit('Xoá xương ' + name);
+    return { ok: true, reparented: res.reparented };
+  },
+
+  /* (d) Sửa transform xương bằng số: pos cục bộ + rot (độ, kẹp theo
+     constraint qua rotateBoneManual). Trả {ok, pos, rot} hoặc {ok:false, reason}. */
+  setBoneTransform: function (boneName, pos, rotDeg) {
+    var pv = this._preview;
+    if (!pv || !pv.group || !boneName) return { ok: false, reason: 'Chưa có model trong preview.' };
+    var bone = this._findBoneObject(pv.group, boneName);
+    if (!bone) return { ok: false, reason: 'Không tìm thấy xương "' + boneName + '".' };
+    pv.playing = false;
+    var newPos;
+    if (Array.isArray(pos)) {
+      newPos = _edNum3(pos, [bone.position.x, bone.position.y, bone.position.z]);
+      bone.position.set(newPos[0], newPos[1], newPos[2]);
+    } else newPos = [bone.position.x, bone.position.y, bone.position.z];
+    var newRot = null;
+    if (Array.isArray(rotDeg)) {
+      newRot = this.rotateBoneManual(boneName, rotDeg);
+      if (!newRot) return { ok: false, reason: 'Không xoay được xương "' + boneName + '".' };
+    } else {
+      newRot = [edCharRadToDeg(bone.rotation.x), edCharRadToDeg(bone.rotation.y), edCharRadToDeg(bone.rotation.z)];
+    }
+    try { pv.group.updateMatrixWorld(true); } catch (e) {}
+    this._refreshBoneEditPanel();
+    return { ok: true, pos: newPos, rot: newRot };
+  },
+
+  /* ---- Tư thế (Pose library) ---- */
+
+  /* Tư thế hiện tại của preview (rotations độ) — để lưu pose / preset. */
+  getCurrentPoseRotations: function () {
+    var pv = this._preview;
+    if (!pv || !pv.group) return {};
+    var bones = [];
+    pv.group.traverse(function (obj) { if (obj && obj.isBone) bones.push(obj); });
+    return edCharCapturePoseData(bones);
+  },
+
+  listPoses: function (charId) {
+    var project = this.project();
+    var ch = null;
+    var id = charId || this._selectedId;
+    for (var i = 0; i < project.characters.length; i++) {
+      if (project.characters[i] && project.characters[i].id === id) { ch = project.characters[i]; break; }
+    }
+    if (!ch) return [];
+    this._ensureCharBoneFields(ch);
+    return _edCloneJson(ch.poses);
+  },
+
+  /* Lưu tư thế hiện tại của preview (name trống -> "Tư thế N"; trùng tên
+     thì ghi đè). Trả {ok, name, replaced} hoặc {ok:false, reason}. */
+  savePose: function (charId, name) {
+    var project = this.project();
+    var ch = null;
+    var id = charId || this._selectedId;
+    for (var i = 0; i < project.characters.length; i++) {
+      if (project.characters[i] && project.characters[i].id === id) { ch = project.characters[i]; break; }
+    }
+    if (!ch) return { ok: false, reason: 'Chưa chọn nhân vật nào.' };
+    this._ensureCharBoneFields(ch);
+    var poseName = (typeof name === 'string' && name.trim()) ? name.trim() : ('Tư thế ' + (ch.poses.length + 1));
+    var pose = { name: poseName, rotations: this.getCurrentPoseRotations() };
+    var replaced = false;
+    ch.poses = ch.poses.map(function (p) { if (p.name === poseName) { replaced = true; return pose; } return p; });
+    if (!replaced) ch.poses.push(pose);
+    this.commit('Lưu tư thế ' + poseName);
+    this._refreshPosePanel();
+    return { ok: true, name: poseName, replaced: replaced };
+  },
+
+  /* Áp 1 tư thế (độ) lên 1 group xương, tôn trọng constraint (kẹp delta
+     so với tư thế gốc). Trả {applied, missing} như edCharApplyPoseData. */
+  applyPoseToGroup: function (group, rotations, charData) {
+    if (!group || typeof group.traverse !== 'function' || !rotations) return { applied: [], missing: [] };
+    var bones = [];
+    group.traverse(function (obj) { if (obj && obj.isBone) bones.push(obj); });
+    var res = edCharApplyPoseData(bones, rotations);
+    res.applied.forEach(function (name) {
+      var bone = null;
+      bones.forEach(function (b) { if (!bone && b.name === name) bone = b; });
+      if (!bone) return;
+      try {
+        var c = charData ? edCharGetBoneConstraint(charData, name) : edCharDefaultBoneConstraint(name);
+        var rest = (bone.userData && bone.userData._edRestEuler) ? bone.userData._edRestEuler : null;
+        var deg = [edCharRadToDeg(bone.rotation.x), edCharRadToDeg(bone.rotation.y), edCharRadToDeg(bone.rotation.z)];
+        var cl = edCharClampRotationDeg(deg, c, rest);
+        bone.rotation.set(edCharDegToRad(cl[0]), edCharDegToRad(cl[1]), edCharDegToRad(cl[2]));
+      } catch (e) {}
+    });
+    try { group.updateMatrixWorld(true); } catch (e) {}
+    return res;
+  },
+
+  /* Áp tư thế (đã lưu hoặc preset có sẵn) cho preview + nhân vật trong
+     scene. Chưa chọn nhân vật thì chỉ áp cho preview. Trả {ok, name,
+     applied, missing, sceneApplied} hoặc {ok:false, reason}. */
+  applyPose: function (charId, name) {
+    var project = this.project();
+    var ch = null;
+    var id = charId || this._selectedId;
+    for (var i = 0; i < project.characters.length; i++) {
+      if (project.characters[i] && project.characters[i].id === id) { ch = project.characters[i]; break; }
+    }
+    var pose = null;
+    if (ch) {
+      this._ensureCharBoneFields(ch);
+      ch.poses.forEach(function (p) { if (p.name === name) pose = p; });
+    }
+    if (!pose && name) pose = edCharPosePreset(name);
+    if (!pose) return { ok: false, reason: 'Không tìm thấy tư thế "' + name + '".' };
+    var rotations = pose.rotations || {};
+    var pv = this._preview;
+    if (pv) pv.playing = false; /* dừng clip, không thì mixer ghi đè tư thế */
+    var pvRes = this.applyPoseToGroup(this.getPreviewGroup(), rotations, ch);
+    var sceneApplied = [];
+    var self = this;
+    if (ch) {
+      this._findSceneMeshesForChar(ch.id).forEach(function (g) {
+        var r = self.applyPoseToGroup(g, rotations, ch);
+        sceneApplied = sceneApplied.concat(r.applied);
+      });
+    }
+    if (ch) this.commit('Áp tư thế ' + pose.name);
+    this._refreshPosePanel();
+    return { ok: true, name: pose.name, applied: pvRes.applied, missing: pvRes.missing, sceneApplied: sceneApplied };
+  },
+
+  deletePose: function (charId, name) {
+    var project = this.project();
+    var ch = null;
+    var id = charId || this._selectedId;
+    for (var i = 0; i < project.characters.length; i++) {
+      if (project.characters[i] && project.characters[i].id === id) { ch = project.characters[i]; break; }
+    }
+    if (!ch) return { ok: false, reason: 'Chưa chọn nhân vật nào.' };
+    this._ensureCharBoneFields(ch);
+    var before = ch.poses.length;
+    ch.poses = ch.poses.filter(function (p) { return p.name !== name; });
+    if (ch.poses.length === before) return { ok: false, reason: 'Không tìm thấy tư thế "' + name + '".' };
+    if (this._selectedPoseName === name) this._selectedPoseName = null;
+    this.commit('Xoá tư thế ' + name);
+    this._refreshPosePanel();
+    return { ok: true, name: name };
+  },
+
+  /* Mirror tư thế ĐANG XEM trong preview (không lưu): chụp -> mirror ->
+     áp lên preview + scene. Trả {ok, rotations} hoặc {ok:false, reason}. */
+  mirrorCurrentPose: function () {
+    var pv = this._preview;
+    if (!pv || !pv.group) return { ok: false, reason: 'Chưa có model trong preview.' };
+    var ch = this._getSelectedChar();
+    var mirrored = edCharMirrorPoseData({ rotations: this.getCurrentPoseRotations() });
+    pv.playing = false;
+    var r = this.applyPoseToGroup(pv.group, mirrored.rotations, ch);
+    var self = this;
+    if (ch) {
+      this._findSceneMeshesForChar(ch.id).forEach(function (g) { self.applyPoseToGroup(g, mirrored.rotations, ch); });
+    }
+    return { ok: true, rotations: mirrored.rotations, applied: r.applied, missing: r.missing };
+  },
+
+  /* Mirror 1 tư thế đã lưu (hoặc preset): lưu thành tư thế mới
+     "<tên> (gương)" (hoặc newName) + áp luôn lên preview + scene.
+     Trả {ok, name, pose} hoặc {ok:false, reason}. */
+  mirrorPose: function (charId, name, newName) {
+    var project = this.project();
+    var ch = null;
+    var id = charId || this._selectedId;
+    for (var i = 0; i < project.characters.length; i++) {
+      if (project.characters[i] && project.characters[i].id === id) { ch = project.characters[i]; break; }
+    }
+    var pose = null;
+    if (ch) {
+      this._ensureCharBoneFields(ch);
+      ch.poses.forEach(function (p) { if (p.name === name) pose = p; });
+    }
+    if (!pose && name) pose = edCharPosePreset(name);
+    if (!pose) return { ok: false, reason: 'Không tìm thấy tư thế "' + name + '".' };
+    var mirrored = edCharMirrorPoseData(pose);
+    var saveName = (typeof newName === 'string' && newName.trim()) ? newName.trim() : mirrored.name;
+    var saved = { name: saveName, rotations: mirrored.rotations };
+    if (ch) {
+      var replaced = false;
+      ch.poses = ch.poses.map(function (p) { if (p.name === saveName) { replaced = true; return saved; } return p; });
+      if (!replaced) ch.poses.push(saved);
+    }
+    var pv = this._preview;
+    if (pv) pv.playing = false;
+    this.applyPoseToGroup(this.getPreviewGroup(), mirrored.rotations, ch);
+    var self = this;
+    if (ch) {
+      this._findSceneMeshesForChar(ch.id).forEach(function (g) { self.applyPoseToGroup(g, mirrored.rotations, ch); });
+    }
+    if (ch) this.commit('Mirror tư thế ' + pose.name);
+    this._refreshPosePanel();
+    return { ok: true, name: saveName, pose: saved };
+  },
+
+  /* ---- Gắn vũ khí/phụ kiện ---- */
+
+  /* Mọi group nhân vật của charId trong scene chính (qua ED.Viewport.meshes,
+     guard typeof — viewport chưa sync thì trả []). */
+  _findSceneMeshesForChar: function (charId) {
+    var out = [];
+    if (!charId) return out;
+    var project = this.project();
+    var meshes = (ED.Viewport && ED.Viewport.meshes && typeof ED.Viewport.meshes === 'object') ? ED.Viewport.meshes : null;
+    if (!meshes) return out;
+    (project.objects || []).forEach(function (o) {
+      if (!o || o.type !== 'character') return;
+      if (!o.extra || o.extra.charId !== charId) return;
+      var g = meshes[o.id];
+      if (g) out.push(g);
+    });
+    return out;
+  },
+
+  /* Dựng 1 group đồ từ ED.Assets.buildMesh(type). Trả {ok, group} hoặc
+     {ok:false, reason} — type chưa có builder thì báo rõ, không vẽ đồ giả. */
+  _buildAttachmentGroup: function (att) {
+    if (!ED.Assets || typeof ED.Assets.buildMesh !== 'function') return { ok: false, reason: 'Chưa có ED.Assets.buildMesh — chưa gắn được đồ.' };
+    var g = null;
+    try { g = ED.Assets.buildMesh(att.type, {}); } catch (e) { g = null; }
+    if (!g) return { ok: false, reason: 'Loại "' + att.type + '" chưa có trong 03-assets.js (nhóm khác chưa thêm builder cho vũ khí này) — chọn loại khác.' };
+    try {
+      g.name = 'ed-attachment-' + att.key;
+      g.userData._edAttachmentKey = att.key;
+      g.userData._edAttachmentBone = att.bone;
+      g.position.set(att.offset.pos[0], att.offset.pos[1], att.offset.pos[2]);
+      g.rotation.set(edCharDegToRad(att.offset.rot[0]), edCharDegToRad(att.offset.rot[1]), edCharDegToRad(att.offset.rot[2]));
+      g.scale.set(att.offset.scale[0], att.offset.scale[1], att.offset.scale[2]);
+    } catch (e) {}
+    return { ok: true, group: g };
+  },
+
+  /* Gắn 1 attachment vào xương trong 1 group (gỡ bản cũ cùng key trước).
+     Trả {ok, key} hoặc {ok:false, reason}. */
+  _attachToBoneInGroup: function (group, att) {
+    if (!group || typeof group.traverse !== 'function') return { ok: false, reason: 'Không có group để gắn.' };
+    this._removeAttachmentFromGroup(group, att.key);
+    var bone = this._findBoneObject(group, att.bone);
+    if (!bone) return { ok: false, reason: 'Không tìm thấy xương "' + att.bone + '" trong model.' };
+    var built = this._buildAttachmentGroup(att);
+    if (!built.ok) return built;
+    try { bone.add(built.group); } catch (e) { return { ok: false, reason: 'Không gắn được đồ vào xương "' + att.bone + '".' }; }
+    try { group.updateMatrixWorld(true); } catch (e) {}
+    return { ok: true, key: att.key };
+  },
+
+  /* Gỡ đồ gắn trong 1 group: theo key, hoặc mọi đồ trên 1 xương (boneName).
+     Trả số group đã gỡ. */
+  _removeAttachmentFromGroup: function (group, key, boneName) {
+    if (!group || typeof group.traverse !== 'function') return 0;
+    var removed = 0;
+    var targets = [];
+    group.traverse(function (obj) {
+      if (!obj || !obj.userData || !obj.userData._edAttachmentKey) return;
+      if (key && obj.userData._edAttachmentKey !== key) return;
+      if (boneName && obj.userData._edAttachmentBone !== boneName) return;
+      targets.push(obj);
+    });
+    targets.forEach(function (t) { try { if (t.parent) t.parent.remove(t); removed++; } catch (e) {} });
+    return removed;
+  },
+
+  _applyAttachmentsToGroup: function (group, attachments) {
+    var applied = [], failed = [];
+    if (!group || !Array.isArray(attachments)) return { applied: applied, failed: failed };
+    var self = this;
+    attachments.forEach(function (a) {
+      var att = edCharNormalizeAttachment(a);
+      if (!att) { failed.push({ key: (a && a.key) || '', reason: 'Attachment không hợp lệ.' }); return; }
+      var r = self._attachToBoneInGroup(group, att);
+      if (r.ok) applied.push(att.key);
+      else failed.push({ key: att.key, reason: r.reason });
+    });
+    return { applied: applied, failed: failed };
+  },
+
+  _applyAttachmentsToSceneMeshes: function (charId) {
+    var project = this.project();
+    var ch = null;
+    for (var i = 0; i < project.characters.length; i++) {
+      if (project.characters[i] && project.characters[i].id === charId) { ch = project.characters[i]; break; }
+    }
+    if (!ch) return { applied: [], failed: [] };
+    this._ensureCharBoneFields(ch);
+    var applied = [], failed = [];
+    var self = this;
+    this._findSceneMeshesForChar(charId).forEach(function (g) {
+      var r = self._applyAttachmentsToGroup(g, ch.attachments);
+      applied = applied.concat(r.applied);
+      failed = failed.concat(r.failed);
+    });
+    return { applied: applied, failed: failed };
+  },
+
+  /* Dựng lại mọi đồ gắn đã lưu vào preview + scene (gọi sau khi viewport
+     sync lại mesh nhân vật). Trả {applied, failed}. */
+  rebuildAttachments: function (charId) {
+    var id = charId || this._selectedId;
+    var project = this.project();
+    var ch = null;
+    for (var i = 0; i < project.characters.length; i++) {
+      if (project.characters[i] && project.characters[i].id === id) { ch = project.characters[i]; break; }
+    }
+    if (!ch) return { applied: [], failed: [{ key: '', reason: 'Chưa chọn nhân vật nào.' }] };
+    this._ensureCharBoneFields(ch);
+    var r = this._applyAttachmentsToGroup(this.getPreviewGroup(), ch.attachments);
+    var s = this._applyAttachmentsToSceneMeshes(id);
+    return { applied: r.applied.concat(s.applied), failed: r.failed.concat(s.failed) };
+  },
+
+  listAttachments: function (charId) {
+    var project = this.project();
+    var ch = null;
+    var id = charId || this._selectedId;
+    for (var i = 0; i < project.characters.length; i++) {
+      if (project.characters[i] && project.characters[i].id === id) { ch = project.characters[i]; break; }
+    }
+    if (!ch) return [];
+    this._ensureCharBoneFields(ch);
+    return _edCloneJson(ch.attachments);
+  },
+
+  /* Gắn vũ khí/phụ kiện: opts {bone, type, key?, offset:{pos, rot(độ), scale}}.
+     bone mặc định = xương đang chọn. Gắn vào preview VÀ scene (đi theo
+     animation tay vì là con của xương). Lưu characters[].attachments.
+     Trả {ok, key, attachment} hoặc {ok:false, reason}. */
+  attachWeapon: function (charId, opts) {
+    var project = this.project();
+    var ch = null;
+    var id = charId || this._selectedId;
+    for (var i = 0; i < project.characters.length; i++) {
+      if (project.characters[i] && project.characters[i].id === id) { ch = project.characters[i]; break; }
+    }
+    if (!ch) return { ok: false, reason: 'Chưa chọn nhân vật nào.' };
+    this._ensureCharBoneFields(ch);
+    var o = opts || {};
+    var att = edCharNormalizeAttachment({ bone: o.bone || this.getSelectedBone(), type: o.type, key: o.key, offset: o.offset });
+    if (!att) return { ok: false, reason: 'Thiếu xương đích hoặc loại vũ khí — chọn xương trong cây xương và chọn loại vũ khí.' };
+    var pvGroup = this.getPreviewGroup();
+    if (pvGroup) {
+      var pvRes = this._attachToBoneInGroup(pvGroup, att);
+      if (!pvRes.ok) return pvRes;
+    }
+    var up = edCharUpsertAttachment(ch.attachments, att);
+    if (!up.ok) return up;
+    ch.attachments = up.list;
+    this._applyAttachmentsToSceneMeshes(ch.id);
+    this.commit('Gắn ' + att.type + ' vào ' + att.bone);
+    this._refreshAttachmentPanel();
+    return { ok: true, key: att.key, attachment: att };
+  },
+
+  detachWeapon: function (charId, key) {
+    var project = this.project();
+    var ch = null;
+    var id = charId || this._selectedId;
+    for (var i = 0; i < project.characters.length; i++) {
+      if (project.characters[i] && project.characters[i].id === id) { ch = project.characters[i]; break; }
+    }
+    if (!ch) return { ok: false, reason: 'Chưa chọn nhân vật nào.' };
+    this._ensureCharBoneFields(ch);
+    var before = ch.attachments.length;
+    ch.attachments = ch.attachments.filter(function (a) { return a.key !== key; });
+    if (ch.attachments.length === before) return { ok: false, reason: 'Không tìm thấy đồ gắn "' + key + '".' };
+    this._removeAttachmentFromGroup(this.getPreviewGroup(), key);
+    var self = this;
+    this._findSceneMeshesForChar(ch.id).forEach(function (g) { self._removeAttachmentFromGroup(g, key); });
+    if (this._selectedAttachmentKey === key) this._selectedAttachmentKey = null;
+    this.commit('Tháo đồ ' + key);
+    this._refreshAttachmentPanel();
+    return { ok: true, key: key };
+  },
+
+  /* Đổi offset (pos/rot/scale) của đồ đã gắn — gắn lại để áp offset mới.
+     Trả {ok, key, offset} hoặc {ok:false, reason}. */
+  updateAttachmentOffset: function (charId, key, offset) {
+    var project = this.project();
+    var ch = null;
+    var id = charId || this._selectedId;
+    for (var i = 0; i < project.characters.length; i++) {
+      if (project.characters[i] && project.characters[i].id === id) { ch = project.characters[i]; break; }
+    }
+    if (!ch) return { ok: false, reason: 'Chưa chọn nhân vật nào.' };
+    this._ensureCharBoneFields(ch);
+    var att = null;
+    ch.attachments.forEach(function (a) { if (a.key === key) att = a; });
+    if (!att) return { ok: false, reason: 'Không tìm thấy đồ gắn "' + key + '".' };
+    att.offset = edCharNormalizeAttachmentOffset(offset);
+    this._attachToBoneInGroup(this.getPreviewGroup(), att);
+    var self = this;
+    this._findSceneMeshesForChar(ch.id).forEach(function (g) { self._attachToBoneInGroup(g, att); });
+    this.commit('Đổi vị trí đồ ' + key);
+    return { ok: true, key: key, offset: att.offset };
+  },
+
+  /* ---- Preset nhân vật ---- */
+
+  _captureMaterialColors: function (group) {
+    var out = [];
+    if (!group || typeof group.traverse !== 'function') return out;
+    group.traverse(function (obj) {
+      if (!obj || !obj.isMesh || !obj.material) return;
+      var mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      var colors = [];
+      mats.forEach(function (m) {
+        if (m && m.color && typeof m.color.getHexString === 'function') {
+          try { colors.push('#' + m.color.getHexString()); } catch (e) { colors.push(null); }
+        } else colors.push(null);
+      });
+      out.push({ mesh: obj.name || 'mesh', colors: colors });
+    });
+    return out;
+  },
+
+  _applyMaterialColors: function (group, list) {
+    if (!group || typeof group.traverse !== 'function' || !Array.isArray(list)) return 0;
+    var byName = {};
+    list.forEach(function (e) { if (e && e.mesh) byName[e.mesh] = e.colors; });
+    var n = 0;
+    group.traverse(function (obj) {
+      if (!obj || !obj.isMesh || !obj.material) return;
+      var colors = byName[obj.name || 'mesh'];
+      if (!colors) return;
+      var mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach(function (m, i) {
+        if (m && m.color && typeof m.color.set === 'function' && colors[i]) {
+          try { m.color.set(colors[i]); n++; } catch (e) {}
+        }
+      });
+    });
+    return n;
+  },
+
+  /* Lưu preset nhân vật đang chọn (name trống -> "<tên NV> preset N";
+     trùng tên thì ghi đè, giữ id cũ). Trả {ok, id, name, replaced}. */
+  saveCharacterPreset: function (name) {
+    var ch = this._getSelectedChar();
+    if (!ch) return { ok: false, reason: 'Chưa chọn nhân vật nào — chọn nhân vật rồi lưu preset.' };
+    this._ensureCharBoneFields(ch);
+    var project = this._ensureProjectPresets();
+    var presetName = (typeof name === 'string' && name.trim()) ? name.trim() : (ch.name + ' preset ' + (project.characterPresets.length + 1));
+    var data = edCharSnapshotCharacterData(ch, this.getCurrentPoseRotations(), this._captureMaterialColors(this.getPreviewGroup()));
+    var keptId = null, replaced = false;
+    project.characterPresets.forEach(function (p) { if (p && p.name === presetName) { keptId = p.id; replaced = true; } });
+    var id = keptId || ('preset-' + Date.now().toString(36));
+    project.characterPresets = project.characterPresets.map(function (p) {
+      if (p && p.name === presetName) return { id: id, name: presetName, data: data };
+      return p;
+    });
+    if (!replaced) project.characterPresets.push({ id: id, name: presetName, data: data });
+    this.commit('Lưu preset nhân vật ' + presetName);
+    this._refreshPresetPanel();
+    return { ok: true, id: id, name: presetName, replaced: replaced };
+  },
+
+  listCharacterPresets: function () {
+    var project = this._ensureProjectPresets();
+    return _edCloneJson(project.characterPresets);
+  },
+
+  deleteCharacterPreset: function (nameOrId) {
+    var project = this._ensureProjectPresets();
+    var before = project.characterPresets.length;
+    project.characterPresets = project.characterPresets.filter(function (p) { return p.name !== nameOrId && p.id !== nameOrId; });
+    if (project.characterPresets.length === before) return false;
+    this.commit('Xoá preset nhân vật');
+    this._refreshPresetPanel();
+    return true;
+  },
+
+  /* Áp preset 1 chạm: khôi phục fbxKey (nạp lại model nếu khác model đang
+     xem), màu/material, boneConstraints, customBones, attachments, pose.
+     Trả Promise<{ok, name, id, modelLoadError?}>. */
+  applyCharacterPreset: function (nameOrId) {
+    var self = this;
+    var project = this._ensureProjectPresets();
+    var preset = null;
+    project.characterPresets.forEach(function (p) {
+      if (p && (p.name === nameOrId || p.id === nameOrId)) preset = edCharNormalizeCharacterPreset(p);
+    });
+    if (!preset) return Promise.resolve({ ok: false, reason: 'Không tìm thấy preset "' + nameOrId + '".' });
+    var ch = this._getSelectedChar();
+    if (!ch) {
+      ch = edCharNewCharacter(edCharNextId(project), preset.name);
+      project.characters.push(ch);
+    }
+    this._ensureCharBoneFields(ch);
+    var wasSelected = (this._selectedId === ch.id);
+    var needLoad = !!(preset.data.fbxKey && preset.data.fbxKey !== ch.fbxKey);
+    ch.fbxKey = preset.data.fbxKey || ch.fbxKey;
+    ch.boneConstraints = _edCloneJson(preset.data.boneConstraints);
+    ch.customBones = _edCloneJson(preset.data.customBones);
+    ch.attachments = _edCloneJson(preset.data.attachments);
+    ch.color = preset.data.color;
+    function applyRest(target, withPreview) {
+      var pvGroup = withPreview ? self.getPreviewGroup() : null;
+      if (pvGroup) {
+        self._applyCustomBonesToGroup(pvGroup, target.customBones);
+        self._refreshPreviewBones();
+        self._applyAttachmentsToGroup(pvGroup, target.attachments);
+        self._applyMaterialColors(pvGroup, preset.data.materialColors);
+        self.applyPoseToGroup(pvGroup, preset.data.pose, target);
+      }
+      self._applyAttachmentsToSceneMeshes(target.id);
+      self._findSceneMeshesForChar(target.id).forEach(function (g) { self.applyPoseToGroup(g, preset.data.pose, target); });
+      self._selectedId = target.id;
+      self.refreshList();
+      self.refreshBoneTree();
+      self.commit('Áp preset nhân vật ' + preset.name);
+      return { ok: true, name: preset.name, id: preset.id };
+    }
+    if (needLoad) {
+      return this.loadStoredModel(ch.id).then(function () {
+        return applyRest(ch, true);
+      }).catch(function (e) {
+        var r = applyRest(ch, wasSelected);
+        r.modelLoadError = (e && e.message) ? e.message : 'Không nạp được model của preset.';
+        return r;
+      });
+    }
+    return Promise.resolve(applyRest(ch, wasSelected));
+  },
+
+  /* ---- Panel đợt 7 (refresh — guard khi panel chưa build) ---- */
+
+  _refreshBoneEditPanel: function () {
+    if (typeof document === 'undefined') return;
+    var pv = this._preview;
+    var bone = this.getSelectedBone();
+    var self = this;
+    function fillSelect(selEl, skipName, wantValue) {
+      if (!selEl) return;
+      var cur = (wantValue !== undefined) ? wantValue : selEl.value;
+      while (selEl.firstChild) selEl.removeChild(selEl.firstChild);
+      if (selEl === self._boneParentSel) {
+        var o0 = document.createElement('option');
+        o0.value = '';
+        o0.textContent = '— Gốc (không cha) —';
+        selEl.appendChild(o0);
+      }
+      (pv && pv.bones ? pv.bones : []).forEach(function (b) {
+        if (skipName && b.name === skipName) return;
+        var o = document.createElement('option');
+        o.value = b.name;
+        o.textContent = b.name;
+        selEl.appendChild(o);
+      });
+      if (cur) selEl.value = cur;
+    }
+    fillSelect(this._boneParentSel, bone);
+    fillSelect(this._attachBoneSel, null, bone || undefined);
+    var t = bone ? this.getBoneTransform(bone) : null;
+    if (this._bonePosInputs && t) {
+      ['x', 'y', 'z'].forEach(function (ax, i) {
+        if (self._bonePosInputs[ax]) self._bonePosInputs[ax].value = String(Math.round(t.pos[i] * 100) / 100);
+      });
+    }
+    if (this._boneRotInputs && t) {
+      ['x', 'y', 'z'].forEach(function (ax, i) {
+        if (self._boneRotInputs[ax]) self._boneRotInputs[ax].value = String(Math.round(edCharRadToDeg(t.rot[i])));
+      });
+    }
+    if (this._boneEditStatusEl) {
+      if (!bone) this._boneEditStatusEl.textContent = 'Chưa chọn xương nào — bấm 1 xương trong cây xương.';
+      else {
+        var isCustom = false;
+        if (pv && pv.group) {
+          var bo = this._findBoneObject(pv.group, bone);
+          isCustom = !!(bo && bo.userData && bo.userData.custom);
+        }
+        this._boneEditStatusEl.textContent = 'Xương đang chọn: ' + bone + (isCustom ? ' (tự tạo ✳ — xoá được)' : ' (xương gốc Mixamo — không xoá được)');
+      }
+    }
+  },
+
+  _refreshPosePanel: function () {
+    var list = this._poseListEl;
+    if (!list || typeof document === 'undefined') return;
+    while (list.firstChild) list.removeChild(list.firstChild);
+    var self = this;
+    var ch = this._getSelectedChar();
+    var poses = ch ? (this._ensureCharBoneFields(ch).poses || []) : [];
+    if (!poses.length) {
+      list.textContent = 'Chưa lưu tư thế nào — bấm 1 preset ở trên hoặc lưu tư thế hiện tại.';
+      return;
+    }
+    poses.forEach(function (p) {
+      var row = document.createElement('div');
+      row.className = 'ed-row';
+      var b = document.createElement('button');
+      b.className = 'ed-btn';
+      b.style.minHeight = '40px';
+      b.style.flex = '1';
+      b.textContent = '🧍 ' + p.name;
+      if (self._selectedPoseName === p.name) b.classList.add('active');
+      b.addEventListener('click', function () {
+        self._selectedPoseName = p.name;
+        var r = self.applyPose(ch.id, p.name);
+        self.toast(r.ok ? ('Đã áp tư thế "' + p.name + '".') : (r.reason || 'Không áp được tư thế.'));
+        self._refreshPosePanel();
+      });
+      row.appendChild(b);
+      var del = document.createElement('button');
+      del.className = 'ed-btn';
+      del.style.minHeight = '40px';
+      del.style.width = '48px';
+      del.textContent = '✕';
+      del.title = 'Xoá tư thế ' + p.name;
+      del.addEventListener('click', function () {
+        var r = self.deletePose(ch.id, p.name);
+        self.toast(r.ok ? ('Đã xoá tư thế "' + p.name + '".') : (r.reason || 'Không xoá được.'));
+      });
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+  },
+
+  _refreshAttachmentPanel: function () {
+    var list = this._attachListEl;
+    if (!list || typeof document === 'undefined') return;
+    while (list.firstChild) list.removeChild(list.firstChild);
+    var self = this;
+    var ch = this._getSelectedChar();
+    var atts = ch ? (this._ensureCharBoneFields(ch).attachments || []) : [];
+    if (!atts.length) {
+      list.textContent = 'Chưa gắn đồ nào — chọn xương đích + loại vũ khí rồi bấm Gắn.';
+      return;
+    }
+    atts.forEach(function (a) {
+      var row = document.createElement('div');
+      row.className = 'ed-row';
+      var b = document.createElement('button');
+      b.className = 'ed-btn';
+      b.style.minHeight = '40px';
+      b.style.flex = '1';
+      b.textContent = '⚔️ ' + edCharWeaponTypeLabel(a.type) + ' → ' + a.bone;
+      if (self._selectedAttachmentKey === a.key) b.classList.add('active');
+      b.addEventListener('click', function () {
+        self._selectedAttachmentKey = a.key;
+        if (self._attPosInputs) {
+          ['x', 'y', 'z'].forEach(function (ax, i) { if (self._attPosInputs[ax]) self._attPosInputs[ax].value = String(a.offset.pos[i]); });
+        }
+        if (self._attRotInputs) {
+          ['x', 'y', 'z'].forEach(function (ax, i) { if (self._attRotInputs[ax]) self._attRotInputs[ax].value = String(a.offset.rot[i]); });
+        }
+        if (self._attScaleInputs) {
+          ['x', 'y', 'z'].forEach(function (ax, i) { if (self._attScaleInputs[ax]) self._attScaleInputs[ax].value = String(a.offset.scale[i]); });
+        }
+        self._refreshAttachmentPanel();
+      });
+      row.appendChild(b);
+      var del = document.createElement('button');
+      del.className = 'ed-btn';
+      del.style.minHeight = '40px';
+      del.style.width = '48px';
+      del.textContent = '✕';
+      del.title = 'Tháo ' + a.key;
+      del.addEventListener('click', function () {
+        var r = self.detachWeapon(ch.id, a.key);
+        self.toast(r.ok ? 'Đã tháo đồ.' : (r.reason || 'Không tháo được.'));
+      });
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+  },
+
+  _refreshPresetPanel: function () {
+    var list = this._presetListEl;
+    if (!list || typeof document === 'undefined') return;
+    while (list.firstChild) list.removeChild(list.firstChild);
+    var self = this;
+    var presets = this.listCharacterPresets();
+    if (!presets.length) {
+      list.textContent = 'Chưa lưu preset nào — bấm "Lưu preset" để chụp nhân vật hiện tại.';
+      return;
+    }
+    presets.forEach(function (p) {
+      var row = document.createElement('div');
+      row.className = 'ed-row';
+      var b = document.createElement('button');
+      b.className = 'ed-btn';
+      b.style.minHeight = '40px';
+      b.style.flex = '1';
+      b.textContent = '⭐ ' + p.name;
+      b.addEventListener('click', function () {
+        self.applyCharacterPreset(p.id).then(function (r) {
+          if (r.ok) self.toast('Đã áp preset "' + r.name + '"' + (r.modelLoadError ? ' (lưu ý: ' + r.modelLoadError + ')' : '.'));
+          else self.toast(r.reason || 'Không áp được preset.');
+        });
+      });
+      row.appendChild(b);
+      var del = document.createElement('button');
+      del.className = 'ed-btn';
+      del.style.minHeight = '40px';
+      del.style.width = '48px';
+      del.textContent = '✕';
+      del.title = 'Xoá preset ' + p.name;
+      del.addEventListener('click', function () {
+        if (self.deleteCharacterPreset(p.id)) self.toast('Đã xoá preset "' + p.name + '".');
+        else self.toast('Không xoá được preset.');
+      });
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+  },
+
   /* ---------------- Panel (DOM — chỉ trong init) ---------------- */
   init: function (container) {
     if (typeof document === 'undefined') return false;
@@ -2274,6 +3810,8 @@ ED.Character = {
     this._retargetClipBank = []; /* đợt 4: clip nguồn đã nhập trong phiên */
     this._retargetSources = [];
     this._selectedClipName = null;
+    this._selectedPoseName = null; /* đợt 7: tư thế đang chọn trong panel Tư thế */
+    this._selectedAttachmentKey = null; /* đợt 7: đồ gắn đang chọn trong panel Gắn đồ */
     var self = this;
     function el(tag, cls, text) {
       var e = document.createElement(tag);
@@ -2414,7 +3952,7 @@ ED.Character = {
     /* ---- Đợt 5 — Morph targets (ngay dưới cây xương / số liệu bone weight) ---- */
     var morphWrap = el('div', 'ed-char-morph');
     morphWrap.appendChild(el('div', '', '😀 Morph Targets'));
-    morphWrap.appendChild(el('div', 'ed-char-hint', 'Chỉ model .glb (hoặc .fbx) có morph target mới hiện slider — kéo slider để xem trước ngay trong khung xem trước. Lưu ý: clip tự tạo vẫn chỉ ghi pos/rot/scale, không ghi morph vào clip.'));
+    morphWrap.appendChild(el('div', 'ed-char-hint', 'Chỉ model .glb (hoặc .fbx) có morph target mới hiện slider — kéo slider để xem trước ngay trong khung xem trước. Từ đợt 7, clip tự tạo đã ghi được morph (thêm track morph trong Timeline).'));
     var morphBody = el('div', 'ed-char-morph-body', 'Chưa có model — nhập file .glb có morph trước.');
     morphBody.style.maxHeight = '220px';
     morphBody.style.overflowY = 'auto';
@@ -2556,6 +4094,224 @@ ED.Character = {
     csWrap.appendChild(csBtnRow);
     host.appendChild(csWrap);
 
+
+    /* ---- Đợt 7 — Xương: tạo/sửa xương ---- */
+    var boneWrap = el('div', 'ed-char-sk7');
+    boneWrap.appendChild(el('div', '', '🦴 Xương — tạo / sửa'));
+    boneWrap.appendChild(el('div', 'ed-char-hint', 'Chọn 1 xương trong cây xương rồi: thêm xương con, đổi cha, xoá, hoặc kéo tay cầm XANH trong khung xem trước (kéo ngang = xoay Y, kéo dọc = xoay X, snap 5° — giữ Shift = 1°).'));
+    var boneStatus = el('div', 'ed-char-hint', 'Chưa chọn xương nào — bấm 1 xương trong cây xương.');
+    boneWrap.appendChild(boneStatus);
+    this._boneEditStatusEl = boneStatus;
+    function numInp(val, min, max, step) {
+      var n = el('input');
+      n.type = 'number';
+      n.min = String(min); n.max = String(max); n.step = String(step);
+      n.value = String(val);
+      n.style.minHeight = '40px';
+      n.style.width = '64px';
+      return n;
+    }
+    var boneAddRow = el('div', 'ed-row');
+    var boneNameInp = el('input');
+    boneNameInp.type = 'text';
+    boneNameInp.placeholder = 'Tên xương mới (để trống = tự sinh)';
+    boneNameInp.style.minHeight = '40px';
+    boneNameInp.style.flex = '1';
+    boneAddRow.appendChild(boneNameInp);
+    this._boneNameInp = boneNameInp;
+    boneAddRow.appendChild(btn('➕ Thêm xương con', function () {
+      var parent = self.getSelectedBone();
+      if (!parent) { self.toast('Chọn 1 xương trong cây xương làm cha trước.'); return; }
+      var r = self.addBone(parent, boneNameInp.value || undefined, undefined);
+      if (!r.ok) self.toast(r.reason || 'Không thêm được xương.');
+      else boneNameInp.value = '';
+    }));
+    boneWrap.appendChild(boneAddRow);
+    var boneParentRow = el('div', 'ed-row');
+    boneParentRow.appendChild(el('label', '', 'Cha mới'));
+    var boneParentSel = el('select', 'ed-char-bone-parent');
+    boneParentSel.style.minHeight = '40px';
+    boneParentSel.style.flex = '1';
+    boneParentRow.appendChild(boneParentSel);
+    this._boneParentSel = boneParentSel;
+    boneParentRow.appendChild(btn('↩ Đổi cha', function () {
+      var bone = self.getSelectedBone();
+      if (!bone) { self.toast('Chọn 1 xương trong cây xương trước.'); return; }
+      var r = self.setBoneParent(bone, boneParentSel.value || null);
+      self.toast(r.ok ? ('Đã đổi cha của "' + bone + '".') : (r.reason || 'Không đổi cha được.'));
+    }));
+    boneParentRow.appendChild(btn('🗑 Xoá xương', function () {
+      var bone = self.getSelectedBone();
+      if (!bone) { self.toast('Chọn 1 xương trong cây xương trước.'); return; }
+      var r = self.removeBone(bone);
+      if (r.ok) self.toast('Đã xoá xương "' + bone + '"' + (r.reparented.length ? (' — ' + r.reparented.length + ' xương con đã về làm con của ông.') : '.'));
+      else self.toast(r.reason || 'Không xoá được xương.');
+    }));
+    boneWrap.appendChild(boneParentRow);
+    var boneTrRow = el('div', 'ed-row');
+    boneTrRow.appendChild(el('label', '', 'Vị trí'));
+    this._bonePosInputs = {};
+    ['x', 'y', 'z'].forEach(function (ax) {
+      var n = numInp(0, -2, 2, 0.05);
+      self._bonePosInputs[ax] = n;
+      boneTrRow.appendChild(n);
+    });
+    boneTrRow.appendChild(el('label', '', 'Xoay°'));
+    this._boneRotInputs = {};
+    ['x', 'y', 'z'].forEach(function (ax) {
+      var n = numInp(0, -180, 180, 5);
+      self._boneRotInputs[ax] = n;
+      boneTrRow.appendChild(n);
+    });
+    boneTrRow.appendChild(btn('✓ Áp dụng', function () {
+      var bone = self.getSelectedBone();
+      if (!bone) { self.toast('Chọn 1 xương trong cây xương trước.'); return; }
+      var pos = ['x', 'y', 'z'].map(function (ax) { return Number(self._bonePosInputs[ax].value); });
+      var rot = ['x', 'y', 'z'].map(function (ax) { return Number(self._boneRotInputs[ax].value); });
+      var r = self.setBoneTransform(bone, pos, rot);
+      self.toast(r.ok ? ('Đã sửa transform của "' + bone + '".') : (r.reason || 'Không sửa được xương.'));
+    }));
+    boneWrap.appendChild(boneTrRow);
+    boneWrap.appendChild(el('div', 'ed-char-hint', '⚠️ Xương tự tạo chưa có skin weight — mesh không bị ảnh hưởng cho tới khi tô weight (Weight Painting).'));
+    host.appendChild(boneWrap);
+
+    /* ---- Đợt 7 — Tư thế (Pose library) ---- */
+    var poseWrap = el('div', 'ed-char-sk7');
+    poseWrap.appendChild(el('div', '', '🧍 Tư thế (Pose)'));
+    poseWrap.appendChild(el('div', 'ed-char-hint', 'Áp 1 chạm — tư thế là góc xoay các xương (độ). Mirror đổi trái/phải (Left↔Right) + đảo dấu góc X, Z.'));
+    var posePresetRow = el('div', 'ed-row');
+    edCharPosePresets().forEach(function (p) {
+      posePresetRow.appendChild(btn(p.name, function () {
+        var r = self.applyPose(null, p.name);
+        self.toast(r.ok ? ('Đã áp tư thế "' + p.name + '".') : (r.reason || 'Không áp được tư thế.'));
+      }));
+    });
+    poseWrap.appendChild(posePresetRow);
+    var poseSaveRow = el('div', 'ed-row');
+    var poseNameInp = el('input');
+    poseNameInp.type = 'text';
+    poseNameInp.placeholder = 'Tên tư thế (VD: Chào kiểu 2)';
+    poseNameInp.style.minHeight = '40px';
+    poseNameInp.style.flex = '1';
+    poseSaveRow.appendChild(poseNameInp);
+    this._poseNameInp = poseNameInp;
+    poseSaveRow.appendChild(btn('💾 Lưu tư thế', function () {
+      var r = self.savePose(null, poseNameInp.value || undefined);
+      if (r.ok) { poseNameInp.value = ''; self.toast('Đã lưu tư thế "' + r.name + '".'); }
+      else self.toast(r.reason || 'Không lưu được tư thế.');
+    }));
+    poseSaveRow.appendChild(btn('🪞 Mirror', function () {
+      var r;
+      if (self._selectedPoseName) {
+        r = self.mirrorPose(null, self._selectedPoseName);
+        self.toast(r.ok ? ('Đã mirror tư thế thành "' + r.name + '" + áp luôn.') : (r.reason || 'Không mirror được.'));
+      } else {
+        r = self.mirrorCurrentPose();
+        self.toast(r.ok ? 'Đã mirror tư thế đang xem (trái ↔ phải).' : (r.reason || 'Không mirror được.'));
+      }
+    }));
+    poseWrap.appendChild(poseSaveRow);
+    var poseList = el('div', 'ed-char-pose-list', 'Chưa lưu tư thế nào — bấm 1 preset ở trên hoặc lưu tư thế hiện tại.');
+    poseWrap.appendChild(poseList);
+    this._poseListEl = poseList;
+    host.appendChild(poseWrap);
+
+    /* ---- Đợt 7 — Gắn đồ (vũ khí / phụ kiện) ---- */
+    var attWrap = el('div', 'ed-char-sk7');
+    attWrap.appendChild(el('div', '', '⚔️ Gắn đồ (vũ khí / phụ kiện)'));
+    attWrap.appendChild(el('div', 'ed-char-hint', 'Đồ gắn làm con của xương đích nên đi theo animation tay. Loại vũ khí do 03-assets.js cung cấp — loại chưa có sẽ báo rõ, không vẽ đồ giả.'));
+    var attSelRow = el('div', 'ed-row');
+    attSelRow.appendChild(el('label', '', 'Xương đích'));
+    var attBoneSel = el('select', 'ed-char-attach-bone');
+    attBoneSel.style.minHeight = '40px';
+    attBoneSel.style.flex = '1';
+    attSelRow.appendChild(attBoneSel);
+    this._attachBoneSel = attBoneSel;
+    attSelRow.appendChild(el('label', '', 'Loại'));
+    var attTypeSel = el('select', 'ed-char-attach-type');
+    attTypeSel.style.minHeight = '40px';
+    attTypeSel.style.flex = '1';
+    edCharWeaponTypes().forEach(function (w) {
+      var o = document.createElement('option');
+      o.value = w.type;
+      o.textContent = w.label + ' (' + w.type + ')';
+      attTypeSel.appendChild(o);
+    });
+    attSelRow.appendChild(attTypeSel);
+    this._attachTypeSel = attTypeSel;
+    attWrap.appendChild(attSelRow);
+    function attOffsetRow(label, store, defVal) {
+      var row = el('div', 'ed-row');
+      row.appendChild(el('label', '', label));
+      self[store] = {};
+      ['x', 'y', 'z'].forEach(function (ax, i) {
+        var n = numInp(defVal[i], -2, 2, 0.05);
+        if (label === 'Tỉ lệ') { n.min = '0.1'; n.max = '5'; n.step = '0.1'; }
+        if (label === 'Xoay°') { n.min = '-180'; n.max = '180'; n.step = '5'; }
+        self[store][ax] = n;
+        row.appendChild(n);
+      });
+      attWrap.appendChild(row);
+    }
+    attOffsetRow('Vị trí', '_attPosInputs', [0, 0, 0]);
+    attOffsetRow('Xoay°', '_attRotInputs', [0, 0, 0]);
+    attOffsetRow('Tỉ lệ', '_attScaleInputs', [1, 1, 1]);
+    var attBtnRow = el('div', 'ed-row');
+    attBtnRow.appendChild(btn('🔗 Gắn', function () {
+      var r = self.attachWeapon(null, {
+        bone: attBoneSel.value || undefined,
+        type: attTypeSel.value,
+        offset: {
+          pos: ['x', 'y', 'z'].map(function (ax) { return Number(self._attPosInputs[ax].value); }),
+          rot: ['x', 'y', 'z'].map(function (ax) { return Number(self._attRotInputs[ax].value); }),
+          scale: ['x', 'y', 'z'].map(function (ax) { return Number(self._attScaleInputs[ax].value); })
+        }
+      });
+      self.toast(r.ok ? ('Đã gắn ' + edCharWeaponTypeLabel(r.attachment.type) + ' vào ' + r.attachment.bone + '.') : (r.reason || 'Không gắn được đồ.'));
+    }));
+    attBtnRow.appendChild(btn('✓ Cập nhật vị trí', function () {
+      if (!self._selectedAttachmentKey) { self.toast('Chọn 1 đồ đã gắn trong danh sách dưới rồi mới cập nhật.'); return; }
+      var r = self.updateAttachmentOffset(null, self._selectedAttachmentKey, {
+        pos: ['x', 'y', 'z'].map(function (ax) { return Number(self._attPosInputs[ax].value); }),
+        rot: ['x', 'y', 'z'].map(function (ax) { return Number(self._attRotInputs[ax].value); }),
+        scale: ['x', 'y', 'z'].map(function (ax) { return Number(self._attScaleInputs[ax].value); })
+      });
+      self.toast(r.ok ? 'Đã cập nhật vị trí đồ gắn.' : (r.reason || 'Không cập nhật được.'));
+    }));
+    attBtnRow.appendChild(btn('✂️ Tháo', function () {
+      if (!self._selectedAttachmentKey) { self.toast('Chọn 1 đồ đã gắn trong danh sách dưới rồi mới tháo.'); return; }
+      var r = self.detachWeapon(null, self._selectedAttachmentKey);
+      self.toast(r.ok ? 'Đã tháo đồ.' : (r.reason || 'Không tháo được.'));
+    }));
+    attWrap.appendChild(attBtnRow);
+    var attList = el('div', 'ed-char-attach-list', 'Chưa gắn đồ nào — chọn xương đích + loại vũ khí rồi bấm Gắn.');
+    attWrap.appendChild(attList);
+    this._attachListEl = attList;
+    host.appendChild(attWrap);
+
+    /* ---- Đợt 7 — Preset nhân vật ---- */
+    var presetWrap = el('div', 'ed-char-sk7');
+    presetWrap.appendChild(el('div', '', '⭐ Preset nhân vật'));
+    presetWrap.appendChild(el('div', 'ed-char-hint', 'Lưu preset chụp: model (fbxKey), màu/material, đồ gắn, tư thế hiện tại, giới hạn xoay, xương tự tạo. Áp 1 chạm để khôi phục.'));
+    var presetRow = el('div', 'ed-row');
+    var presetNameInp = el('input');
+    presetNameInp.type = 'text';
+    presetNameInp.placeholder = 'Tên preset (VD: Kiếm khách)';
+    presetNameInp.style.minHeight = '40px';
+    presetNameInp.style.flex = '1';
+    presetRow.appendChild(presetNameInp);
+    this._presetNameInp = presetNameInp;
+    presetRow.appendChild(btn('💾 Lưu preset', function () {
+      var r = self.saveCharacterPreset(presetNameInp.value || undefined);
+      if (r.ok) { presetNameInp.value = ''; self.toast('Đã lưu preset "' + r.name + '".'); }
+      else self.toast(r.reason || 'Không lưu được preset.');
+    }));
+    presetWrap.appendChild(presetRow);
+    var presetList = el('div', 'ed-char-preset-list', 'Chưa lưu preset nào — bấm "Lưu preset" để chụp nhân vật hiện tại.');
+    presetWrap.appendChild(presetList);
+    this._presetListEl = presetList;
+    host.appendChild(presetWrap);
+
     /* File picker ẩn — nhận cả .fbx lẫn .glb (đợt 5), phân biệt theo đuôi file. */
     var inp = document.createElement('input');
     inp.type = 'file';
@@ -2567,6 +4323,10 @@ ED.Character = {
     this.refreshList();
     this.renderBoneTree();
     this.renderClipList();
+    this._refreshBoneEditPanel(); /* đợt 7 */
+    this._refreshPosePanel();
+    this._refreshAttachmentPanel();
+    this._refreshPresetPanel();
     return true;
   },
 
@@ -2731,6 +4491,12 @@ ED.Character = {
       return;
     }
     var groups = edCharGroupBonesByPart(bones);
+    var customNames = {}; /* đợt 7: xương tự tạo (userData.custom) */
+    if (pv.group && typeof pv.group.traverse === 'function') {
+      pv.group.traverse(function (obj) {
+        if (obj && obj.isBone && obj.userData && obj.userData.custom) customNames[obj.name] = true;
+      });
+    }
     var self = this;
     Object.keys(groups).forEach(function (part) {
       var arr = groups[part];
@@ -2743,7 +4509,7 @@ ED.Character = {
         var btn = document.createElement('button');
         btn.className = 'ed-btn ed-bone-btn';
         btn.style.minHeight = '36px';
-        btn.textContent = b.name;
+        btn.textContent = b.name + (customNames[b.name] ? ' ✳ tự tạo' : '');
         btn.title = b.path;
         btn.addEventListener('click', function () { self.selectBone(b.name); });
         tree.appendChild(btn);

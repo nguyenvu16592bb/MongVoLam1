@@ -22,7 +22,7 @@ function readText(p) {
 const ORDERED = [
   '00-core.js', '01-viewport.js', '02-ui.js',
   '03-assets.js', '14-building.js', '04-terrain.js', '05-environment.js', '06-fx.js',
-  '07-character.js', '11-animation.js', '08-npc-ai.js', '16-nodes.js', '17-physics.js', '09-play.js', '10-game-link.js',
+  '07-character.js', '11-animation.js', '21-ik.js', '22-weight.js', '23-retarget.js', '08-npc-ai.js', '16-nodes.js', '17-physics.js', '09-play.js', '10-game-link.js',
   '12-nav.js', '13-material.js', '15-export.js', '18-itch.js', '19-minimap.js',
   '99-boot.js'
 ];

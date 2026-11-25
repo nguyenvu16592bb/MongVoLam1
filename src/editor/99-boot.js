@@ -61,6 +61,9 @@ ED.Boot = (function () {
     _callInit('Fx');
     _callInit('Character');
     _callInit('Animation');
+    _callInit('Ik');
+    _callInit('Weight');
+    _callInit('Retarget');
     _callInit('NpcAi');
     _callInit('Nodes');
     _callInit('Play');
