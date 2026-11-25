@@ -117,6 +117,141 @@ const Game = {
   }
 };
 
+/* ============================== MINI-GAME TẠI CHỖ ==============================
+   INTERACT-BEGIN — Nhiệm vụ 4: câu cá (thanh timing), hái sen (QTE),
+   cờ Caro 9×9 với Lão Kỳ Thánh. Logic thắng/thua/thưởng nằm ở Interact/
+   Gomoku (src/01-data.js); đây chỉ là điều khiển modal + thanh chạy.
+   Timer dừng khi đóng modal (UI.closeModal gọi stopTimers). */
+const MiniGames = {
+  fish: { timer: null, pos: 0, dir: 1 },
+  lotus: { timer: null, pos: 0, dir: 1 },
+  chess: { board: null, over: false, status: '' },
+
+  stopTimers() {
+    if (this.fish.timer) { clearInterval(this.fish.timer); this.fish.timer = null; }
+    if (this.lotus.timer) { clearInterval(this.lotus.timer); this.lotus.timer = null; }
+  },
+
+  _startBar(which, speed, markerId) {
+    this.stopTimers();
+    const st = this[which];
+    st.pos = 0; st.dir = 1;
+    st.timer = setInterval(() => {
+      st.pos += st.dir * speed;
+      if (st.pos >= 100) { st.pos = 100; st.dir = -1; }
+      if (st.pos <= 0) { st.pos = 0; st.dir = 1; }
+      const m = document.getElementById(markerId);
+      if (m) m.style.left = st.pos + '%';
+    }, 30);
+  },
+
+  startFishing() { this._startBar('fish', 2.4, 'fish-marker'); },
+  startLotus() { this._startBar('lotus', 3.0, 'lotus-marker'); },
+
+  fishPull() {
+    const res = Interact.fishResolve(this.fish.pos);
+    this.stopTimers();
+    if (!res.hit) {
+      if (typeof Emote !== 'undefined') Emote.player('😢');
+      UI.openModal('fish-result', { hit: false });
+      return;
+    }
+    const name = Interact.applyFish(res);
+    if (typeof Emote !== 'undefined') Emote.player('😊');
+    Sfx.win();
+    UI.openModal('fish-result', { hit: true, rarity: res.rarity, name });
+  },
+
+  lotusPick() {
+    const res = Interact.lotusResolve(this.lotus.pos);
+    this.stopTimers();
+    if (!res.hit) {
+      UI.openModal('lotus-result', { hit: false });
+      return;
+    }
+    const name = Interact.applyLotus(res);
+    if (typeof Emote !== 'undefined') Emote.player('😊');
+    Sfx.win();
+    UI.openModal('lotus-result', { hit: true, name });
+  },
+
+  newChess() {
+    this.chess.board = Gomoku.newBoard();
+    this.chess.over = false;
+    this.chess.status = 'Lượt của thiếu hiệp — xếp 5 quân một hàng (ngang/dọc/chéo) để thắng!';
+  },
+
+  chessBoardHTML() {
+    const b = this.chess.board || Gomoku.newBoard();
+    let html = '';
+    for (let y = 0; y < Gomoku.SIZE; y++) {
+      for (let x = 0; x < Gomoku.SIZE; x++) {
+        const v = b[y][x];
+        html += '<button class="chess-cell' + (v === 1 ? ' p' : v === 2 ? ' ai' : '') +
+          '" data-act="chess-cell" data-x="' + x + '" data-y="' + y + '">' +
+          (v === 1 ? '●' : v === 2 ? '○' : '') + '</button>';
+      }
+    }
+    return html;
+  },
+
+  renderChess() {
+    const boardEl = document.getElementById('chess-board');
+    if (boardEl) boardEl.innerHTML = this.chessBoardHTML();
+    const stEl = document.getElementById('chess-status');
+    if (stEl) stEl.textContent = this.chess.status;
+  },
+
+  chessMove(x, y) {
+    const c = this.chess;
+    if (c.over || !c.board || !Gomoku.inBounds(x, y) || c.board[y][x]) return;
+    c.board[y][x] = Gomoku.P;
+    if (Gomoku.checkWin(c.board, x, y, Gomoku.P)) {
+      c.over = true;
+      const rw = Interact.claimChessReward();
+      c.status = rw.rewarded
+        ? '🎉 Thắng Lão Kỳ Thánh! +1.000 bạc +100 EXP (thưởng thắng cờ hôm nay).'
+        : '🎉 Thắng Lão Kỳ Thánh! (thưởng hôm nay đã nhận rồi — ván này chơi vui thôi nhé!)';
+      if (typeof Emote !== 'undefined') Emote.player('😊');
+      Sfx.win();
+      this.renderChess();
+      return;
+    }
+    if (Gomoku.isFull(c.board)) {
+      c.over = true;
+      c.status = '🤝 Hòa! Bàn cờ đã đầy — đấu lại ván mới nhé!';
+      this.renderChess();
+      return;
+    }
+    const mv = Gomoku.aiMove(c.board);
+    if (mv) {
+      c.board[mv.y][mv.x] = Gomoku.AI;
+      if (Gomoku.checkWin(c.board, mv.x, mv.y, Gomoku.AI)) {
+        c.over = true;
+        c.status = '😢 Lão Kỳ Thánh thắng ván này — không mất gì, đấu lại nhé!';
+        if (typeof Emote !== 'undefined') Emote.player('😢');
+        Sfx.lose();
+        this.renderChess();
+        return;
+      }
+      if (Gomoku.isFull(c.board)) {
+        c.over = true;
+        c.status = '🤝 Hòa! Bàn cờ đã đầy — đấu lại ván mới nhé!';
+      }
+    }
+    this.renderChess();
+  },
+
+  chessResign() {
+    const c = this.chess;
+    if (c.over) return;
+    c.over = true;
+    c.status = '🏳️ Thiếu hiệp đã đầu hàng — Lão Kỳ Thánh thắng ván này (không mất gì).';
+    if (typeof Emote !== 'undefined') Emote.player('😢');
+    this.renderChess();
+  }
+};
+
 /* ============================== HUD ============================== */
 Object.assign(UI, {
   buildWorldHUD() {
@@ -147,9 +282,13 @@ Object.assign(UI, {
 
       <div class="world-tools">
         <span class="fps" id="fps">60 fps</span>
+        <span class="env-pill" id="env-pill" title="Giờ game · thời tiết · mùa">☀️ Nắng · ☀️ 08:00 · Ngày 1 · Mùa Xuân</span>
         <button class="mini-btn" data-act="open-battle">⚔️ Tỷ Võ Đài</button>
         <button class="mini-btn" data-act="open-skills">🐉 Tuyệt học</button>
       </div>
+
+      <button class="teleport-btn hidden" id="teleport-btn" data-act="teleport">🚪 Dịch chuyển</button>
+      <button class="interact-btn hidden" id="interact-btn" data-act="interact-near">✨ Tương tác</button>
 
       <div class="quest-track" data-act="open-quests" title="Mở nhiệm vụ">
         <b><span>📜 Hành Tẩu Giang Hồ</span><span class="muted">[xem]</span></b>
@@ -161,6 +300,7 @@ Object.assign(UI, {
         <button class="side-btn" data-act="open-info" title="Hồ sơ nhân vật (C)">🥋</button>
         <button class="side-btn" data-act="open-recruit" title="Tham Bái Chiêu Mộ">⛩️</button>
         <button class="side-btn" data-act="open-event" title="Sự Kiện">📅</button>
+        <button class="side-btn" data-act="open-districts" title="Bản Đồ Khu Vực">🗺️</button>
         <button class="side-btn" data-act="open-skills" title="Tàng Kinh Các">🐉</button>
         <button class="side-btn" data-act="open-mail" title="Thư tín">✉️<i class="dot"></i></button>
         <button class="side-btn" data-act="open-chat" title="Kênh thế giới">💬</button>
@@ -299,6 +439,8 @@ Object.assign(UI, {
     const qd = $('#w-quest-desc'), qf = $('#w-quest-fill');
     if (qd) qd.textContent = q ? `• ${q.desc} (${q.progress}/${q.target})` : '• Đã hoàn thành mọi nhiệm vụ hiện tại!';
     if (qf) qf.style.width = q ? clamp(q.progress / q.target * 100, 0, 100) + '%' : '100%';
+    /* ENV-BEGIN — cập nhật pill giờ game / thời tiết / mùa trên HUD. */
+    if (typeof Env !== 'undefined' && Env.syncHUD) Env.syncHUD();
   },
 
   syncBattle(force) {
@@ -414,6 +556,8 @@ Object.assign(UI, {
   openModal(kind, data) {
     const m = $('#modal');
     if (!m) return;
+    /* INTERACT-BEGIN — mở ván cờ mới mỗi lần mở modal cờ. */
+    if (kind === 'chess' && typeof MiniGames !== 'undefined') MiniGames.newChess();
     const cfg = this.modalHTML(kind, data || {});
     if (!cfg) return;
     $('#modal-icon').textContent = cfg.icon;
@@ -421,12 +565,17 @@ Object.assign(UI, {
     $('#modal-body').innerHTML = cfg.body;
     m.classList.add('on');
     m.setAttribute('aria-hidden', 'false');
+    /* INTERACT-BEGIN — mở modal câu cá/hái sen thì chạy thanh timing. */
+    if (kind === 'fishing' && typeof MiniGames !== 'undefined') MiniGames.startFishing();
+    if (kind === 'lotus' && typeof MiniGames !== 'undefined') MiniGames.startLotus();
     Sfx.click();
   },
 
   closeModal() {
     const m = $('#modal');
     if (!m) return;
+    /* INTERACT-BEGIN — đóng modal thì dừng thanh timing câu cá/hái sen. */
+    if (typeof MiniGames !== 'undefined') MiniGames.stopTimers();
     m.classList.remove('on');
     m.setAttribute('aria-hidden', 'true');
   },
@@ -450,6 +599,15 @@ Object.assign(UI, {
     if (kind === 'tip') {
       const [title, body] = String(d.tip || 'Thông tin|').split('|');
       return { icon: '📖', title: title, body: `<p style="line-height:1.7">${esc(body)}</p>` };
+    }
+    if (kind === 'lore') {
+      /* NPC-BEGIN — modal đọc cốt truyện do Lão Kể Chuyện mở (5 đoạn ngắn). */
+      const paras = (typeof NPC_LORE !== 'undefined' && NPC_LORE.length)
+        ? NPC_LORE
+        : ['Lão kể chuyện đang nghỉ ngơi, thiếu hiệp ghé lại sau nhé!'];
+      const body = paras.map(p => `<p style="line-height:1.7;margin-bottom:10px">${esc(p)}</p>`).join('') +
+        `<div style="display:flex;gap:8px;margin-top:12px"><button class="btn dark btn-lg" data-act="close-modal">Đa tạ lão trượng</button></div>`;
+      return { icon: '📖', title: 'Truyền thuyết Biện Kinh', body };
     }
     if (kind === 'gear') {
       const h = heroById(State.heroes[Info.index].id) || HERO_DEFS[0];
@@ -584,13 +742,24 @@ Object.assign(UI, {
       return { icon: '🐉', title: 'Tàng Kinh Các — Tuyệt học', body };
     }
     if (kind === 'bag') {
-      const cells = State.inventory.map((it, i) => `
-        <div class="bag-cell" data-act="use-item" data-i="${i}" title="${esc(it.desc)}">
+      /* FOLLOW-BEGIN — item thú cưng có nút "Cho đi theo"/"Thôi đi theo"
+         (bấm được bằng cảm ứng; nút nằm trong ô đồ, data-act riêng nên
+         không kích hoạt use-item của ô). */
+      const cells = State.inventory.map((it, i) => {
+        const pet = (typeof FollowPets !== 'undefined') ? FollowPets.defForItem(it) : null;
+        const isActive = pet && State.activePet === pet.id;
+        const petBtn = pet
+          ? `<button class="btn sm pet-follow-btn${isActive ? ' on' : ''}" data-act="pet-follow" data-pet="${pet.id}">${isActive ? '✖ Thôi đi theo' : '🐾 Cho đi theo'}</button>`
+          : '';
+        return `
+        <div class="bag-cell${pet ? ' pet-cell' : ''}" data-act="use-item" data-i="${i}" title="${esc(it.desc)}">
           <div class="bi">${it.icon || '📦'}</div>
           <div class="bn">${esc(it.name)}</div>
           <div class="bq">x${it.qty}</div>
-        </div>`).join('');
-      const body = `<p class="muted tiny" style="margin-bottom:6px">Túi đồ ${p.capacity}/${p.maxCapacity} · chạm vật phẩm để dùng</p>
+          ${isActive ? '<div class="pet-tag">🐾 Đang theo</div>' : ''}${petBtn}
+        </div>`;
+      }).join('');
+      const body = `<p class="muted tiny" style="margin-bottom:6px">Túi đồ ${p.capacity}/${p.maxCapacity} · chạm vật phẩm để dùng · thú cưng bấm <b>🐾 Cho đi theo</b> để đi sau nhân vật</p>
         <div class="bag-grid">${cells || '<span class="muted">Túi đồ trống.</span>'}</div>`;
       return { icon: '🎒', title: 'Hành trang', body };
     }
@@ -639,8 +808,13 @@ Object.assign(UI, {
       return { icon: '💬', title: 'Kênh trò chuyện', body };
     }
     if (kind === 'settings') {
+      /* ENV-BEGIN — tốc độ đồng hồ (0 tắt / 1 thường / 2 nhanh) + tắt/bật hiệu
+         ứng thời tiết. Nhãn tốc độ trận đấu vẫn lấy từ settings.speed cũ. */
+      const clockLabel = State.settings.clockSpeed === 0 ? 'Tắt' : State.settings.clockSpeed === 2 ? 'Nhanh ×2' : 'Bình thường (1 giờ ≈ 75 giây)';
       const body = `
         <div class="mrow"><span>Âm thanh & hiệu ứng</span><button class="btn sm" data-act="toggle-mute">${Sfx.muted ? 'Đang tắt' : 'Đang bật'}</button></div>
+        <div class="mrow"><span>Đồng hồ giờ game</span><button class="btn sm" data-act="cycle-clock">${clockLabel}</button></div>
+        <div class="mrow"><span>Hiệu ứng thời tiết (mưa/tuyết/sương)</span><button class="btn sm" data-act="toggle-weatherfx">${State.settings.weatherFx === false ? 'TẮT' : 'BẬT'}</button></div>
         <div class="mrow"><span>Tự động đánh</span><button class="btn sm" data-act="toggle-auto">${State.settings.autoBattle ? 'BẬT' : 'TẮT'}</button></div>
         <div class="mrow"><span>Tự tung chiêu</span><button class="btn sm" data-act="toggle-auto-skill">${State.settings.autoSkill ? 'BẬT' : 'TẮT'}</button></div>
         <div class="mrow"><span>Lưu tiến trình</span><button class="btn sm" data-act="save-now">Lưu ngay</button></div>
@@ -648,6 +822,109 @@ Object.assign(UI, {
         <div class="mrow"><span>Khôi phục dữ liệu ban đầu</span><button class="btn sm red" data-act="reset-ask">Đặt lại</button></div>
         <p class="muted tiny">Mộng Võ Lâm 3D · Soha · Three.js + PixiJS · lưu cục bộ trong trình duyệt.</p>`;
       return { icon: '⚙️', title: 'Cài đặt hệ thống', body };
+    }
+    /* INTERACT-BEGIN — 3 mini-game tại chỗ + màn hình kết quả câu cá/hái sen. */
+    if (kind === 'fishing') {
+      const body = `<p class="muted">Thanh chạy qua lại — bấm <b>Kéo cần</b> đúng lúc kim vào vùng xanh thì câu được cá; vùng vàng giữa là <b style="color:#ffd76b">Cá Chép Vàng sử thi</b>! Trượt thì mất mồi. Mồi Câu còn: <b style="color:#ffe3ac">${Interact.baitCount()}</b> (mua ở chợ 50 bạc, hoặc nhận 5 mồi mỗi ngày game).</p>
+        <div class="fish-bar"><div class="fish-zone-green"></div><div class="fish-zone-gold"></div><div class="fish-marker" id="fish-marker"></div></div>
+        <div class="ms" style="margin-top:6px">🟩 Vùng xanh = trúng (30% Cá Chép Hiếm) · 🟨 Vùng vàng giữa = Cá Chép Vàng</div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+          <button class="btn red btn-lg" data-act="fish-pull">🎣 Kéo cần</button>
+          <button class="btn dark btn-lg" data-act="close-modal">Thôi, để sau</button>
+        </div>`;
+      return { icon: '🎣', title: 'Câu cá hồ sen', body };
+    }
+    if (kind === 'fish-result') {
+      const body = d.hit
+        ? `<div style="text-align:center"><div style="font-size:44px">${d.rarity === 'epic' ? '🐡' : d.rarity === 'rare' ? '🐠' : '🐟'}</div>
+          <h3 style="margin-top:6px;color:#ffd76b">Câu được ${esc(d.name)}!</h3>
+          <p class="muted">${d.rarity === 'epic' ? 'Cá Chép Vàng sử thi — hiếm lắm đó, bán được 2.000 bạc!' : d.rarity === 'rare' ? 'Cá Chép Hiếm, vảy óng ánh — bán được 500 bạc!' : 'Cá chép thường, bán được 150 bạc.'} Đã vào túi đồ.</p>
+          <div style="display:flex;gap:8px;justify-content:center;margin-top:12px;flex-wrap:wrap">
+            <button class="btn btn-lg" data-act="fish-again">🎣 Câu tiếp (tốn 1 mồi)</button>
+            <button class="btn dark btn-lg" data-act="close-modal">Để sau</button>
+          </div></div>`
+        : `<div style="text-align:center"><div style="font-size:44px">💨</div>
+          <h3 style="margin-top:6px;color:#ffd76b">Trượt rồi!</h3>
+          <p class="muted">Cá cắn câu rồi tuột mất — tốn 1 Mồi Câu. Canh đúng vùng xanh rồi hãy kéo nhé!</p>
+          <div style="display:flex;gap:8px;justify-content:center;margin-top:12px;flex-wrap:wrap">
+            <button class="btn btn-lg" data-act="fish-again">🎣 Câu tiếp (tốn 1 mồi)</button>
+            <button class="btn dark btn-lg" data-act="close-modal">Để sau</button>
+          </div></div>`;
+      return { icon: '🎣', title: d.hit ? 'Câu được cá!' : 'Trượt mất rồi', body };
+    }
+    if (kind === 'lotus') {
+      const body = `<p class="muted">Kim chạy qua lại — bấm <b>Hái ngay</b> đúng lúc kim vào vùng sáng thì hái được <b style="color:#ffe3ac">Hạt Sen / Lá Sen</b>. Hái trượt thì không được gì, cũng không mất gì.</p>
+        <div class="fish-bar"><div class="fish-zone-green"></div><div class="fish-marker" id="lotus-marker"></div></div>
+        <div class="ms" style="margin-top:6px">🟩 Vùng sáng giữa = hái được (70% Hạt Sen ×2, 30% Lá Sen ×2)</div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+          <button class="btn btn-lg" data-act="lotus-pick">🌸 Hái ngay</button>
+          <button class="btn dark btn-lg" data-act="close-modal">Thôi, để sau</button>
+        </div>`;
+      return { icon: '🌸', title: 'Hái sen hồ sen', body };
+    }
+    if (kind === 'lotus-result') {
+      const body = d.hit
+        ? `<div style="text-align:center"><div style="font-size:44px">🌸</div>
+          <h3 style="margin-top:6px;color:#ffd76b">Hái được ${esc(d.name)}!</h3>
+          <p class="muted">Sen hồ Biện Kinh thơm ngát — đã vào túi đồ, bán ở chợ cũng được bạc.</p>
+          <div style="display:flex;gap:8px;justify-content:center;margin-top:12px;flex-wrap:wrap">
+            <button class="btn btn-lg" data-act="lotus-again">🌸 Hái tiếp</button>
+            <button class="btn dark btn-lg" data-act="close-modal">Để sau</button>
+          </div></div>`
+        : `<div style="text-align:center"><div style="font-size:44px">🍃</div>
+          <h3 style="margin-top:6px;color:#ffd76b">Hái trượt rồi!</h3>
+          <p class="muted">Tay chạm hụt, sen vẫn còn đó — không mất gì, thử lại nhé!</p>
+          <div style="display:flex;gap:8px;justify-content:center;margin-top:12px;flex-wrap:wrap">
+            <button class="btn btn-lg" data-act="lotus-again">🌸 Hái lại</button>
+            <button class="btn dark btn-lg" data-act="close-modal">Để sau</button>
+          </div></div>`;
+      return { icon: '🌸', title: d.hit ? 'Hái được sen!' : 'Hái trượt rồi', body };
+    }
+    if (kind === 'chess') {
+      const rewardedToday = State.flags.interact.chessWinDay === State.worldClock.day;
+      const body = `<p class="muted">Đấu <b>Cờ Caro 9×9</b> với <b style="color:#ffe3ac">Lão Kỳ Thánh</b> — thiếu hiệp cầm quân đen ●, đi trước. Xếp 5 quân một hàng (ngang/dọc/chéo) là thắng. Thắng được <b style="color:#ffd76b">+1.000 bạc +100 EXP</b>, 1 lần/ngày game${rewardedToday ? ' (hôm nay đã nhận thưởng rồi — ván này chỉ chơi vui)' : ''}. Thua/hòa không mất gì.</p>
+        <div class="ms" id="chess-status" style="margin:8px 0;color:#ffe3ac">${esc(MiniGames.chess.status || '')}</div>
+        <div class="chess-board" id="chess-board">${MiniGames.chessBoardHTML()}</div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+          <button class="btn btn-lg" data-act="chess-again">🔄 Ván mới</button>
+          <button class="btn dark btn-lg" data-act="chess-resign">🏳️ Đầu hàng</button>
+          <button class="btn dark btn-lg" data-act="close-modal">Đóng</button>
+        </div>`;
+      return { icon: '♟️', title: 'Đấu Cờ Caro · Lão Kỳ Thánh', body };
+    }
+    /* DISTRICT-BEGIN — panel liệt kê 12 khu vực (dữ liệu src/10b-districts.js):
+       khu 1 = nơi đang đứng, khu khóa hiện 🔒 + điều kiện mở (reason của
+       canEnterDistrict), khu mở bấm được để tới (lưu game rồi chuyển trang). */
+    if (kind === 'districts') {
+      if (typeof DISTRICTS === 'undefined') {
+        return { icon: '🗺️', title: 'Bản Đồ Khu Vực', body: '<p class="muted">Chưa tải được dữ liệu khu vực — hãy tải lại trang.</p>' };
+      }
+      const rows = DISTRICTS.map(def => {
+        if (def.id === 1 || !def.file) {
+          return `<div class="district-card here"><div class="mt">🏯 ${esc(def.name)} <span class="tag green">📍 Bạn đang ở đây</span></div><div class="ms">Biện Kinh Thành — trung tâm giang hồ, nơi thiếu hiệp đang đứng.</div></div>`;
+        }
+        const chk = (typeof canEnterDistrict === 'function') ? canEnterDistrict(def, State) : { ok: true };
+        if (!chk || !chk.ok) {
+          return `<div class="district-card locked"><div class="mt">🔒 ${esc(def.name)}</div><div class="ms">🔒 ${esc((chk && chk.reason) || 'Khu vực đang khóa.')}</div></div>`;
+        }
+        return `<div class="district-card" data-act="district-enter" data-id="${def.id}" role="button" tabindex="0"><div class="mt">🗺️ ${esc(def.name)}</div><div class="ms">Chạm để tới ${esc(def.name)} — game sẽ lưu rồi chuyển trang.</div></div>`;
+      }).join('');
+      const body = `<p class="muted" style="margin-bottom:8px">12 khu vực quanh Biện Kinh — khu mở thì chạm để tới, khu khóa hiện rõ điều kiện mở.</p>
+        <div class="district-grid">${rows}</div>
+        <div style="display:flex;gap:8px;margin-top:12px"><button class="btn dark btn-lg" data-act="close-modal">← Quay lại</button></div>`;
+      return { icon: '🗺️', title: 'Bản Đồ Khu Vực', body };
+    }
+    /* DISTRICT-BEGIN — lựa chọn khi chạm cổng dịch chuyển: đi vòng như cũ
+       hoặc vào thẳng khu vực mà cổng đó dẫn tới (khóa thì chỉ hiện lý do). */
+    if (kind === 'gate-choice') {
+      const body = `<p class="muted">Đang đứng tại <b style="color:#ffe3ac">${esc(d.gateName || 'Cổng dịch chuyển')}</b>.</p>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px">
+          <button class="btn btn-lg" data-act="gate-cycle">🚪 Dịch chuyển vòng${d.nextName ? ' → ' + esc(d.nextName) : ''}</button>
+          ${d.distFile ? `<button class="btn btn-lg" data-act="gate-district" data-file="${esc(d.distFile)}">🗺️ Vào ${esc(d.distName || 'khu vực')}</button>` : ''}
+          <button class="btn dark btn-lg" data-act="close-modal">← Quay lại</button>
+        </div>
+        ${d.locked ? `<p class="muted" style="margin-top:8px">🔒 ${esc(d.lockReason || 'Khu vực đang khóa.')}</p>` : ''}`;
+      return { icon: '🚪', title: d.gateName || 'Cổng dịch chuyển', body };
     }
     if (kind === 'exit-battle') {
       return {
@@ -846,7 +1123,38 @@ Object.assign(UI, {
         /* EVENT-BEGIN */
         case 'open-event': SaveManager.save(); location.href = 'Event.html'; break;
         /* EVENT-END */
+        /* DISTRICT-BEGIN — mở panel 12 khu vực; bấm khu mở thì lưu rồi sang map/<file>.html. */
+        case 'open-districts': this.openModal('districts'); break;
+        case 'district-enter': {
+          const def = (typeof DISTRICTS !== 'undefined') ? DISTRICTS.find(x => x.id === +el.dataset.id) : null;
+          if (!def || !def.file) break;
+          const chk = (typeof canEnterDistrict === 'function') ? canEnterDistrict(def, State) : { ok: true };
+          if (!chk || !chk.ok) { this.toast('🔒 ' + ((chk && chk.reason) || 'Khu vực đang khóa!'), 'red'); break; }
+          SaveManager.save(); location.href = 'map/' + def.file; break;
+        }
+        case 'gate-cycle':
+          if (typeof DistrictGates !== 'undefined') DistrictGates.cycleFromChoice();
+          break;
+        case 'gate-district':
+          if (typeof DistrictGates !== 'undefined') DistrictGates.enterDistrict(el.dataset.file);
+          break;
+        /* DISTRICT-END */
         case 'open-bag': this.openModal('bag'); break;
+        /* FOLLOW-BEGIN — chọn/bỏ thú cưng đi theo trong túi đồ; mở lại
+           túi để cập nhật nút + nhãn "Đang theo" ngay. */
+        case 'pet-follow': {
+          const def = (typeof FollowPets !== 'undefined') ? FollowPets.defForId(el.dataset.pet) : null;
+          if (def) {
+            const wasActive = State.activePet === def.id;
+            if (FollowPets.toggle(def.id)) {
+              this.toast(wasActive ? '🐾 ' + def.name + ' đã thôi đi theo!' : '🐾 ' + def.name + ' sẽ đi theo thiếu hiệp!', 'green');
+            } else {
+              this.toast('Không tìm thấy ' + def.name + ' trong túi đồ!', 'red');
+            }
+          }
+          this.openModal('bag');
+          break;
+        }
         case 'open-quests': this.openModal('quests'); break;
         case 'open-skills': this.openModal('skills'); break;
         case 'open-guild': this.openModal('guild'); break;
@@ -866,6 +1174,41 @@ Object.assign(UI, {
           Sfx.muted = !Sfx.muted; State.settings.muted = Sfx.muted; SaveManager.save();
           this.toast(Sfx.muted ? 'Đã tắt âm thanh' : 'Đã bật âm thanh', 'gold');
           this.openModal('settings'); break;
+        /* ENV-BEGIN — tốc độ đồng hồ 1 → 2 → 0 → 1; bật/tắt hiệu ứng thời tiết;
+           nút Dịch chuyển khi đứng gần cổng/giếng. */
+        case 'cycle-clock':
+          State.settings.clockSpeed = State.settings.clockSpeed === 1 ? 2 : (State.settings.clockSpeed === 2 ? 0 : 1);
+          SaveManager.save();
+          this.toast(State.settings.clockSpeed === 0 ? 'Đã dừng đồng hồ giờ game' : 'Đồng hồ giờ game: ' + (State.settings.clockSpeed === 2 ? 'nhanh ×2' : 'bình thường'), 'gold');
+          this.openModal('settings'); break;
+        case 'toggle-weatherfx':
+          State.settings.weatherFx = State.settings.weatherFx === false;
+          SaveManager.save();
+          this.toast(State.settings.weatherFx ? 'Đã bật hiệu ứng thời tiết' : 'Đã tắt hiệu ứng thời tiết', 'gold');
+          this.openModal('settings'); break;
+        /* DISTRICT-BEGIN — nút 🚪 Dịch chuyển khi đứng gần cổng: mở lựa chọn
+           cổng (đi vòng như cũ / vào khu vực) thay vì dịch chuyển ngay. */
+        case 'teleport':
+          if (typeof DistrictGates !== 'undefined') DistrictGates.openChoiceFromNearest();
+          else if (typeof Env !== 'undefined') Env.teleportFromNearest();
+          break;
+        /* DISTRICT-END */
+        /* INTERACT-BEGIN — nút hành động khi đứng gần vật tương tác; mở ván cờ
+           từ hộp thoại Lão Kỳ Thánh; các nút mini-game câu cá/hái sen/cờ caro. */
+        case 'interact-near':
+          if (typeof InteractWorld !== 'undefined') InteractWorld.doInteractNear();
+          break;
+        case 'open-chess': $('#dialogue').classList.remove('on'); this.openModal('chess'); break;
+        case 'fish-pull': MiniGames.fishPull(); break;
+        case 'fish-again':
+          if (Interact.fishCast()) this.openModal('fishing');
+          else { this.toast('🪱 Hết Mồi Câu rồi! Mua ở chợ (50 bạc) hoặc chờ tặng 5 mồi mỗi ngày game.', 'red'); this.closeModal(); }
+          break;
+        case 'lotus-pick': MiniGames.lotusPick(); break;
+        case 'lotus-again': this.openModal('lotus'); break;
+        case 'chess-cell': MiniGames.chessMove(+el.dataset.x, +el.dataset.y); break;
+        case 'chess-again': MiniGames.newChess(); MiniGames.renderChess(); break;
+        case 'chess-resign': MiniGames.chessResign(); break;
         case 'toggle-auto': Battle.toggleAuto(); break;
         case 'toggle-auto-skill': Battle.toggleAutoSkill(); break;
         case 'skill': Battle.triggerSkill(+el.dataset.i); break;
@@ -879,6 +1222,8 @@ Object.assign(UI, {
         /* SHOP-BEGIN */
         case 'merchant-shop': $('#dialogue').classList.remove('on'); SaveManager.save(); location.href = 'Shop.html'; break;
         /* SHOP-END */
+        /* NPC-BEGIN — lựa chọn trong cây thoại NPC (World.chooseDialogueOption). */
+        case 'dlg-option': World.chooseDialogueOption(el.dataset.npc, el.dataset.node, +el.dataset.i); break;
         case 'close-dialogue': $('#dialogue').classList.remove('on'); break;
         case 'save-now': SaveManager.save(); this.toast('Đã lưu tiến trình!', 'green'); break;
         case 'reset-ask': this.openModal('reset'); break;

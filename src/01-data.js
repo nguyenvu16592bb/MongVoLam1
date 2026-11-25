@@ -730,26 +730,38 @@ const State = {
   },
   heroes: HERO_DEFS.map(h => ({ id: h.id, level: h.level, bonus: { hp: 0, atk: 0, def: 0, qi: 0, crit: 0 } })),
   leader: 0,
+  /* FOLLOW-BEGIN — id thú cưng đang đi theo (tc01/tc02/tc03) hoặc null
+     (chưa chọn con nào). Lưu cùng save v2; save cũ không có -> null. */
+  activePet: null,
   quests: defaultQuests(),
   guild: { name: 'Thiên Địa Hội [MV]', level: 4, members: 28, contribution: 350 },
   inventory: [
     { id: 'i1', name: 'Kim Sáng Dược', icon: '🧪', type: 'Đan dược', desc: 'Hồi 200 Sinh Lực', qty: 5 },
     { id: 'i2', name: 'Tụ Khí Đan', icon: '💊', type: 'Đan dược', desc: '+30 Kinh Nghiệm', qty: 3 },
-    { id: 'i3', name: 'Huyền Thiết Tinh', icon: '💎', type: 'Nguyên liệu', desc: 'Rèn trang bị', qty: 3 }
+    { id: 'i3', name: 'Huyền Thiết Tinh', icon: '💎', type: 'Nguyên liệu', desc: 'Rèn trang bị', qty: 3 },
+    { id: 'i4', name: 'Mồi Câu', icon: '🪱', type: 'Vật phẩm', desc: 'Mồi câu cá hồ sen, mỗi lần câu tốn 1 mồi', qty: 5 }
   ],
   customProps: [],
   stats: { battles: 0, wins: 0, kills: 0 },
-  settings: { muted: false, autoBattle: true, autoSkill: true, speed: 1 },
-  flags: { tutorial: false, createdVia: '', event: { checkin: { lastDate: '', streak: 0, claimed: {} }, daily: {}, weekly: {}, seasonal: {}, boss: {}, arena: {}, redeem: {} } }
+  settings: { muted: false, autoBattle: true, autoSkill: true, speed: 1, clockSpeed: 1, weatherFx: true },
+  /* ENV-BEGIN — Đồng hồ giờ game + thời tiết (lưu cùng save v2).
+     worldClock: hour 0–24 (8 = 8h sáng), day = ngày game (1…), season suy ra
+     từ day (30 ngày/mùa: Xuân→Hạ→Thu→Đông, lặp 120 ngày). clockSpeed lấy từ
+     settings (0 = dừng đồng hồ, 1 = 1 giờ game ≈ 75 giây thật, 2 = ×2).
+     weather: kind hiện tại + remain = số giây thật còn lại tới lần đổi sau. */
+  worldClock: { hour: 8, day: 1, season: 'xuan' },
+  weather: { kind: 'nang', remain: 180 },
+  flags: { tutorial: false, createdVia: '', event: { checkin: { lastDate: '', streak: 0, claimed: {} }, daily: {}, weekly: {}, seasonal: {}, boss: {}, arena: {}, redeem: {} }, npc: { met: {}, forgeCount: 0, healCount: 0, loreRead: 0 }, interact: defaultInteractState(), district: defaultDistrictFlags() }
 };
 
 const SaveManager = {
   save() {
     try {
       const data = {
-        player: State.player, heroes: State.heroes, leader: State.leader, quests: State.quests,
+        player: State.player, heroes: State.heroes, leader: State.leader, activePet: State.activePet, quests: State.quests,
         guild: State.guild, inventory: State.inventory, customProps: State.customProps,
-        stats: State.stats, settings: State.settings, flags: State.flags, v: 2
+        stats: State.stats, settings: State.settings, flags: State.flags,
+        worldClock: State.worldClock, weather: State.weather, v: 2
       };
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     } catch (e) {}
@@ -784,9 +796,24 @@ const SaveManager = {
       if (Array.isArray(d.quests)) State.quests = d.quests;
       if (d.guild) Object.assign(State.guild, d.guild);
       if (Array.isArray(d.inventory)) State.inventory = d.inventory;
+      /* FOLLOW-BEGIN — activePet: save cũ không có -> giữ null; pet đã lưu
+         mà không còn trong túi (đã bán) -> bỏ theo, không crash. */
+      if (typeof d.activePet === 'string') State.activePet = d.activePet;
+      else if (d.activePet === null || d.activePet === undefined) State.activePet = null;
+      else State.activePet = null;
+      if (State.activePet && typeof FollowPets !== 'undefined' &&
+        FollowPets.ownedPetIds().indexOf(State.activePet) < 0) State.activePet = null;
       if (Array.isArray(d.customProps)) State.customProps = d.customProps;
       if (d.stats) Object.assign(State.stats, d.stats);
       if (d.settings) Object.assign(State.settings, d.settings);
+      /* ENV-BEGIN — hợp nhất worldClock/weather; save cũ (không có 2 field)
+         giữ nguyên giá trị mặc định. season luôn tính lại từ day ở Env.init. */
+      if (d.worldClock && typeof d.worldClock === 'object') {
+        Object.assign(State.worldClock, d.worldClock);
+        State.worldClock.hour = clamp(Number(State.worldClock.hour) || 8, 0, 23.99);
+        State.worldClock.day = Math.max(1, Math.round(Number(State.worldClock.day) || 1));
+      }
+      if (d.weather && typeof d.weather === 'object') Object.assign(State.weather, d.weather);
       if (d.flags) {
         Object.assign(State.flags, d.flags);
         // flags.event: hợp nhất từng nhánh để save cũ (không có event) không mất nhánh mặc định.
@@ -795,6 +822,47 @@ const SaveManager = {
           State.flags.event = Object.assign(ev0, d.flags.event);
           if (!State.flags.event.checkin || typeof State.flags.event.checkin !== 'object') State.flags.event.checkin = ev0.checkin;
           if (!State.flags.event.checkin.claimed || typeof State.flags.event.checkin.claimed !== 'object') State.flags.event.checkin.claimed = {};
+        }
+        /* NPC-BEGIN — hợp nhất flags.npc; save cũ (không có npc) giữ mặc định. */
+        if (d.flags.npc && typeof d.flags.npc === 'object') {
+          const n0 = { met: {}, forgeCount: 0, healCount: 0, loreRead: 0 };
+          State.flags.npc = Object.assign(n0, d.flags.npc);
+          if (!State.flags.npc.met || typeof State.flags.npc.met !== 'object') State.flags.npc.met = {};
+          State.flags.npc.forgeCount = clamp(Math.round(Number(State.flags.npc.forgeCount) || 0), 0, 5);
+          State.flags.npc.healCount = Math.max(0, Math.round(Number(State.flags.npc.healCount) || 0));
+          State.flags.npc.loreRead = Math.max(0, Math.round(Number(State.flags.npc.loreRead) || 0));
+        }
+        /* INTERACT-BEGIN — hợp nhất flags.interact; save cũ (không có interact)
+           giữ mặc định (baitDay 0 → nhận 5 Mồi Câu ngay ngày game đầu tiên). */
+        if (d.flags.interact && typeof d.flags.interact === 'object') {
+          const it0 = defaultInteractState();
+          State.flags.interact = Object.assign(it0, d.flags.interact);
+          if (!State.flags.interact.chests || typeof State.flags.interact.chests !== 'object') State.flags.interact.chests = {};
+          if (!Array.isArray(State.flags.interact.drops)) State.flags.interact.drops = [];
+          State.flags.interact.drops = State.flags.interact.drops
+            .filter(x => x && typeof x.x === 'number' && typeof x.z === 'number' && x.loot)
+            .slice(0, 5);
+          ['baitDay', 'chessWinDay', 'chessWins', 'fishCaught', 'lotusPicked', 'butterflies'].forEach(k => {
+            State.flags.interact[k] = Math.max(0, Math.round(Number(State.flags.interact[k]) || 0));
+          });
+        }
+        /* DISTRICT-BEGIN — hợp nhất flags.district (11 khu vực mới,
+           src/10b-districts.js); save cũ (không có district) giữ mặc định,
+           các key lẻ của khu (patrol_day, chest_*_day, *_try_day,
+           thac_collected...) được giữ nguyên vì Object.assign chỉ thêm
+           key mặc định còn thiếu. */
+        if (d.flags.district && typeof d.flags.district === 'object') {
+          const dd0 = defaultDistrictFlags();
+          State.flags.district = Object.assign(dd0, d.flags.district);
+          if (!State.flags.district.thac_collected || typeof State.flags.district.thac_collected !== 'object') State.flags.district.thac_collected = {};
+          ['boss_mieu_co_day', 'boss_hang_dong_day', 'ngo_step', 'vo_luyen_day', 'vo_diem',
+           'ruong_stage', 'ruong_ready_day', 'nghia_huong_day', 'nghia_duoi_day', 'boat_day',
+           'bacuyen_fish', 'bacuyen_lotus'].forEach(k => {
+            State.flags.district[k] = Math.max(0, Math.round(Number(State.flags.district[k]) || 0));
+          });
+          ['boss_mieu_co', 'boss_hang_dong', 'nam_mon_pass', 'ngo_done', 'thac_done'].forEach(k => {
+            State.flags.district[k] = !!State.flags.district[k];
+          });
         }
       }
     } catch (e) { console.warn('[save] load failed', e); }
@@ -934,6 +1002,827 @@ function playerDerived() {
   const p = State.player;
   return { hp: p.maxHp, mp: p.maxMp, atk: p.atk, def: p.def };
 }
+
+/* ============================== NPC THÔNG MINH ==============================
+   NPC-BEGIN — Lịch trình theo giờ game, cây thoại phân nhánh, NPC mới.
+   Dữ liệu thuần (không chạm DOM/THREE) để test được bằng Node.
+   - NPC_SCHEDULES: 4 điểm của mỗi NPC chính (chợ/quán trà/quảng trường/nhà).
+     Điểm "chợ" của Chưởng Quầy đặt trước sạp (-5.2,-0.4) thay vì trong sạp
+     (trong sạp là collider, NPC đứng đó sẽ kẹt khi tự đi lại).
+     "Nhà" đặt trước cửa nhà dân khu mở rộng (cửa hướng nam, cách tường ~3).
+   - DIALOGUE_TREES: mỗi NPC 1 cây, node {text, options:[{label, next, cond?,
+     setFlag?, quest?, action?}]}. next null = đóng hộp thoại sau khi làm action.
+     action: shop/battle/info/recruit/event (như nút role cũ), forge/heal/train/lore.
+   - NPC_NEW_DEFS / PET_DEFS: NPC mới + thú cưng (tọa độ đã kiểm đi được,
+     ngoài mọi collider nhà/cây/sạp/lầu — xem tools/test-npc.cjs).
+   Vị trí NPC suy ra từ giờ game nên KHÔNG lưu vị trí vào save; chỉ flags.npc
+   (met/forgeCount/healCount/loreRead) lưu cùng save v2. */
+const NPC_SCHEDULES = {
+  merchant: { market: { x: -5.2, z: -0.4 }, tea: { x: -7, z: 0 }, plaza: { x: -1, z: 2 }, home: { x: -14, z: -23 } },
+  master: { market: { x: 3.4, z: -3.8 }, tea: { x: -6, z: 1 }, plaza: { x: 3, z: 0 }, home: { x: 12, z: -21 } },
+  elder: { market: { x: -9.6, z: 1.4 }, tea: { x: -8, z: 1 }, plaza: { x: -6, z: 3 }, home: { x: -2, z: -27 } },
+  recruiter: { market: { x: -12, z: -6 }, tea: { x: -9, z: 0.5 }, plaza: { x: -10, z: 3 }, home: { x: 38, z: 17 } },
+  eventer: { market: { x: 8.2, z: -0.6 }, tea: { x: -4, z: 1 }, plaza: { x: 6, z: 2 }, home: { x: 28, z: -3 } }
+};
+
+/* Ca theo giờ game: sáng 6–11 chợ, trưa 11–14 quán trà, chiều 14–18 quảng
+   trường, tối 18–22 về nhà, đêm 22–6 ở nhà. Trả về {shift, label}. */
+function scheduleShiftForHour(hour) {
+  const h = ((Number(hour) || 0) % 24 + 24) % 24;
+  if (h < 6) return { shift: 'home', label: 'Đêm — nghỉ ở nhà' };
+  if (h < 11) return { shift: 'market', label: 'Sáng — ở chợ' };
+  if (h < 14) return { shift: 'tea', label: 'Trưa — quán trà' };
+  if (h < 18) return { shift: 'plaza', label: 'Chiều — quảng trường' };
+  return { shift: 'home', label: 'Tối — về nhà' };
+}
+
+/* Điểm NPC phải đứng ở giờ hour (kèm ca + nhãn). NPC không có lịch -> null. */
+function scheduleSpotFor(id, hour) {
+  const s = NPC_SCHEDULES[id];
+  if (!s) return null;
+  const cur = scheduleShiftForHour(hour);
+  const p = s[cur.shift];
+  return { x: p.x, z: p.z, shift: cur.shift, label: cur.label };
+}
+
+/* NPC mới: thợ rèn + thầy thuốc + người kể chuyện (isNpc, có thoại + role
+   riêng) và 2 trẻ con (chibi nhỏ scale 0.7, không thoại, chạy nhảy ở quảng
+   trường). Tạo bằng CharacterManager.create trong initPopulation. */
+const NPC_NEW_DEFS = [
+  { id: 'smith', name: 'Thợ Rèn Thiết Ngưu', x: -9.8, z: -4.2, robe: '#78350f', belt: '#facc15', hair: '#1e1b18', isNpc: true, quest: '🔨', role: 'smith', portrait: '🔨', dialogue: 'Lò rèn Biện Kinh đỏ lửa suốt ngày! Có Huyền Thiết Tinh thì ta rèn vũ khí cho, công kích tăng ngay.' },
+  { id: 'healer', name: 'Thần Y Hoa Đà', x: 6.5, z: -1, robe: '#0f766e', belt: '#facc15', hair: '#e2e8f0', isNpc: true, quest: '💊', role: 'healer', portrait: '💊', dialogue: 'Thiếu hiệp bị thương thì ghé đây — 500 bạc, châm cứu một lát là sinh lực hồi đầy như mới.' },
+  { id: 'storyteller', name: 'Lão Kể Chuyện', x: -1.5, z: 4, robe: '#1e3a8a', belt: '#e2b13c', hair: '#f8fafc', isNpc: true, quest: '📖', role: 'storyteller', portrait: '📖', dialogue: 'Ngồi xuống đây, lão kể cho nghe chuyện Biện Kinh, chuyện Long Vương Biển Đông, chuyện Thần Điêu Đại Hiệp…' },
+  { id: 'child1', name: 'Tiểu Bảo', x: -2, z: 2, robe: '#dc2626', belt: '#facc15', hair: '#1e1b4b', scale: 0.7 },
+  { id: 'child2', name: 'Tiểu Linh', x: 2, z: 3, robe: '#db2777', belt: '#facc15', hair: '#0f172a', scale: 0.7 }
+];
+
+/* Thú cưng lang thang (không tương tác thoại — chạm vào chỉ hiện emote). */
+const PET_DEFS = [
+  { kind: 'dog', name: 'Tiểu Hắc', x: -3, z: 3, color: '#3b2f2f' },
+  { kind: 'cat', name: 'Tiểu Miêu', x: 4, z: 4, color: '#d97706' }
+];
+
+/* FOLLOW-BEGIN — Thú cưng đi theo (Nhiệm vụ 5). Túi đồ chỉ lưu pet theo
+   TÊN (shopAddToBag không lưu id shop), nên nhận diện pet bằng shopName.
+   id giữ nguyên tc01–tc03 của Shop; name là tên hiện trên nameplate;
+   color/hair là màu chibi đi theo (CharacterManager.create dùng chuỗi
+   CSS hex, đừng đổi sang số hex). Trứng nở thành thần thú cùng màu. */
+const FOLLOW_PET_DEFS = [
+  { id: 'tc01', shopName: 'Trứng Hỏa Kỳ Lân', name: 'Hỏa Kỳ Lân', icon: '🔥', color: '#ea580c', hair: '#7c2d12' },
+  { id: 'tc02', shopName: 'Trứng Thần Điêu', name: 'Thần Điêu', icon: '🦅', color: '#57534e', hair: '#1c1917' },
+  { id: 'tc03', shopName: 'Tiểu Bạch Hồ', name: 'Tiểu Bạch Hồ', icon: '🦊', color: '#f8fafc', hair: '#e2e8f0' }
+];
+
+/* Logic thuần chọn/đổi/bỏ pet đi theo (test được bằng Node, không chạm
+   DOM/THREE). activePet là id trong FOLLOW_PET_DEFS hoặc null. */
+const FollowPets = {
+  defForId(id) {
+    for (let i = 0; i < FOLLOW_PET_DEFS.length; i++) if (FOLLOW_PET_DEFS[i].id === id) return FOLLOW_PET_DEFS[i];
+    return null;
+  },
+  /* Item túi đồ có phải thú cưng đi theo được không (nhận diện theo tên). */
+  defForItem(it) {
+    if (!it || typeof it.name !== 'string') return null;
+    for (let i = 0; i < FOLLOW_PET_DEFS.length; i++) if (FOLLOW_PET_DEFS[i].shopName === it.name) return FOLLOW_PET_DEFS[i];
+    return null;
+  },
+  isPetItem(it) { return !!this.defForItem(it); },
+  /* Id các pet đang sở hữu (còn trong túi, qty > 0), theo thứ tự trong túi. */
+  ownedPetIds() {
+    const ids = [];
+    State.inventory.forEach(it => {
+      const d = this.defForItem(it);
+      if (d && (it.qty || 0) > 0 && ids.indexOf(d.id) < 0) ids.push(d.id);
+    });
+    return ids;
+  },
+  activeDef() { return State.activePet ? this.defForId(State.activePet) : null; },
+  /* Chưa chọn con nào mà trong túi đã có pet -> tự chọn con đầu tiên. */
+  ensureDefault() {
+    if (State.activePet) return false;
+    const ids = this.ownedPetIds();
+    if (!ids.length) return false;
+    State.activePet = ids[0];
+    SaveManager.save();
+    return true;
+  },
+  /* Chọn pet đi theo (id null = thôi đi theo). Chỉ nhận pet đang sở hữu. */
+  setActive(id) {
+    if (id && this.ownedPetIds().indexOf(id) < 0) return false;
+    State.activePet = id || null;
+    SaveManager.save();
+    return true;
+  },
+  toggle(id) {
+    if (State.activePet === id) return this.setActive(null);
+    return this.setActive(id);
+  },
+  /* Pet đang theo không còn trong túi (đã bán ở chợ) -> bỏ theo. */
+  clearIfSold() {
+    if (!State.activePet) return false;
+    if (this.ownedPetIds().indexOf(State.activePet) >= 0) return false;
+    State.activePet = null;
+    SaveManager.save();
+    return true;
+  }
+};
+
+/* Cốt truyện kể bởi Lão Kể Chuyện (modal 'lore', 5 đoạn ngắn). */
+const NPC_LORE = [
+  'Ngày xưa, Biện Kinh chỉ là một bến đò nhỏ bên hồ sen. Một đêm trăng, có con giao long từ Biển Đông bơi ngược dòng về đây, thấy sen nở thơm ngát bèn ở lại trấn giữ mặt hồ — từ đó hồ sen Biện Kinh quanh năm không bao giờ cạn.',
+  'Trúc Ma Lão Tổ vốn là một tiều phu đốn trúc ở Rừng Trúc U Minh. Ông nhặt được một cuốn tàn kinh dưới gốc trúc cổ, luyện ba mươi năm không ra khỏi rừng, đến khi xuất quan thì lá trúc trong tay đã hóa thành phi đao.',
+  'Đài Phật Anh Đào được dựng để trấn yểm Hộ Pháp Hắc Bạch — hai anh em sinh đôi, một người theo Phật, một người theo Ma. Họ giao hẹn: ai thua luận kiếm dưới tượng Phật thì phải canh giữ đài này trọn đời.',
+  'Thần Điêu Đại Hiệp Dương Quá từng ghé Biện Kinh một lần duy nhất, để lại một thanh Huyền Thiết Trọng Kiếm gãy chuôi ở lò rèn nhà họ Thiết. Thợ rèn đời nào cũng kể: ai rèn lại được thanh kiếm ấy sẽ là thiên hạ đệ nhất.',
+  'Long Vương Biển Đông mỗi năm lại nổi giận một lần, dâng sóng tràn vào Hồ Sen. Các đời minh chủ võ lâm bèn lập ra Lôi Đài Tỷ Võ — kẻ nào thắng được Long Vương sẽ được Long Châu, hiệu lệnh cả giang hồ.'
+];
+
+const DIALOGUE_TREES = {
+  merchant: {
+    start: {
+      text: 'Chào thiếu hiệp! Sạp tạp hóa Biện Kinh hôm nay có đan dược mới về, thiếu hiệp cần gì?',
+      options: [
+        { label: '🛒 Xem hàng trong sạp', action: 'shop' },
+        { label: '💰 Hỏi về đan dược giảm giá', next: 'sale', cond: { silver: 1000 } },
+        { label: '👂 Nghe ngóng tin giang hồ', next: 'news', setFlag: 'metMerchant' },
+        { label: '👋 Đa tạ, hẹn gặp lại', next: null }
+      ]
+    },
+    sale: {
+      text: 'Thiếu hiệp có hơn 1.000 bạc thì ta mới dám bớt — khách quen cả! Đan dược hôm nay giảm 1 phần, mua ở sạp là có ngay.',
+      options: [
+        { label: '🛒 Mua ngay ở chợ', action: 'shop' },
+        { label: '↩️ Để ta suy nghĩ đã', next: 'start' }
+      ]
+    },
+    news: {
+      text: 'Nghe nói Boss Thế Giới Kim Thiềm Vương sắp xuất hiện, cả thành đang rục rịch rủ nhau đi đánh. Ai nhanh tay thì được thưởng lớn!',
+      options: [
+        { label: '🐸 Hỏi thêm về Boss Thế Giới', next: 'boss' },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    },
+    boss: {
+      text: 'Boss Thế Giới mở lúc 12h và 20h mỗi ngày, đánh thắng được 5.000 vàng, 50 linh thạch và 5 Đá Cường Hóa. Nhớ ghé trang Sự Kiện xem giờ cho chắc!',
+      options: [
+        { label: '📅 Mở trang Sự Kiện xem giờ Boss', action: 'event' },
+        { label: '👋 Cảm ơn chưởng quầy', next: null }
+      ]
+    }
+  },
+  master: {
+    start: {
+      text: 'Lôi đài Biện Kinh đang mở cửa luận võ! Muốn thành danh thì phải thắng trên đài, thiếu hiệp chọn gì?',
+      options: [
+        { label: '⚔️ Chọn chiến trường', action: 'battle' },
+        { label: '🥋 Xin chỉ giáo võ công', next: 'train', cond: { level: 5 } },
+        { label: '🗺️ Hỏi về các Battle Map', next: 'maps' },
+        { label: '🏆 Hỏi về quy củ lôi đài', next: 'duel' },
+        { label: '👋 Đa tạ, hẹn gặp lại', next: null }
+      ]
+    },
+    train: {
+      text: 'Hảo! Đứng tấn cho vững, hít sâu, xuất quyền theo ta… Tốt lắm! Nội công của thiếu hiệp đã tiến thêm một bậc.',
+      options: [
+        { label: '✨ Lĩnh ngộ (+30 EXP, 1 lần)', action: 'train', cond: { notFlag: 'trainedMaster' }, setFlag: 'trainedMaster' },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    },
+    maps: {
+      text: 'Mười Battle Map, khó dần từ Rừng Trúc U Minh tới Hồ Sen Biển Đông. Map càng cao, quái càng mạnh mà thưởng càng lớn — liệu sức mà chọn!',
+      options: [
+        { label: '⚔️ Mở danh sách chiến trường', action: 'battle' },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    },
+    duel: {
+      text: 'Lôi đài có quy củ: thắng 3 trận liên tiếp được xưng là Bách Chiến Bất Bại, cả thành đều biết tên. Thiếu hiệp dám thử không?',
+      options: [
+        { label: '⚔️ Vào chiến trường ngay', action: 'battle' },
+        { label: '↩️ Để ta chuẩn bị đã', next: 'start' }
+      ]
+    }
+  },
+  elder: {
+    start: {
+      text: 'Tàng Kinh Các lưu giữ hồ sơ của mọi cao thủ trong đội hình. Thiếu hiệp muốn xem gì?',
+      options: [
+        { label: '📜 Mở hồ sơ đội hình', action: 'info' },
+        { label: '📚 Hỏi về Tàng Kinh Các', next: 'library' },
+        { label: '🌱 Xin lời khuyên bồi dưỡng', next: 'cultivate', cond: { level: 3 } },
+        { label: '🏯 Nghe chuyện xưa Biện Kinh', next: 'history' },
+        { label: '👋 Đa tạ trưởng lão', next: null }
+      ]
+    },
+    library: {
+      text: 'Tàng Kinh Các có 7 ô trang bị cho mỗi đệ tử: vũ khí, mũ, chiến bào, trang sức, thiên phú, tâm pháp, tuyệt học. Đủ duyên phận thì thực lực tăng vọt!',
+      options: [
+        { label: '📜 Mở hồ sơ xem duyên phận', action: 'info' },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    },
+    cultivate: {
+      text: 'Bồi dưỡng đệ tử tốn 12.000 bạc một lần, nhưng chỉ số tăng vĩnh viễn. Đệ tử nào làm đội trưởng thì bồi dưỡng người đó trước, đừng dàn trải!',
+      options: [
+        { label: '📜 Mở hồ sơ bồi dưỡng', action: 'info' },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    },
+    history: {
+      text: 'Biện Kinh xưa chỉ là bến đò nhỏ bên hồ sen, có giao long trấn giữ nên sen nở quanh năm. Muốn nghe trọn bộ truyền thuyết thì ra quảng trường gặp Lão Kể Chuyện!',
+      options: [
+        { label: '📖 Nghe Lão Kể Chuyện ở quảng trường', action: 'lore' },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    }
+  },
+  recruiter: {
+    start: {
+      text: 'Đài Tham Bái linh ứng — đệ tử hữu duyên sẽ tự tìm đến. Thiếu hiệp muốn thử vận không?',
+      options: [
+        { label: '🙏 Tham Bái Chiêu Mộ', action: 'recruit' },
+        { label: '🎲 Hỏi về 3 gói Tham Bái', next: 'pools' },
+        { label: '🍀 Xin bùa may mắn', next: 'luck', cond: { silver: 500 } },
+        { label: '🔆 Hỏi về duyên phận đệ tử', next: 'fate' },
+        { label: '👋 Đa tạ tiên cô', next: null }
+      ]
+    },
+    pools: {
+      text: 'Ba gói Tham Bái: Tầm Sư Học Đạo miễn phí 1 lượt mỗi ngày; Danh Môn Cao Đồ 100 KNB; Nhất Đại Tông Sư 250 KNB, toàn cao thủ Giáp phẩm. Trúng đệ tử đã có sẽ chuyển thành bồi dưỡng!',
+      options: [
+        { label: '🙏 Tham Bái ngay', action: 'recruit' },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    },
+    luck: {
+      text: 'Tiên cô vẽ cho thiếu hiệp một đạo bùa may mắn, đeo vào người rồi hãy Tham Bái — biết đâu Giáp phẩm về tay ngay lần đầu!',
+      options: [
+        { label: '🙏 Tham Bái ngay', action: 'recruit', setFlag: 'blessed' },
+        { label: '👋 Đa tạ tiên cô', next: null }
+      ]
+    },
+    fate: {
+      text: 'Duyên phận đệ tử xem trong hồ sơ: ra trận cùng đúng người thì tăng Khí, trang bị đúng đồ thì tăng Mệnh. Ghép đủ duyên, đội hình mạnh gấp bội!',
+      options: [
+        { label: '📜 Mở hồ sơ xem duyên phận', action: 'info' },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    }
+  },
+  eventer: {
+    start: {
+      text: 'Sự kiện giang hồ đang mở! Điểm danh hằng ngày, nhiệm vụ ngày, Boss Thế Giới lúc 12h và 20h, Bang Chiến Thứ 7 — thiếu hiệp ghé trang Sự Kiện nhận quà nhé!',
+      options: [
+        { label: '📅 Mở trang Sự Kiện', action: 'event' },
+        { label: '🐸 Hỏi giờ Boss Thế Giới', next: 'boss' },
+        { label: '🎁 Hỏi về điểm danh', next: 'checkin' },
+        { label: '🚩 Hỏi về Bang Chiến', next: 'war' },
+        { label: '👋 Đa tạ sứ giả', next: null }
+      ]
+    },
+    boss: {
+      text: 'Boss Thế Giới mở 12h00 và 20h00 mỗi ngày, mỗi khung mở 30 phút. Thắng được 5.000 vàng, 50 linh thạch và 5 Đá Cường Hóa — nhớ canh giờ!',
+      options: [
+        { label: '📅 Mở trang Sự Kiện', action: 'event' },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    },
+    checkin: {
+      text: 'Điểm danh 7 ngày quay vòng: ngày nào cũng có quà, đủ 7 ngày nhận thưởng lớn. Nghỉ 1 ngày là chuỗi về lại ngày 1, đừng quên nhé!',
+      options: [
+        { label: '📅 Mở trang Sự Kiện điểm danh', action: 'event' },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    },
+    war: {
+      text: 'Bang Chiến mở 19h–20h Thứ 7 hằng tuần. Bang nào thắng thì cả bang được thưởng, tên bang khắc lên bảng vàng ở quảng trường!',
+      options: [
+        { label: '📅 Mở trang Sự Kiện xem lịch', action: 'event' },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    }
+  },
+  smith: {
+    start: {
+      text: 'Lò rèn Biện Kinh đỏ lửa suốt ngày! Có Huyền Thiết Tinh thì ta rèn vũ khí cho, công kích tăng ngay. Thiếu hiệp cần gì?',
+      options: [
+        { label: '🔨 Rèn vũ khí (1 Huyền Thiết Tinh, +5 công)', action: 'forge', cond: { hasItem: 'Huyền Thiết Tinh', forgeLeft: true } },
+        { label: '💰 Hỏi giá rèn', next: 'price' },
+        { label: '⛏️ Hỏi mua Huyền Thiết Tinh ở đâu', next: 'ore' },
+        { label: '⚔️ Xem vũ khí của ta', next: 'weapon' },
+        { label: '👋 Đa tạ thợ rèn', next: null }
+      ]
+    },
+    price: {
+      text: 'Giá rèn rõ ràng: 1 Huyền Thiết Tinh đổi +5 công kích vĩnh viễn, rèn tối đa 5 lần (+25 công). Không tinh thì có tiền cũng không rèn được!',
+      options: [
+        { label: '🔨 Rèn ngay', action: 'forge', cond: { hasItem: 'Huyền Thiết Tinh', forgeLeft: true } },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    },
+    ore: {
+      text: 'Huyền Thiết Tinh thì chợ Biện Kinh có bán, đánh thắng Battle Map cũng rơi ra. Thiếu hiệp cứ ghé sạp Chưởng Quầy hỏi thử!',
+      options: [
+        { label: '🛒 Ra chợ mua', action: 'shop' },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    },
+    weapon: {
+      text: 'Vũ khí của thiếu hiệp rèn khéo lắm, còn rèn thêm được nữa nếu có tinh. Nhớ: rèn tối đa 5 lần, đừng phí tinh vào vũ khí đã rèn đủ!',
+      options: [
+        { label: '🔨 Rèn ngay', action: 'forge', cond: { hasItem: 'Huyền Thiết Tinh', forgeLeft: true } },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    }
+  },
+  healer: {
+    start: {
+      text: 'Thiếu hiệp bị thương thì ghé đây — 500 bạc, châm cứu một lát là sinh lực hồi đầy như mới. Cần ta chữa không?',
+      options: [
+        { label: '💊 Chữa thương (500 bạc, hồi đầy HP)', action: 'heal', cond: { silver: 500 } },
+        { label: '🌿 Hỏi về linh dược', next: 'herbs' },
+        { label: '🩸 Hỏi về vết thương giang hồ', next: 'wound' },
+        { label: '😴 Nghỉ ngơi một lát', next: 'rest', setFlag: 'rested' },
+        { label: '👋 Đa tạ thần y', next: null }
+      ]
+    },
+    herbs: {
+      text: 'Linh dược trong thành thì chợ có bán: Kim Sáng Dược hồi 200 sinh lực, Tụ Khí Đan tăng kinh nghiệm. Bị thương nặng thì cứ tới đây, ta chữa tận gốc!',
+      options: [
+        { label: '💊 Chữa thương ngay', action: 'heal', cond: { silver: 500 } },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    },
+    rest: {
+      text: 'Thiếu hiệp cứ ngồi nghỉ, uống chén trà gừng cho ấm người. Giang hồ đi mãi cũng cần dừng chân — nghỉ xong hãy đánh tiếp!',
+      options: [
+        { label: '💊 Chữa thương luôn', action: 'heal', cond: { silver: 500 } },
+        { label: '👋 Đa tạ thần y', next: null }
+      ]
+    },
+    wound: {
+      text: 'Vết thương giang hồ có ba loại: ngoại thương da thịt, nội thương kinh mạch, tâm ma. Hai loại đầu ta chữa được, tâm ma thì phải tự thiếu hiệp hóa giải!',
+      options: [
+        { label: '💊 Chữa thương ngay', action: 'heal', cond: { silver: 500 } },
+        { label: '↩️ Quay lại', next: 'start' }
+      ]
+    }
+  },
+  storyteller: {
+    start: {
+      text: 'Ngồi xuống đây, lão kể cho nghe chuyện Biện Kinh, chuyện Long Vương Biển Đông, chuyện Thần Điêu Đại Hiệp… Thiếu hiệp muốn nghe chuyện nào?',
+      options: [
+        { label: '📖 Nghe kể chuyện Biện Kinh (đọc trọn bộ)', action: 'lore' },
+        { label: '🐉 Nghe truyền thuyết Long Vương', next: 'dragon' },
+        { label: '🦅 Nghe chuyện Thần Điêu Đại Hiệp', next: 'condor' },
+        { label: '🍵 Hỏi chuyện quán trà', next: 'tavern' },
+        { label: '👋 Đa tạ lão trượng', next: null }
+      ]
+    },
+    dragon: {
+      text: 'Long Vương Biển Đông mỗi năm nổi giận một lần, dâng sóng tràn vào Hồ Sen. Kẻ nào thắng được Long Vương sẽ được Long Châu, hiệu lệnh cả giang hồ!',
+      options: [
+        { label: '📖 Đọc trọn bộ truyền thuyết', action: 'lore' },
+        { label: '↩️ Nghe chuyện khác', next: 'start' }
+      ]
+    },
+    condor: {
+      text: 'Thần Điêu Đại Hiệp Dương Quá từng ghé Biện Kinh một lần duy nhất, để lại thanh Huyền Thiết Trọng Kiếm gãy chuôi ở lò rèn nhà họ Thiết. Ai rèn lại được kiếm ấy sẽ là thiên hạ đệ nhất!',
+      options: [
+        { label: '📖 Đọc trọn bộ truyền thuyết', action: 'lore' },
+        { label: '↩️ Nghe chuyện khác', next: 'start' }
+      ]
+    },
+    tavern: {
+      text: 'Quán trà đầu chợ là nơi tin giang hồ tụ về nhanh nhất: ai thắng lôi đài, ai vừa chiêu mộ được Giáp phẩm, chiều nay cả thành đều biết!',
+      options: [
+        { label: '📖 Đọc trọn bộ truyền thuyết', action: 'lore' },
+        { label: '↩️ Nghe chuyện khác', next: 'start' }
+      ]
+    }
+  }
+};
+
+/* Kiểm tra điều kiện của 1 lựa chọn thoại. cond có thể gồm: silver, gold,
+   level, hasItem (tên vật phẩm trong túi), flag (flags.npc[flag] phải có),
+   notFlag (flags.npc[flag] chưa có), forgeLeft (chưa rèn đủ 5 lần),
+   questDone (nhiệm vụ id đã xong). Không có cond = luôn được chọn. */
+function dialogueCondMet(cond) {
+  if (!cond) return true;
+  const p = State.player, npc = State.flags.npc || {};
+  if (cond.silver != null && p.silver < cond.silver) return false;
+  if (cond.gold != null && p.gold < cond.gold) return false;
+  if (cond.level != null && p.level < cond.level) return false;
+  if (cond.hasItem) {
+    const it = State.inventory.find(i => i.name === cond.hasItem);
+    if (!it || it.qty < 1) return false;
+  }
+  if (cond.flag && !npc[cond.flag]) return false;
+  if (cond.notFlag && npc[cond.notFlag]) return false;
+  if (cond.forgeLeft && (npc.forgeCount || 0) >= 5) return false;
+  if (cond.questDone) {
+    const q = State.quests.find(x => x.id === cond.questDone);
+    if (!q || !q.done) return false;
+  }
+  return true;
+}
+
+/* Câu yêu cầu hiện kèm lựa chọn bị khóa (vd "Cần 500 bạc"). */
+function dialogueCondText(cond) {
+  if (!cond) return '';
+  const parts = [];
+  if (cond.silver != null) parts.push('Cần ' + fmtFull(cond.silver) + ' bạc');
+  if (cond.gold != null) parts.push('Cần ' + fmtFull(cond.gold) + ' KNB');
+  if (cond.level != null) parts.push('Cần cấp ' + cond.level);
+  if (cond.hasItem) parts.push('Cần ' + cond.hasItem + ' ×1');
+  if (cond.flag) parts.push('Cần hoàn thành bước trước');
+  if (cond.notFlag) parts.push('Chỉ làm được 1 lần');
+  if (cond.forgeLeft) parts.push('Đã rèn tối đa 5 lần');
+  if (cond.questDone) parts.push('Cần hoàn thành nhiệm vụ trước');
+  return parts.join(' · ') || 'Chưa đủ điều kiện';
+}
+/* NPC-END */
+
+/* ============================== TƯƠNG TÁC MỞ RỘNG + MINI-GAME ==============================
+   INTERACT-BEGIN — Nhiệm vụ 4: đồ rơi / rương / bướm / câu cá / hái sen / cờ Caro / emote.
+   Dữ liệu + logic thuần (không chạm DOM/THREE) để test được bằng Node.
+   - Rương: 5 rương cố định (tọa độ đã kiểm đi được bằng Engine.isWalkable và
+     ngoài mọi collider lầu/sạp/đài/bảng/cây/nhà/bù nhìn — xem tools/test-interact.cjs).
+     Mỗi rương mở lại sau 1 ngày game (chests[id] = ngày game đã mở).
+   - Đồ rơi: tối đa 5 vật cùng lúc, sinh theo giờ game (InteractWorld.update),
+     vị trí ngẫu nhiên đi được; nhặt qua addItem() rồi biến mất.
+   - Mồi Câu là vật phẩm trong túi (mua ở chợ 50 bạc, tặng 5 mồi mỗi ngày game,
+     rương đôi khi cho ×3). Hết mồi thì không câu được.
+   - Cờ Caro 9×9 (Gomoku): 5 quân một hàng thắng; AI chặn nước thắng + tự tìm
+     nước thắng, còn lại đi ngẫu nhiên gần quân đã có. Thưởng thắng 1 lần/ngày
+     game: +1.000 bạc +100 EXP.
+   - Bền vững qua lần chơi: flags.interact (chests/drops/baitDay/chessWinDay/
+     chessWins/fishCaught/lotusPicked/butterflies) lưu cùng save v2; bướm đang
+     bay + vị trí bướm bị bắt chỉ giữ trong phiên (memory của InteractWorld). */
+function defaultInteractState() {
+  return { chests: {}, drops: [], baitDay: 0, chessWinDay: 0, chessWins: 0, fishCaught: 0, lotusPicked: 0, butterflies: 0 };
+}
+
+/* DISTRICT-BEGIN — Flag mặc định của 11 khu vực mới (xem src/10b-districts.js
+   defaultDistrictFlags — bản này là bản sao trong 01-data.js để State/load
+   dùng được mà không phụ thuộc file khu; giữ 2 bản đồng bộ khi thêm flag).
+   Boss 1 lần/ngày game (*_day = ngày game đã thắng); Ngõ Hẹp quest 3 bước
+   (ngo_step 0→1→2→3, ngo_done); Phố Tây luyện skill 1 lần/ngày; Ruộng Lúa
+   gieo rồi gặt ngày game sau; Thác Nước đủ bộ 5 thì đổi thưởng 1 lần. */
+function defaultDistrictFlags() {
+  return {
+    boss_mieu_co: false, boss_mieu_co_day: 0,
+    boss_hang_dong: false, boss_hang_dong_day: 0,
+    nam_mon_pass: false,
+    ngo_step: 0, ngo_done: false,
+    vo_luyen_day: 0, vo_diem: 0,
+    ruong_stage: 0, ruong_ready_day: 0,
+    thac_collected: {}, thac_done: false,
+    nghia_huong_day: 0, nghia_duoi_day: 0,
+    boat_day: 0,
+    bacuyen_fish: 0, bacuyen_lotus: 0
+  };
+}
+
+const CHEST_DEFS = [
+  { id: 'chest-lau', name: 'Rương Lầu Gác', x: -11, z: -3, hint: 'Góc tây lầu gác' },
+  { id: 'chest-ho', name: 'Rương Bờ Hồ', x: 4.2, z: 13.5, hint: 'Bờ nam hồ sen, gần giếng cổ' },
+  { id: 'chest-dong', name: 'Rương Cầu Đông', x: 14, z: 3, hint: 'Bờ đông hồ sen, qua cầu đá' },
+  { id: 'chest-lang', name: 'Rương Làng Đào', x: -28, z: -16, hint: 'Làng Đào Viên, gần cổng làng' },
+  { id: 'chest-ruong', name: 'Rương Ruộng Lúa', x: -32, z: 2, hint: 'Ruộng lúa phía tây' }
+];
+const FISH_SPOT = { x: 7, z: 9, name: 'Điểm Câu Cá', hint: 'Đầu đông cầu đá hồ sen' };
+const LOTUS_SPOT = { x: 4, z: 9, name: 'Điểm Hái Sen', hint: 'Đầu tây cầu đá hồ sen' };
+const CHESS_BOARD = { x: 9, z: -1.6, name: 'Bàn Cờ', hint: 'Cạnh Lão Kỳ Thánh, phía đông lầu gác' };
+/* NPC đấu cờ: tạo riêng (không cho vào NPC_NEW_DEFS để khỏi phá đếm 5 NPC
+   của Nhiệm vụ 3); nói chuyện mở hộp thoại cũ + nút "Đấu một ván cờ". */
+const CHESS_NPC_DEF = {
+  id: 'chessmaster', name: 'Lão Kỳ Thánh', x: 9, z: -3, robe: '#1e3a8a', belt: '#facc15', hair: '#f8fafc',
+  isNpc: true, quest: '♟️', role: 'chess', portrait: '♟️',
+  dialogue: 'Bàn cờ đã bày sẵn đây! Thiếu hiệp dám đấu với lão một ván Caro không? Năm quân một hàng là thắng — thắng được thưởng bạc và kinh nghiệm, thua thì không mất gì.'
+};
+const BUTTERFLY_ANCHORS = [
+  { x: -6, z: 6 }, { x: 0, z: 5 }, { x: 6, z: 6 }, { x: -12, z: -2 }, { x: 3, z: -4.5 }
+];
+
+/* Loot: {kind:'silver'|'gold', amount} hoặc {kind:'item', name, icon, type, desc, qty}. */
+const GROUND_LOOT_TABLE = [
+  { w: 40, loot: { kind: 'silver', min: 200, max: 800 } },
+  { w: 20, loot: { kind: 'item', name: 'Kim Sáng Dược', icon: '🧪', type: 'Đan dược', desc: 'Hồi 200 Sinh Lực', qty: 1 } },
+  { w: 20, loot: { kind: 'item', name: 'Tụ Khí Đan', icon: '💊', type: 'Đan dược', desc: '+30 Kinh Nghiệm', qty: 1 } },
+  { w: 12, loot: { kind: 'item', name: 'Huyền Thiết Tinh', icon: '💎', type: 'Nguyên liệu', desc: 'Rèn trang bị', qty: 1 } },
+  { w: 8, loot: { kind: 'item', name: 'Lá Sen', icon: '🍃', type: 'Nguyên liệu', desc: 'Lá sen phơi khô, dùng chế đan', qty: 2 } }
+];
+const FISH_DEFS = {
+  common: { name: 'Cá Chép Thường', icon: '🐟', type: 'Thực phẩm', desc: 'Cá chép hồ sen, bán được 150 bạc' },
+  rare: { name: 'Cá Chép Hiếm', icon: '🐠', type: 'Thực phẩm', desc: 'Cá chép hiếm, vảy óng ánh, bán được 500 bạc' },
+  epic: { name: 'Cá Chép Vàng', icon: '🐡', type: 'Thực phẩm', desc: 'Cá chép vàng truyền thuyết, bán được 2.000 bạc' }
+};
+const LOTUS_DEFS = {
+  seed: { name: 'Hạt Sen', icon: '🫘', type: 'Nguyên liệu', desc: 'Hạt sen thơm bùi, bán được 120 bạc' },
+  leaf: { name: 'Lá Sen', icon: '🍃', type: 'Nguyên liệu', desc: 'Lá sen phơi khô, dùng chế đan', qty: 2 }
+};
+
+function rollGroundLoot(r, rAmt) {
+  const total = GROUND_LOOT_TABLE.reduce((a, e) => a + e.w, 0);
+  let roll = (r == null ? Math.random() : r) * total;
+  let entry = GROUND_LOOT_TABLE[GROUND_LOOT_TABLE.length - 1];
+  for (let i = 0; i < GROUND_LOOT_TABLE.length; i++) {
+    roll -= GROUND_LOOT_TABLE[i].w;
+    if (roll < 0) { entry = GROUND_LOOT_TABLE[i]; break; }
+  }
+  const l = entry.loot;
+  if (l.kind === 'silver') {
+    const a = (rAmt == null ? Math.random() : rAmt);
+    return { kind: 'silver', amount: l.min + Math.floor(a * (l.max - l.min + 1)) };
+  }
+  return { kind: 'item', name: l.name, icon: l.icon, type: l.type, desc: l.desc, qty: l.qty };
+}
+
+/* Rương: 50% bạc 500–2.000 · 18% đan dược ×2 · 14% vật liệu · 12% hạt sen ×3 ·
+   6% hiếm: 8–15 KNB. r/rAmt/rGold truyền vào để test xác định, mặc định random. */
+function rollChestLoot(r, rAmt, rGold) {
+  const roll = (r == null ? Math.random() : r);
+  const a = (rAmt == null ? Math.random() : rAmt);
+  if (roll < 0.50) return { kind: 'silver', amount: 500 + Math.floor(a * 1501) };
+  if (roll < 0.68) {
+    const d = a < 0.5
+      ? { name: 'Tụ Khí Đan', icon: '💊', type: 'Đan dược', desc: '+30 Kinh Nghiệm' }
+      : { name: 'Kim Sáng Dược', icon: '🧪', type: 'Đan dược', desc: 'Hồi 200 Sinh Lực' };
+    return { kind: 'item', name: d.name, icon: d.icon, type: d.type, desc: d.desc, qty: 2 };
+  }
+  if (roll < 0.82) {
+    const m = a < 0.6
+      ? { name: 'Huyền Thiết Tinh', icon: '💎', type: 'Nguyên liệu', desc: 'Rèn trang bị', qty: 1 }
+      : { name: 'Mồi Câu', icon: '🪱', type: 'Vật phẩm', desc: 'Mồi câu cá hồ sen, mỗi lần câu tốn 1 mồi', qty: 3 };
+    return { kind: 'item', name: m.name, icon: m.icon, type: m.type, desc: m.desc, qty: m.qty };
+  }
+  if (roll < 0.94) return { kind: 'item', name: 'Hạt Sen', icon: '🫘', type: 'Nguyên liệu', desc: 'Hạt sen thơm bùi, bán được 120 bạc', qty: 3 };
+  const g = (rGold == null ? Math.random() : rGold);
+  return { kind: 'gold', amount: 8 + Math.floor(g * 8), rare: true };
+}
+
+/* Áp dụng 1 loot vào túi/ ví, trả về dòng mô tả ngắn để toast. */
+function applyLoot(loot) {
+  if (!loot) return '';
+  if (loot.kind === 'silver') { State.player.silver += loot.amount; return '+' + fmtFull(loot.amount) + ' bạc'; }
+  if (loot.kind === 'gold') { State.player.gold += loot.amount; return '+' + loot.amount + ' KNB'; }
+  addItem(loot.name, loot.icon, loot.type, loot.desc, loot.qty || 1);
+  return loot.name + ' ×' + (loot.qty || 1);
+}
+
+const Interact = {
+  drops() { return State.flags.interact.drops; },
+
+  /* Mỗi ngày game tặng 5 Mồi Câu (1 lần/ngày, theo ngày game). baitDay 0 =
+     chưa nhận ngày nào → nhận ngay ngày đầu tiên. */
+  maybeGrantDailyBait() {
+    const it = State.flags.interact;
+    const day = State.worldClock.day;
+    if (it.baitDay >= day) return false;
+    it.baitDay = day;
+    addItem('Mồi Câu', '🪱', 'Vật phẩm', 'Mồi câu cá hồ sen, mỗi lần câu tốn 1 mồi', 5);
+    SaveManager.save();
+    UI.toast('🎁 Mỗi ngày tặng 5 Mồi Câu! (đã vào túi đồ)', 'gold');
+    return true;
+  },
+
+  baitCount() {
+    const it = State.inventory.find(i => i.name === 'Mồi Câu');
+    return it ? it.qty : 0;
+  },
+
+  /* Thả câu: tốn 1 Mồi Câu. Hết mồi → false (modal không mở). */
+  fishCast() {
+    const it = State.inventory.find(i => i.name === 'Mồi Câu');
+    if (!it || it.qty < 1) return false;
+    it.qty -= 1;
+    if (it.qty <= 0) State.inventory.splice(State.inventory.indexOf(it), 1);
+    SaveManager.save();
+    UI.syncWorld();
+    return true;
+  },
+
+  /* Thanh timing câu cá: pos 0–100. Vùng vàng giữa [47,53] = cá sử thi;
+     vùng xanh [35,65] = trúng (30% hiếm, 70% thường); ngoài = trượt, mất mồi. */
+  fishResolve(pos, r) {
+    const p = clamp(Number(pos) || 0, 0, 100);
+    if (p >= 47 && p <= 53) return { hit: true, rarity: 'epic', fish: FISH_DEFS.epic };
+    if (p >= 35 && p <= 65) {
+      const roll = (r == null ? Math.random() : r);
+      return roll < 0.3
+        ? { hit: true, rarity: 'rare', fish: FISH_DEFS.rare }
+        : { hit: true, rarity: 'common', fish: FISH_DEFS.common };
+    }
+    return { hit: false, rarity: null, fish: null };
+  },
+
+  applyFish(res) {
+    if (!res || !res.hit) return '';
+    addItem(res.fish.name, res.fish.icon, res.fish.type, res.fish.desc, 1);
+    State.flags.interact.fishCaught += 1;
+    SaveManager.save();
+    UI.syncWorld();
+    return res.fish.name;
+  },
+
+  /* Hái sen: bấm đúng lúc kim vào vùng sáng [40,60] thì được Hạt Sen ×2
+     (70%) hoặc Lá Sen ×2 (30%); sai thì không được gì, không phạt. */
+  lotusResolve(pos, r) {
+    const p = clamp(Number(pos) || 0, 0, 100);
+    if (p < 40 || p > 60) return { hit: false, item: null };
+    const roll = (r == null ? Math.random() : r);
+    const def = roll < 0.7 ? LOTUS_DEFS.seed : LOTUS_DEFS.leaf;
+    return { hit: true, item: { name: def.name, icon: def.icon, type: def.type, desc: def.desc, qty: def.qty || 2 } };
+  },
+
+  applyLotus(res) {
+    if (!res || !res.hit) return '';
+    addItem(res.item.name, res.item.icon, res.item.type, res.item.desc, res.item.qty);
+    State.flags.interact.lotusPicked += 1;
+    SaveManager.save();
+    UI.syncWorld();
+    return res.item.name + ' ×' + res.item.qty;
+  },
+
+  /* Rương: đã mở trong ngày game hiện tại thì bị chặn (mở lại ngày sau). */
+  chestStatus(id) {
+    const day = State.worldClock.day;
+    const openedDay = State.flags.interact.chests[id];
+    return { openedToday: openedDay === day, openedDay: openedDay || 0, day };
+  },
+
+  chestOpen(id, r, rAmt, rGold) {
+    const def = CHEST_DEFS.find(c => c.id === id);
+    if (!def) return { ok: false, reason: 'unknown' };
+    if (this.chestStatus(id).openedToday) return { ok: false, reason: 'cooldown' };
+    const loot = rollChestLoot(r, rAmt, rGold);
+    const text = applyLoot(loot);
+    State.flags.interact.chests[id] = State.worldClock.day;
+    SaveManager.save();
+    UI.syncWorld();
+    return { ok: true, loot, text, rare: !!loot.rare };
+  },
+
+  /* Đồ rơi: tối đa 5 vật đang có; vị trí ngẫu nhiên đi được (thử 20 lần). */
+  spawnDrop() {
+    const it = State.flags.interact;
+    if (it.drops.length >= 5) return null;
+    for (let i = 0; i < 20; i++) {
+      const x = rnd(-40, 40), z = rnd(-35, 35);
+      const ok = (typeof Engine !== 'undefined' && Engine.isWalkable) ? Engine.isWalkable(x, z) : true;
+      if (!ok) continue;
+      const drop = { id: 'drop-' + Date.now() + '-' + Math.floor(Math.random() * 9999), x: +x.toFixed(1), z: +z.toFixed(1), loot: rollGroundLoot() };
+      it.drops.push(drop);
+      SaveManager.save();
+      return drop;
+    }
+    return null;
+  },
+
+  pickupDrop(id) {
+    const it = State.flags.interact;
+    const idx = it.drops.findIndex(d => d.id === id);
+    if (idx < 0) return { ok: false };
+    const drop = it.drops[idx];
+    const text = applyLoot(drop.loot);
+    it.drops.splice(idx, 1);
+    SaveManager.save();
+    UI.syncWorld();
+    return { ok: true, text };
+  },
+
+  /* Thưởng thắng cờ: 1 lần/ngày game (+1.000 bạc +100 EXP); sau đó chỉ chơi vui. */
+  claimChessReward() {
+    const it = State.flags.interact;
+    const day = State.worldClock.day;
+    if (it.chessWinDay === day) return { rewarded: false };
+    it.chessWinDay = day;
+    it.chessWins += 1;
+    State.player.silver += 1000;
+    gainExp(100);
+    SaveManager.save();
+    UI.syncWorld();
+    return { rewarded: true, silver: 1000, exp: 100 };
+  }
+};
+
+/* ============================== CỜ CARO 9×9 ==============================
+   Gomoku thuần (test được bằng Node): bàn 9×9, 0 trống, 1 người, 2 máy.
+   5 quân một hàng (ngang/dọc/chéo) thắng. AI: tìm nước thắng của mình →
+   chặn nước thắng của người chơi → đi ngẫu nhiên kề quân đã có. */
+const Gomoku = {
+  SIZE: 9,
+  P: 1,
+  AI: 2,
+
+  newBoard() {
+    const b = [];
+    for (let y = 0; y < this.SIZE; y++) { b.push([]); for (let x = 0; x < this.SIZE; x++) b[y].push(0); }
+    return b;
+  },
+
+  inBounds(x, y) { return x >= 0 && y >= 0 && x < this.SIZE && y < this.SIZE; },
+
+  checkWin(board, x, y, p) {
+    const dirs = [[1, 0], [0, 1], [1, 1], [1, -1]];
+    for (let d = 0; d < dirs.length; d++) {
+      const dx = dirs[d][0], dy = dirs[d][1];
+      let n = 1;
+      for (let s = 1; s < 5; s++) {
+        const nx = x + dx * s, ny = y + dy * s;
+        if (!this.inBounds(nx, ny) || board[ny][nx] !== p) break;
+        n++;
+      }
+      for (let s = 1; s < 5; s++) {
+        const nx = x - dx * s, ny = y - dy * s;
+        if (!this.inBounds(nx, ny) || board[ny][nx] !== p) break;
+        n++;
+      }
+      if (n >= 5) return true;
+    }
+    return false;
+  },
+
+  isFull(board) {
+    for (let y = 0; y < this.SIZE; y++) for (let x = 0; x < this.SIZE; x++) if (!board[y][x]) return false;
+    return true;
+  },
+
+  /* Nước đi thắng ngay cho p (đặt thử từng ô trống), hoặc null. */
+  findWinMove(board, p) {
+    for (let y = 0; y < this.SIZE; y++) {
+      for (let x = 0; x < this.SIZE; x++) {
+        if (board[y][x]) continue;
+        board[y][x] = p;
+        const win = this.checkWin(board, x, y, p);
+        board[y][x] = 0;
+        if (win) return { x, y };
+      }
+    }
+    return null;
+  },
+
+  aiMove(board, rand) {
+    const r = (typeof rand === 'function') ? rand : Math.random;
+    const win = this.findWinMove(board, this.AI);
+    if (win) return win;
+    const block = this.findWinMove(board, this.P);
+    if (block) return block;
+    const near = [], empty = [];
+    for (let y = 0; y < this.SIZE; y++) {
+      for (let x = 0; x < this.SIZE; x++) {
+        if (board[y][x]) continue;
+        empty.push({ x, y });
+        let adj = false;
+        for (let dy = -1; dy <= 1 && !adj; dy++) for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const nx = x + dx, ny = y + dy;
+          if (this.inBounds(nx, ny) && board[ny][nx]) { adj = true; break; }
+        }
+        if (adj) near.push({ x, y });
+      }
+    }
+    const pool = near.length ? near : empty;
+    if (!pool.length) return null;
+    return pool[Math.floor(r() * pool.length)];
+  }
+};
+
+/* ============================== BIỂU CẢM (EMOTE) ==============================
+   Emote bong bóng trên đầu nhân vật/NPC (😊 😢 😠), tự ẩn sau ~2s.
+   Tái dùng cơ chế chiếu nameplate (tọa độ 3D → màn hình) trong
+   CharacterManager.update. Ghi lại Emote.last để test được bằng Node
+   (không có camera/DOM thì chỉ ghi lại, không vẽ). */
+const Emote = {
+  last: null,
+
+  show(who, emoji) {
+    this.last = { who, emoji };
+    try {
+      if (typeof document === 'undefined' || typeof CharacterManager === 'undefined') return true;
+      const ent = CharacterManager.entities.find(e => (who === 'player' ? e.isPlayer : e.id === who));
+      if (!ent || !ent.mesh || !Engine.camera) return true;
+      const host = document.querySelector('#nameplates') || document.body;
+      if (!host || !host.appendChild || typeof document.createElement !== 'function') return true;
+      const v = new THREE.Vector3(ent.mesh.position.x, ent.mesh.position.y + 2.1, ent.mesh.position.z);
+      v.project(Engine.camera);
+      if (v.z >= 1) return true;
+      const w = window.innerWidth || 800, h = window.innerHeight || 600;
+      const el = document.createElement('div');
+      el.className = 'emote-bubble';
+      el.textContent = emoji;
+      el.style.left = ((v.x * .5 + .5) * w) + 'px';
+      el.style.top = ((-v.y * .5 + .5) * h) + 'px';
+      host.appendChild(el);
+      setTimeout(() => { if (el.remove) el.remove(); }, 2000);
+    } catch (e) {}
+    return true;
+  },
+
+  player(emoji) { return this.show('player', emoji); },
+  npc(id, emoji) { return this.show(id, emoji); }
+};
+/* INTERACT-END */
 
 /* ============================== TIỆN ÍCH UI ============================== */
 const UI = {

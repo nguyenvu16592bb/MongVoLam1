@@ -443,7 +443,7 @@ const NEWGAME_HEROES = [
 ];
 
 const NEWGAME_SPEEDS = [1, 2, 3, 5];
-const NEWGAME_DEFAULT_SETTINGS = { muted: false, autoBattle: true, autoSkill: true, speed: 1 };
+const NEWGAME_DEFAULT_SETTINGS = { muted: false, autoBattle: true, autoSkill: true, speed: 1, clockSpeed: 1, weatherFx: true };
 
 /* ============================== LOGIC THUẦN (test được bằng Node) ============================== */
 
@@ -532,10 +532,15 @@ function ngDefaultSave() {
     inventory: [
       { id: 'i1', name: 'Kim Sáng Dược', icon: '🧪', type: 'Đan dược', desc: 'Hồi 200 Sinh Lực', qty: 5 },
       { id: 'i2', name: 'Tụ Khí Đan', icon: '💊', type: 'Đan dược', desc: '+30 Kinh Nghiệm', qty: 3 },
-      { id: 'i3', name: 'Huyền Thiết Tinh', icon: '💎', type: 'Nguyên liệu', desc: 'Rèn trang bị', qty: 3 }
+      { id: 'i3', name: 'Huyền Thiết Tinh', icon: '💎', type: 'Nguyên liệu', desc: 'Rèn trang bị', qty: 3 },
+      /* INTERACT-BEGIN — 5 Mồi Câu khởi đầu để chơi mini-game câu cá hồ sen. */
+      { id: 'i4', name: 'Mồi Câu', icon: '🪱', type: 'Vật phẩm', desc: 'Mồi câu cá hồ sen, mỗi lần câu tốn 1 mồi', qty: 5 }
     ],
     customProps: [], stats: { battles: 0, wins: 0, kills: 0 },
-    settings: { muted: false, autoBattle: true, autoSkill: true, speed: 1 },
+    settings: { muted: false, autoBattle: true, autoSkill: true, speed: 1, clockSpeed: 1, weatherFx: true },
+    /* ENV-BEGIN — save mới từ Newgame có sẵn đồng hồ + thời tiết mặc định. */
+    worldClock: { hour: 8, day: 1, season: 'xuan' },
+    weather: { kind: 'nang', remain: 180 },
     flags: { tutorial: false, shop: {}, createdVia: '' },
     v: 2
   };
@@ -600,16 +605,19 @@ function ngCreateSave(opts) {
   return { ok: true, save: save, reason: '' };
 }
 
-/* Chuẩn hóa object settings: chỉ nhận đúng 4 field, sai kiểu thì về mặc định.
-   speed chỉ nhận 1/2/3/5, còn lại về 1. */
+/* Chuẩn hóa object settings: chỉ nhận đúng 6 field, sai kiểu thì về mặc định.
+   speed chỉ nhận 1/2/3/5, còn lại về 1. clockSpeed chỉ nhận 0/1/2.
+   (ENV-BEGIN — giữ lại clockSpeed/weatherFx, không làm rơi khi tạo mới/đổi cài đặt.) */
 function ngNormalizeSettings(s) {
   var d = NEWGAME_DEFAULT_SETTINGS;
-  if (!s || typeof s !== 'object') return { muted: d.muted, autoBattle: d.autoBattle, autoSkill: d.autoSkill, speed: d.speed };
+  if (!s || typeof s !== 'object') return { muted: d.muted, autoBattle: d.autoBattle, autoSkill: d.autoSkill, speed: d.speed, clockSpeed: d.clockSpeed, weatherFx: d.weatherFx };
   return {
     muted: !!s.muted,
     autoBattle: s.autoBattle !== false,
     autoSkill: s.autoSkill !== false,
-    speed: NEWGAME_SPEEDS.indexOf(Number(s.speed)) >= 0 ? Number(s.speed) : 1
+    speed: NEWGAME_SPEEDS.indexOf(Number(s.speed)) >= 0 ? Number(s.speed) : 1,
+    clockSpeed: [0, 1, 2].indexOf(Number(s.clockSpeed)) >= 0 ? Number(s.clockSpeed) : 1,
+    weatherFx: s.weatherFx !== false
   };
 }
 /* Đổi một cài đặt trên save (giữ nguyên mọi field khác), trả về settings mới. */
@@ -622,7 +630,7 @@ function ngApplySettings(save, patch) {
 function ngCurrentSettings(storage) {
   var s = ngLoadSave(storage);
   if (s && s.settings) return ngNormalizeSettings(s.settings);
-  return { muted: false, autoBattle: true, autoSkill: true, speed: 1 };
+  return { muted: false, autoBattle: true, autoSkill: true, speed: 1, clockSpeed: 1, weatherFx: true };
 }
 /* Lưu cài đặt: có save thì chỉ đổi settings; chưa có save thì tạo save mặc
    định đầy đủ (để game load được) rồi ghi settings vào. */

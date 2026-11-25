@@ -266,7 +266,9 @@ const SHOP_CATALOG = [
   { id: 'tc05', tab: 'thu-cung', name: 'Dây Cương Thần Mã', icon: '🐴', rarity: 'Hiếm', stat: 'Vào túi: Tọa kỵ', price: 9000, cur: 'silver', desc: 'Dây cương thần mã, cưỡi ngựa như bay.', effect: { kind: 'item', value: 0 } },
   { id: 'tc06', tab: 'thu-cung', name: 'Lồng Đèn Lồng', icon: '🏮', rarity: 'Thường', stat: 'Vào túi: Trang trí', price: 800, cur: 'silver', desc: 'Đèn lồng đỏ treo trước cửa cho may mắn.', effect: { kind: 'item', value: 0 } },
   { id: 'tc07', tab: 'thu-cung', name: 'Bản Đồ Kho Báu', icon: '🗺️', rarity: 'Sử Thi', stat: 'Vào túi: Mở kho báu', price: 25000, cur: 'silver', desc: 'Bản đồ kho báu, theo dấu sẽ thấy vàng.', effect: { kind: 'item', value: 0 } },
-  { id: 'tc08', tab: 'thu-cung', name: 'Lệnh Bài Biện Kinh', icon: '🎟️', rarity: 'Hiếm', stat: 'Vào túi: Thông hành', price: 3000, cur: 'silver', desc: 'Lệnh bài thông hành khắp Biện Kinh Thành.', effect: { kind: 'item', value: 0 } }
+  { id: 'tc08', tab: 'thu-cung', name: 'Lệnh Bài Biện Kinh', icon: '🎟️', rarity: 'Hiếm', stat: 'Vào túi: Thông hành', price: 3000, cur: 'silver', desc: 'Lệnh bài thông hành khắp Biện Kinh Thành.', effect: { kind: 'item', value: 0 } },
+  /* INTERACT-BEGIN — Mồi Câu cho mini-game câu cá hồ sen (mỗi lần câu tốn 1 mồi). */
+  { id: 'tc09', tab: 'thu-cung', name: 'Mồi Câu', icon: '🪱', rarity: 'Thường', stat: 'Vào túi: Câu cá hồ sen', price: 50, cur: 'silver', desc: 'Mồi câu cá hồ sen — mỗi lần câu tốn 1 mồi. Nhận 5 mồi miễn phí mỗi ngày game.', effect: { kind: 'item', value: 0 } }
 ];
 
 /* Gói khuyến mãi: limit 'once' = mỗi người 1 lần, 'daily' = 1 lần/ngày.
@@ -318,7 +320,14 @@ const SHOP_BUNDLES = [
 const SHOP_SELL_FALLBACK = {
   'Kim Sáng Dược': { price: 75, cur: 'silver' },
   'Tụ Khí Đan': { price: 150, cur: 'silver' },
-  'Huyền Thiết Tinh': { price: 250, cur: 'silver' }
+  'Huyền Thiết Tinh': { price: 250, cur: 'silver' },
+  /* INTERACT-BEGIN — đồ câu cá/hái sen/bắt bướm bán lại ở chợ. */
+  'Cá Chép Thường': { price: 150, cur: 'silver' },
+  'Cá Chép Hiếm': { price: 500, cur: 'silver' },
+  'Cá Chép Vàng': { price: 2000, cur: 'silver' },
+  'Hạt Sen': { price: 120, cur: 'silver' },
+  'Lá Sen': { price: 60, cur: 'silver' },
+  'Cánh Bướm': { price: 300, cur: 'silver' }
 };
 
 /* ============================== LOGIC THUẦN (test được bằng Node) ============================== */

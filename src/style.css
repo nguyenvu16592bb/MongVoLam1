@@ -86,6 +86,39 @@ h1,h2,h3,p{margin:0}
 .hud-res{display:flex;gap:6px}
 .world-tools{position:absolute;left:14px;top:clamp(96px,10vw,120px);display:flex;align-items:center;gap:6px;flex-wrap:wrap;max-width:60vw;pointer-events:auto}
 .fps{font-size:var(--ui-s);font-weight:800;color:#e9f6ff;text-shadow:0 1px 3px #000;background:rgba(0,0,0,.35);padding:2px 8px;border-radius:99px}
+/* ENV-BEGIN — pill giờ game/thời tiết/mùa + nút Dịch chuyển (cổng/giếng). */
+.env-pill{font-size:var(--ui-s);font-weight:800;color:#ffe9b0;text-shadow:0 1px 3px #000;
+  background:rgba(0,0,0,.45);border:1px solid rgba(217,168,78,.5);padding:3px 10px;border-radius:99px;white-space:nowrap}
+.teleport-btn{position:absolute;left:50%;bottom:calc(max(8px,env(safe-area-inset-bottom)) + 78px);transform:translateX(-50%);
+  z-index:12;pointer-events:auto;padding:8px 18px;border-radius:99px;font-size:var(--ui);font-weight:900;color:#3b1a02;
+  background:linear-gradient(180deg,#ffe08a,#f0a92b 55%,#b45309);border:2px solid #7a3805;
+  box-shadow:0 6px 16px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.7);white-space:nowrap}
+.teleport-btn:active{transform:translateX(-50%) scale(.96)}
+/* INTERACT-BEGIN — nút hành động khi đứng gần vật tương tác (nằm trên nút
+   Dịch chuyển); bong bóng emote trên đầu nhân vật/NPC; thanh timing câu cá/
+   hái sen; bàn cờ Caro 9×9. */
+.interact-btn{position:absolute;left:50%;bottom:calc(max(8px,env(safe-area-inset-bottom)) + 126px);transform:translateX(-50%);
+  z-index:12;pointer-events:auto;padding:8px 18px;border-radius:99px;font-size:var(--ui);font-weight:900;color:#fff7e0;
+  background:linear-gradient(180deg,#3b82f6,#1d4ed8 55%,#1e3a8a);border:2px solid #93c5fd;
+  box-shadow:0 6px 16px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.5);white-space:nowrap}
+.interact-btn:active{transform:translateX(-50%) scale(.96)}
+.emote-bubble{position:absolute;transform:translate(-50%,-100%);z-index:6;pointer-events:none;
+  font-size:clamp(22px,2.4vw,30px);line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.8));
+  animation:emotefloat 2s ease-out forwards}
+@keyframes emotefloat{0%{opacity:0;margin-top:6px}15%{opacity:1;margin-top:0}75%{opacity:1}100%{opacity:0;margin-top:-14px}}
+.fish-bar{position:relative;height:26px;margin-top:10px;border-radius:99px;overflow:hidden;
+  background:#171310;border:1.5px solid rgba(217,168,78,.6)}
+.fish-zone-green{position:absolute;top:0;bottom:0;left:35%;width:30%;background:rgba(74,222,128,.55)}
+.fish-zone-gold{position:absolute;top:0;bottom:0;left:47%;width:6%;background:rgba(255,215,107,.95)}
+.fish-marker{position:absolute;top:-2px;bottom:-2px;left:0%;width:4px;background:#fff;
+  box-shadow:0 0 8px #fff,0 0 3px #fff}
+.chess-board{display:grid;grid-template-columns:repeat(9,1fr);gap:2px;max-width:360px;margin:0 auto;
+  padding:6px;border-radius:10px;background:#8a5a1c;border:1.5px solid #d9a84e}
+.chess-cell{aspect-ratio:1;border-radius:4px;background:#e9d3a7;border:1px solid rgba(91,43,6,.35);
+  display:grid;place-items:center;font-size:clamp(13px,1.6vw,20px);line-height:1;padding:0}
+.chess-cell.p{color:#111827}
+.chess-cell.ai{color:#b91c1c}
+.chess-cell:active{background:#f5dfa8}
 .mini-btn{font-size:var(--ui-s);font-weight:800;padding:3px 9px;border-radius:8px;
   background:linear-gradient(180deg,rgba(115,32,20,.92),rgba(58,12,8,.95));border:1px solid #d9a84e;color:#ffe4b0;
   transition:filter .15s,transform .15s;box-shadow:0 3px 8px rgba(0,0,0,.5)}
@@ -328,6 +361,13 @@ h1,h2,h3,p{margin:0}
 .bag-cell .bi{font-size:clamp(16px,1.7vw,22px)}
 .bag-cell .bq{position:absolute;right:3px;bottom:2px;font-size:10px;font-weight:900;color:#ffe98a}
 .bag-cell .bn{font-size:clamp(7px,.62vw,9px);color:#e6d6bb;line-height:1.1;max-height:20px;overflow:hidden}
+/* FOLLOW-BEGIN — ô thú cưng cao hơn để chứa nút "Cho đi theo" bấm được
+   bằng cảm ứng (nút 28px, tràn full chiều rộng ô). */
+.bag-cell.pet-cell{aspect-ratio:auto;min-height:118px;padding-bottom:34px}
+.bag-cell.pet-cell .bq{top:3px;bottom:auto}
+.bag-cell .pet-tag{position:absolute;top:3px;left:4px;font-size:9px;font-weight:800;color:#4ade80}
+.bag-cell .pet-follow-btn{position:absolute;left:4px;right:4px;bottom:4px;min-height:28px;padding:2px 4px;font-size:11px;line-height:1.15;white-space:nowrap}
+.bag-cell .pet-follow-btn.on{background:rgba(74,222,128,.18);border-color:#4ade80;color:#bbf7d0}
 
 /* ============================== HỒ SƠ NHÂN VẬT ============================== */
 .info{position:absolute;inset:0;z-index:30;display:none;grid-template-columns:1.02fr 1fr;gap:10px;padding:10px;
@@ -647,3 +687,19 @@ h1,h2,h3,p{margin:0}
 .tag.orb-binh{background:#10b981;border-color:#6ee7b7;color:#ecfdf5}
 .tag.orb-at{background:#3b82f6;border-color:#93c5fd;color:#eff6ff}
 .tag.orb-giap{background:#a855f7;border-color:#d8b4fe;color:#faf5ff}
+
+/* ============================== BẢN ĐỒ KHU VỰC ==============================
+   DISTRICT-BEGIN — panel liệt kê 12 khu vực (modal trong game, mở bằng nút
+   🗺️ trên HUD). Modal cuộn sẵn (.modal-body overflow-y:auto) nên vừa điện thoại. */
+.district-grid{display:grid;grid-template-columns:1fr;gap:8px}
+@media (min-width:720px){.district-grid{grid-template-columns:1fr 1fr}}
+.district-card{min-height:64px;padding:10px 12px;border-radius:10px;cursor:pointer;
+  background:linear-gradient(180deg,#2b1f0e,#1a130a);border:1.5px solid #6b5223}
+.district-card:hover{border-color:rgba(255,215,120,.55)}
+.district-card:active{transform:scale(.98)}
+.district-card .mt{font-weight:800;color:#ffe3ac;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.district-card .ms{font-size:var(--ui-s);color:#c9b795;margin-top:2px;line-height:1.4}
+.district-card.locked{cursor:not-allowed;opacity:.75;background:linear-gradient(180deg,#241d18,#14100c)}
+.district-card.locked .mt{color:#d8cdb8}
+.district-card.here{cursor:default;border-color:rgba(74,222,128,.6)}
+/* DISTRICT-END */

@@ -107,7 +107,7 @@ function fresh() { return shop.shopDefaultSave(); }
   check('loc tab than-binh = 12 mon', shop.shopFilter({ tab: 'than-binh' }).length === 12);
   check('loc do hiem Truyen Thuyet = 12 mon', shop.shopFilter({ rarity: 'Truyền Thuyết' }).length === 12);
   check('tim "kiem" thay mon co kiem', shop.shopFilter({ query: 'kiếm' }).length >= 5, 'n=' + shop.shopFilter({ query: 'kiếm' }).length);
-  check('tong catalogue = 72 mon', shop.SHOP_CATALOG.length === 72, 'n=' + shop.SHOP_CATALOG.length);
+  check('tong catalogue = 73 mon (72 cu + Mồi Câu cho mini-game câu cá)', shop.SHOP_CATALOG.length === 73, 'n=' + shop.SHOP_CATALOG.length);
   check('tong goi = 4', shop.SHOP_BUNDLES.length === 4);
 
   // 11. Đan dược EXP lên cấp đúng công thức game (exp 64/160, +100 -> lên cấp, maxExp 227)
