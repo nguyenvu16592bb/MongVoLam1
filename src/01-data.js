@@ -725,7 +725,8 @@ const State = {
     atk: 68, def: 42, speed: 7.5,
     gold: 455, silver: 40932,
     capacity: 13, maxCapacity: 30,
-    weapon: 'Song Ma Thiết Quyền', armorName: 'Hắc Vân Võ Bào', accessory: 'Ngọc Bội Thanh Long'
+    weapon: 'Song Ma Thiết Quyền', armorName: 'Hắc Vân Võ Bào', accessory: 'Ngọc Bội Thanh Long',
+    look: { gender: 'Nam', color: 'do', hair: 'bui-cao' }, sectDesc: ''
   },
   heroes: HERO_DEFS.map(h => ({ id: h.id, level: h.level, bonus: { hp: 0, atk: 0, def: 0, qi: 0, crit: 0 } })),
   leader: 0,
@@ -739,7 +740,7 @@ const State = {
   customProps: [],
   stats: { battles: 0, wins: 0, kills: 0 },
   settings: { muted: false, autoBattle: true, autoSkill: true, speed: 1 },
-  flags: { tutorial: false }
+  flags: { tutorial: false, createdVia: '', event: { checkin: { lastDate: '', streak: 0, claimed: {} }, daily: {}, weekly: {}, seasonal: {}, boss: {}, arena: {}, redeem: {} } }
 };
 
 const SaveManager = {
@@ -786,7 +787,16 @@ const SaveManager = {
       if (Array.isArray(d.customProps)) State.customProps = d.customProps;
       if (d.stats) Object.assign(State.stats, d.stats);
       if (d.settings) Object.assign(State.settings, d.settings);
-      if (d.flags) Object.assign(State.flags, d.flags);
+      if (d.flags) {
+        Object.assign(State.flags, d.flags);
+        // flags.event: hợp nhất từng nhánh để save cũ (không có event) không mất nhánh mặc định.
+        if (d.flags.event && typeof d.flags.event === 'object') {
+          const ev0 = { checkin: { lastDate: '', streak: 0, claimed: {} }, daily: {}, weekly: {}, seasonal: {}, boss: {}, arena: {}, redeem: {} };
+          State.flags.event = Object.assign(ev0, d.flags.event);
+          if (!State.flags.event.checkin || typeof State.flags.event.checkin !== 'object') State.flags.event.checkin = ev0.checkin;
+          if (!State.flags.event.checkin.claimed || typeof State.flags.event.checkin.claimed !== 'object') State.flags.event.checkin.claimed = {};
+        }
+      }
     } catch (e) { console.warn('[save] load failed', e); }
   },
   reset() {

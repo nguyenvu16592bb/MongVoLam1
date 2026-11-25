@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<!-- NEWGAME: Màn hình chính — Mộng Võ Lâm 3D (Newgame.html)
+     Build từ src/newgame.template.html + src/08-newgame.js (xem tools/build.mjs).
+     Tự chứa, không CDN ngoài, chạy offline, phone-first. -->
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b0805">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23140c07'/%3E%3Ctext x='32' y='45' font-size='36' text-anchor='middle' fill='%23ffd76b'%3E%E5%A4%A2%3C/text%3E%3C/svg%3E">
+<title>Mộng Võ Lâm 3D — Màn Hình Chính</title>
+<style>
+/* NEWGAME-BEGIN */
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html { font-size: 16px; }
+body {
+  font-family: "Palatino Linotype", Georgia, "Times New Roman", serif;
+  background: linear-gradient(180deg, #1a1208 0%, #0b0805 60%, #120d06 100%);
+  color: #f5e9c9; min-height: 100vh; padding-bottom: 40px;
+}
+button { font: inherit; }
+.muted { color: #cbb37a; }
+
+/* ---- Màn tải ---- */
+.ng-screen { display: none; padding: 16px 14px; max-width: 720px; margin: 0 auto; }
+.ng-screen.on { display: block; }
+#loading { text-align: center; padding-top: 18vh; position: relative; overflow: hidden; }
+#loading .logo { font-size: 2.6rem; color: #ffd76b; letter-spacing: 2px; text-shadow: 0 0 24px #f59e0b88; }
+#loading .sub { color: #d8b96a; margin-top: 6px; font-size: 1.05rem; }
+.ng-loadbar-wrap {
+  width: 82%; max-width: 420px; height: 14px; margin: 28px auto 10px;
+  background: #241a0c; border: 1px solid #8a6a2f; border-radius: 99px; overflow: hidden;
+}
+#load-bar {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #b45309, #f59e0b, #fde68a);
+  border-radius: 99px; transition: width .12s linear;
+}
+#load-pct { color: #ffd76b; font-weight: 700; }
+#load-tip { color: #cbb37a; margin-top: 8px; font-size: .95rem; }
+.petal { position: absolute; top: -40px; font-size: 1.4rem; opacity: .85; animation: ng-fall linear infinite; }
+.petal:nth-child(1) { left: 8%; animation-duration: 7s; animation-delay: 0s; }
+.petal:nth-child(2) { left: 26%; animation-duration: 9s; animation-delay: 1.2s; font-size: 1.1rem; }
+.petal:nth-child(3) { left: 48%; animation-duration: 8s; animation-delay: .5s; }
+.petal:nth-child(4) { left: 66%; animation-duration: 10s; animation-delay: 2s; font-size: 1.1rem; }
+.petal:nth-child(5) { left: 84%; animation-duration: 7.5s; animation-delay: .8s; }
+@keyframes ng-fall {
+  0% { transform: translateY(0) rotate(0deg); }
+  100% { transform: translateY(110vh) rotate(340deg); }
+}
+
+/* ---- Khung chung ---- */
+.ng-title { text-align: center; color: #ffd76b; font-size: 1.6rem; letter-spacing: 1px; margin: 8px 0 4px; }
+.ng-sub { text-align: center; color: #cbb37a; font-size: .95rem; margin-bottom: 14px; line-height: 1.5; }
+.ng-card {
+  background: linear-gradient(180deg, #2b1f0e, #1a130a); border: 1px solid #6b5223;
+  border-radius: 14px; padding: 14px; margin-bottom: 12px;
+}
+.ng-card h2 { color: #ffe9ad; font-size: 1.15rem; margin-bottom: 10px; }
+.ng-card h3 { color: #ffd76b; font-size: 1rem; margin: 14px 0 8px; }
+.ng-card h3:first-child { margin-top: 0; }
+.ng-btn {
+  display: block; width: 100%; min-height: 52px; cursor: pointer;
+  font-size: 1.15rem; font-weight: 700; color: #1a1208;
+  background: linear-gradient(180deg, #fde68a, #f59e0b); border: 1px solid #fde68a;
+  border-radius: 12px; padding: 12px 16px; margin-bottom: 10px;
+}
+.ng-btn.dim { opacity: .55; }
+.ng-btn.ghost {
+  background: #241a0c; color: #f5e9c9; border: 1px solid #6b5223; font-weight: 400;
+}
+.ng-btn.small { min-height: 44px; font-size: 1rem; }
+.ng-btn:disabled { opacity: .45; cursor: not-allowed; }
+#menu-saveinfo {
+  text-align: center; color: #cbb37a; font-size: .95rem; line-height: 1.5;
+  background: #00000055; border: 1px solid #6b5223; border-radius: 10px;
+  padding: 10px; margin-bottom: 14px;
+}
+#menu-saveinfo b { color: #ffd76b; }
+.ng-menu-foot { text-align: center; color: #8a744a; font-size: .8rem; margin-top: 16px; line-height: 1.5; }
+
+/* ---- Tạo nhân vật ---- */
+.ng-field label { display: block; color: #ffe9ad; font-weight: 700; margin-bottom: 6px; }
+.ng-name-row { display: flex; gap: 8px; }
+.ng-name-row input {
+  flex: 1; min-width: 0; font: inherit; font-size: 1.1rem; color: #f5e9c9;
+  background: #1c1305; border: 1px solid #6b5223; border-radius: 10px;
+  padding: 10px 12px; min-height: 48px;
+}
+.ng-name-row .ng-btn { width: auto; flex: 0 0 auto; margin-bottom: 0; }
+#ng-name-err { color: #f87171; font-size: .9rem; min-height: 1.2em; margin-top: 4px; }
+.ng-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.ng-chip {
+  font: inherit; font-size: .95rem; cursor: pointer; color: #f5e9c9; min-height: 44px;
+  background: #241a0c; border: 1px solid #6b5223; border-radius: 99px; padding: 9px 14px;
+}
+.ng-chip.on { background: linear-gradient(180deg, #f59e0b, #b45309); color: #fff7e0; border-color: #fde68a; font-weight: 700; }
+.ng-swatches { display: flex; gap: 10px; flex-wrap: wrap; }
+.ng-swatch {
+  width: 44px; height: 44px; border-radius: 50%; cursor: pointer;
+  border: 3px solid #6b5223; padding: 0;
+}
+.ng-swatch.on { border-color: #ffd76b; box-shadow: 0 0 0 2px #ffd76b88, 0 0 12px #f59e0b88; }
+#ng-chibi { text-align: center; padding: 6px 0 2px; }
+.ng-chibi { position: relative; width: 130px; height: 185px; margin: 0 auto; }
+.ng-chibi-hair {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  background: #1e1b4b; border-radius: 50%; z-index: 2;
+}
+.ng-chibi-hair.hair-bui-cao { width: 26px; height: 26px; top: -2px; }
+.ng-chibi-hair.hair-xoa-dai { width: 98px; height: 118px; top: 0; border-radius: 44px 44px 14px 14px; z-index: 0; }
+.ng-chibi-hair.hair-duoi-ngua { width: 24px; height: 64px; top: -2px; border-radius: 12px; }
+.ng-chibi-hair.hair-toc-ngan { width: 72px; height: 28px; top: 6px; border-radius: 36px 36px 0 0; }
+.ng-chibi-hair.hair-dau-troc { display: none; }
+.ng-chibi-face { position: relative; z-index: 1; font-size: 4rem; line-height: 1; }
+.ng-chibi-robe {
+  width: 96px; height: 76px; margin: 2px auto 0; border-radius: 14px 14px 24px 24px;
+  border: 2px solid #00000055; display: flex; align-items: center; justify-content: center;
+  font-size: 1.8rem;
+}
+.ng-chibi-label { margin-top: 6px; font-size: .9rem; color: #cbb37a; }
+.ng-sects { display: grid; grid-template-columns: 1fr; gap: 10px; }
+@media (min-width: 560px) { .ng-sects { grid-template-columns: 1fr 1fr; } }
+.ng-sect, .ng-hero {
+  font: inherit; text-align: left; cursor: pointer; color: #f5e9c9;
+  background: #241a0c; border: 2px solid #6b5223; border-radius: 12px;
+  padding: 12px; min-height: 44px; display: flex; flex-direction: column; gap: 3px;
+}
+.ng-sect.on, .ng-hero.on { border-color: #f59e0b; background: linear-gradient(180deg, #3a2a08, #241a0c); box-shadow: 0 0 0 1px #f59e0b66; }
+.ng-sect b, .ng-hero b { color: #ffe9ad; font-size: 1.05rem; }
+.ng-sect-ic { font-size: 1.5rem; }
+.ng-sect-bonus { color: #7dd3fc; font-size: .9rem; font-weight: 700; }
+.ng-sect-desc { color: #cbb37a; font-size: .88rem; line-height: 1.45; }
+.ng-heroes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ng-hero-grade {
+  align-self: flex-start; font-size: .75rem; font-weight: 700;
+  background: #b45309; color: #fef3c7; border-radius: 99px; padding: 2px 8px;
+}
+.ng-hero span { font-size: .88rem; }
+#ng-preview { background: #00000055; border: 1px solid #8a6a2f; border-radius: 12px; padding: 12px; }
+#ng-preview b { color: #ffe9ad; }
+.ng-stats { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: .95rem; }
+.ng-stats b { color: #ffd76b; }
+.ng-prev-hero { margin-top: 8px; font-size: .95rem; color: #cbb37a; }
+.ng-warn { color: #fca5a5; font-size: .9rem; line-height: 1.5; margin-bottom: 10px; }
+
+/* ---- Cài đặt / Hướng dẫn / Bộ sưu tập / Tạm biệt ---- */
+.ng-setrow {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid #3a2c14;
+}
+.ng-setrow:last-child { border-bottom: none; }
+.ng-setrow span { font-size: 1.02rem; }
+.ng-setbtn {
+  font: inherit; font-weight: 700; cursor: pointer; color: #1a1208; min-height: 44px;
+  background: linear-gradient(180deg, #fde68a, #f59e0b); border: 1px solid #fde68a;
+  border-radius: 10px; padding: 8px 18px; min-width: 96px;
+}
+.ng-setbtn.off { background: #241a0c; color: #cbb37a; border-color: #6b5223; font-weight: 400; }
+.ng-guide p, .ng-guide li { font-size: .98rem; line-height: 1.6; color: #e7d6a4; }
+.ng-guide p { margin-bottom: 10px; }
+.ng-guide ul { padding-left: 20px; margin-bottom: 10px; }
+.ng-guide b { color: #ffd76b; }
+.ng-keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: .95rem; margin-bottom: 10px; }
+.ng-keys b { color: #ffd76b; background: #241a0c; border: 1px solid #6b5223; border-radius: 6px; padding: 2px 8px; text-align: center; }
+#gallery-count { text-align: center; color: #cbb37a; margin-bottom: 12px; }
+.ng-gal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ng-gal {
+  background: #241a0c; border: 1px solid #6b5223; border-radius: 12px; padding: 12px;
+  display: flex; flex-direction: column; gap: 3px; font-size: .9rem;
+}
+.ng-gal.owned { border-color: #f59e0b; }
+.ng-gal b { color: #ffe9ad; font-size: 1rem; }
+.ng-owned { color: #4ade80; font-weight: 700; font-size: .85rem; }
+.ng-locked { color: #8a744a; font-size: .85rem; line-height: 1.4; }
+#bye { text-align: center; padding-top: 16vh; }
+#bye .logo { font-size: 2rem; color: #ffd76b; }
+#bye p { color: #e7d6a4; font-size: 1.05rem; line-height: 1.7; margin: 14px 0; }
+#ng-toast {
+  position: fixed; left: 12px; right: 12px; bottom: 24px; z-index: 30;
+  display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none;
+}
+.ng-toast-item {
+  background: #14532d; color: #dcfce7; border: 1px solid #4ade80; border-radius: 10px;
+  padding: 10px 14px; font-size: .95rem; max-width: 560px; text-align: center;
+  box-shadow: 0 4px 16px #00000088;
+}
+.ng-toast-item.bad { background: #7f1d1d; color: #fee2e2; border-color: #f87171; }
+/* NEWGAME-END */
+</style>
+</head>
+<body>
+
+<!-- Màn tải -->
+<section class="ng-screen on" id="loading">
+  <span class="petal">🌸</span><span class="petal">🌸</span><span class="petal">🌸</span><span class="petal">🌸</span><span class="petal">🌸</span>
+  <div class="logo">🏮 Mộng Võ Lâm 3D</div>
+  <div class="sub">Giang hồ chờ thiếu hiệp đã lâu…</div>
+  <div class="ng-loadbar-wrap"><div id="load-bar"></div></div>
+  <div id="load-pct">0%</div>
+  <div id="load-tip">Đang rèn thần binh…</div>
+</section>
+
+<!-- Menu chính -->
+<section class="ng-screen" id="main-menu">
+  <h1 class="ng-title">🏮 Mộng Võ Lâm 3D</h1>
+  <p class="ng-sub">Thế giới võ hiệp 3D · Biện Kinh Thành · Chiêu mộ đệ tử · Đánh Boss</p>
+  <div id="menu-saveinfo">Chưa có dữ liệu — hãy chọn Chơi Mới để bắt đầu hành trình.</div>
+  <button class="ng-btn" data-act="go-create">⚔️ Chơi Mới</button>
+  <button class="ng-btn" id="menu-continue" data-act="continue">▶️ Tiếp Tục</button>
+  <button class="ng-btn ghost" data-act="go-settings">⚙️ Cài Đặt</button>
+  <button class="ng-btn ghost" data-act="go-guide">📜 Hướng Dẫn</button>
+  <button class="ng-btn ghost" data-act="go-gallery">👥 Bộ Sưu Tập Đệ Tử</button>
+  <button class="ng-btn ghost" data-act="go-bye">🚪 Thoát</button>
+  <div class="ng-menu-foot">Mộng Võ Lâm 3D · Soha · Three.js + PixiJS<br>Lưu cục bộ trong trình duyệt — không cần tài khoản.</div>
+</section>
+
+<!-- Tạo nhân vật -->
+<section class="ng-screen" id="create">
+  <h1 class="ng-title">⚔️ Tạo Nhân Vật</h1>
+  <p class="ng-sub">Đặt tên, chọn môn phái và đệ tử khởi đầu — rồi nhập giang hồ!</p>
+  <div class="ng-card">
+    <div class="ng-field">
+      <label for="ng-name">Tên nhân vật (1–12 ký tự)</label>
+      <div class="ng-name-row">
+        <input id="ng-name" type="text" maxlength="12" placeholder="Ví dụ: Tiêu Dao Sinh" autocomplete="off">
+        <button class="ng-btn small" data-act="suggest-name">🎲 Gợi ý</button>
+      </div>
+      <div id="ng-name-err"></div>
+    </div>
+    <h3>Giới tính</h3>
+    <div class="ng-chips" id="ng-genders"></div>
+    <h3>Ngoại hình chibi — xem trước</h3>
+    <div id="ng-chibi"></div>
+    <h3>Màu áo (chạm để đổi)</h3>
+    <div class="ng-swatches" id="ng-colors"></div>
+    <h3>Kiểu tóc</h3>
+    <div class="ng-chips" id="ng-hairs"></div>
+  </div>
+  <div class="ng-card">
+    <h2>⛩️ Chọn môn phái</h2>
+    <div class="ng-sects" id="ng-sects"></div>
+  </div>
+  <div class="ng-card">
+    <h2>🤝 Chọn đệ tử khởi đầu (làm đội trưởng)</h2>
+    <div class="ng-heroes" id="ng-heroes"></div>
+  </div>
+  <div class="ng-card">
+    <h2>📊 Xem trước chỉ số</h2>
+    <div id="ng-preview"></div>
+  </div>
+  <p class="ng-warn">⚠️ Nhập Giang Hồ sẽ tạo dữ liệu mới và thay thế dữ liệu cũ (nếu có) — cấp độ, đệ tử chiêu mộ và túi đồ cũ sẽ mất.</p>
+  <button class="ng-btn" data-act="start-game">🌄 Nhập Giang Hồ</button>
+  <button class="ng-btn ghost" data-act="go-menu">← Về menu chính</button>
+</section>
+
+<!-- Cài đặt -->
+<section class="ng-screen" id="settings">
+  <h1 class="ng-title">⚙️ Cài Đặt</h1>
+  <p class="ng-sub">Cài đặt lưu chung với dữ liệu game — vào game vẫn giữ nguyên.</p>
+  <div class="ng-card">
+    <div class="ng-setrow"><span>🔊 Âm thanh &amp; hiệu ứng</span><button class="ng-setbtn" id="set-mute" data-act="toggle-mute">Đang bật</button></div>
+    <div class="ng-setrow"><span>⚔️ Tự động đánh</span><button class="ng-setbtn" id="set-auto" data-act="toggle-auto">BẬT</button></div>
+    <div class="ng-setrow"><span>✨ Tự tung chiêu</span><button class="ng-setbtn" id="set-autoskill" data-act="toggle-autoskill">BẬT</button></div>
+    <div class="ng-setrow"><span>💨 Tốc độ trận đấu</span><span class="ng-chips" id="set-speeds"></span></div>
+  </div>
+  <button class="ng-btn ghost" data-act="go-menu">← Về menu chính</button>
+</section>
+
+<!-- Hướng dẫn -->
+<section class="ng-screen" id="guide">
+  <h1 class="ng-title">📜 Hướng Dẫn</h1>
+  <p class="ng-sub">Cách chơi Mộng Võ Lâm 3D trong vài phút.</p>
+  <div class="ng-card ng-guide">
+    <h2>🗺️ Cách chơi</h2>
+    <p><b>1.</b> Tạo nhân vật, chọn môn phái và đệ tử khởi đầu, rồi bấm <b>Nhập Giang Hồ</b>.</p>
+    <p><b>2.</b> Đi dạo thành <b>Biện Kinh</b>, nói chuyện với dân thành để nhận nhiệm vụ (Q).</p>
+    <p><b>3.</b> Mở <b>Chiến Trường</b> (B) để đánh quái qua 10 Battle Map, từ Rừng Trúc U Minh đến Hồ Sen Biển Đông — thắng Boss nhận thưởng lớn.</p>
+    <p><b>4.</b> Ghé <b>Chợ Biện Kinh</b> mua thần binh, đan dược, bí kíp; ghé <b>Đài Tham Bái</b> chiêu mộ thêm đệ tử.</p>
+    <p><b>5.</b> Lên cấp, bồi dưỡng đệ tử, mở khóa đội hình 5 người và khiêu chiến Kim Thiềm Vương.</p>
+    <h2>⌨️ Phím tắt (trong game)</h2>
+    <div class="ng-keys">
+      <b>C</b><span>Mở Hồ sơ nhân vật &amp; đội hình</span>
+      <b>B</b><span>Mở Chiến trường (Battle Map 1–10)</span>
+      <b>Q</b><span>Mở Nhiệm vụ</span>
+      <b>H</b><span>Mở Hướng dẫn trong game</span>
+      <b>Esc</b><span>Đóng bảng đang mở</span>
+    </div>
+    <p class="muted">Trên điện thoại: dùng các nút chạm trên màn hình thay cho phím tắt.</p>
+    <h2>💰 Tiền tệ &amp; chợ</h2>
+    <p><b>Bạc</b> kiếm từ nhiệm vụ và đánh quái; <b>Kim Nguyên Bảo (KNB)</b> là tiền quý, dùng mua đồ hiếm và chiêu mộ cao cấp. <b>Chợ Biện Kinh</b> có 72 món ở 7 gian hàng + 4 gói khuyến mãi, kho hàng hiếm làm mới mỗi giờ, bán lại được 50% giá.</p>
+    <h2>⛩️ Chiêu mộ đệ tử</h2>
+    <p>Ở <b>Đài Tham Bái</b> có 3 gói: <b>Tầm Sư Học Đạo</b> (miễn phí 1 lần/ngày, rồi 5.000 bạc), <b>Danh Môn Cao Đồ</b> (100 KNB), <b>Nhất Đại Tông Sư</b> (250 KNB). Trúng đệ tử đã có sẽ chuyển thành bồi dưỡng (+2 cấp). Tổng cộng 20 đệ tử — xem ở <b>Bộ Sưu Tập</b>.</p>
+    <h2>🎉 Sự kiện</h2>
+    <p>Tham gia <b>Bang chiến</b> và các hoạt động bang hội để nhận thưởng; theo dõi thông báo trong game khi sự kiện mở.</p>
+  </div>
+  <button class="ng-btn ghost" data-act="go-menu">← Về menu chính</button>
+</section>
+
+<!-- Bộ sưu tập -->
+<section class="ng-screen" id="gallery">
+  <h1 class="ng-title">👥 Bộ Sưu Tập Đệ Tử</h1>
+  <p id="gallery-count">Đã mở 0/20 đệ tử</p>
+  <div class="ng-gal-grid" id="gallery-grid"></div>
+  <div style="height:12px"></div>
+  <button class="ng-btn ghost" data-act="go-menu">← Về menu chính</button>
+</section>
+
+<!-- Tạm biệt -->
+<section class="ng-screen" id="bye">
+  <div class="logo">🌸 Hẹn gặp lại, thiếu hiệp! 🌸</div>
+  <p>Giang hồ vẫn ở đây chờ người.<br>Hoa đào Biện Kinh nở rồi tàn, tàn rồi lại nở —<br>chỉ cần quay lại, hành trình vẫn tiếp tục.</p>
+  <p><b>Game đã lưu — bạn có thể đóng tab trình duyệt.</b><br><span class="muted">Mở lại Newgame.html rồi bấm Tiếp Tục để chơi tiếp.</span></p>
+  <button class="ng-btn" data-act="go-menu" style="max-width:320px;margin:0 auto">← Về menu chính</button>
+</section>
+
+<div id="ng-toast"></div>
+
+<script>
+__NEWGAME__
+</script>
+</body>
+</html>

@@ -59,3 +59,25 @@ const shopDest = path.join(root, 'Shop.html');
 writeFileSync(shopDest, shopOut, 'utf8');
 console.log(`OK -> ${shopDest} (${kb(statSync(shopDest).size)} KB)`);
 /* SHOP-END */
+
+/* NEWGAME-BEGIN */
+// Ghép Newgame.html từ src/newgame.template.html + src/08-newgame.js (màn hình chính độc lập).
+const ngTpl = readText(path.join(src, 'newgame.template.html'));
+const ngJs = readText(path.join(src, '08-newgame.js'));
+if (ngJs.includes('</script')) throw new Error('08-newgame.js chua </script');
+const ngOut = ngTpl.replaceAll('__NEWGAME__', () => ngJs);
+const ngDest = path.join(root, 'Newgame.html');
+writeFileSync(ngDest, ngOut, 'utf8');
+console.log(`OK -> ${ngDest} (${kb(statSync(ngDest).size)} KB)`);
+/* NEWGAME-END */
+
+/* EVENT-BEGIN */
+// Ghép Event.html từ src/event.template.html + src/09-event.js (trang sự kiện độc lập).
+const evTpl = readText(path.join(src, 'event.template.html'));
+const evJs = readText(path.join(src, '09-event.js'));
+if (evJs.includes('</script')) throw new Error('09-event.js chua </script');
+const evOut = evTpl.replaceAll('__EVENT__', () => evJs);
+const evDest = path.join(root, 'Event.html');
+writeFileSync(evDest, evOut, 'utf8');
+console.log(`OK -> ${evDest} (${kb(statSync(evDest).size)} KB)`);
+/* EVENT-END */

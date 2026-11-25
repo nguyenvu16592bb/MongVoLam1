@@ -601,6 +601,13 @@ const CharacterManager = {
       dialogue: 'Đài Tham Bái linh ứng — đệ tử hữu duyên sẽ tự tìm đến. Thiếu hiệp muốn thử vận không?'
     });
 
+    this.create({
+      id: 'eventer', name: 'Sứ Giả Sự Kiện', x: 8.2, z: -0.6,
+      robe: '#dc2626', belt: '#facc15', hair: '#1e1b18', isNpc: true, quest: '📅',
+      role: 'event', portrait: '📅',
+      dialogue: 'Sự kiện giang hồ đang mở! Điểm danh hằng ngày, nhiệm vụ ngày, Boss Thế Giới lúc 12h và 20h, Bang Chiến Thứ 7 — thiếu hiệp ghé trang Sự Kiện nhận quà nhé!'
+    });
+
     const town = [
       { name: 'Thiên Địa Hội [MV]', x: -4.2, z: 6.0, robe: '#166534', hair: '#e2e8f0', hat: true, weapon: '#ef4444', guild: 'Bang Thiên Địa' },
       { name: 'Hùng Luckyet', x: -12.5, z: 4.8, robe: '#15803d', hair: '#cbd5e1', hat: true, weapon: '#ef4444' },
@@ -826,6 +833,7 @@ const World = {
             ${npc.role === 'arena' ? `<button class="btn red" data-act="open-battle">⚔️ Chọn chiến trường</button>` : ''}
             ${npc.role === 'elder' ? `<button class="btn" data-act="open-info">📜 Mở hồ sơ đội hình</button>` : ''}
             ${npc.role === 'recruit' ? `<button class="btn" data-act="open-recruit">🙏 Tham Bái Chiêu Mộ</button>` : ''}
+            ${npc.role === 'event' ? `<button class="btn" data-act="open-event">📅 Mở trang Sự Kiện</button>` : ''}
             <button class="btn dark" data-act="close-dialogue">Đa tạ tiền bối</button>
           </div>
         </div>

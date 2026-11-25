@@ -160,6 +160,7 @@ Object.assign(UI, {
       <div class="side-dock">
         <button class="side-btn" data-act="open-info" title="Hồ sơ nhân vật (C)">🥋</button>
         <button class="side-btn" data-act="open-recruit" title="Tham Bái Chiêu Mộ">⛩️</button>
+        <button class="side-btn" data-act="open-event" title="Sự Kiện">📅</button>
         <button class="side-btn" data-act="open-skills" title="Tàng Kinh Các">🐉</button>
         <button class="side-btn" data-act="open-mail" title="Thư tín">✉️<i class="dot"></i></button>
         <button class="side-btn" data-act="open-chat" title="Kênh thế giới">💬</button>
@@ -643,6 +644,7 @@ Object.assign(UI, {
         <div class="mrow"><span>Tự động đánh</span><button class="btn sm" data-act="toggle-auto">${State.settings.autoBattle ? 'BẬT' : 'TẮT'}</button></div>
         <div class="mrow"><span>Tự tung chiêu</span><button class="btn sm" data-act="toggle-auto-skill">${State.settings.autoSkill ? 'BẬT' : 'TẮT'}</button></div>
         <div class="mrow"><span>Lưu tiến trình</span><button class="btn sm" data-act="save-now">Lưu ngay</button></div>
+        <div class="mrow"><span>Về màn hình chính</span><button class="btn sm" data-act="open-newgame">Mở Newgame</button></div>
         <div class="mrow"><span>Khôi phục dữ liệu ban đầu</span><button class="btn sm red" data-act="reset-ask">Đặt lại</button></div>
         <p class="muted tiny">Mộng Võ Lâm 3D · Soha · Three.js + PixiJS · lưu cục bộ trong trình duyệt.</p>`;
       return { icon: '⚙️', title: 'Cài đặt hệ thống', body };
@@ -838,6 +840,12 @@ Object.assign(UI, {
         /* SHOP-BEGIN */
         case 'open-shop': SaveManager.save(); location.href = 'Shop.html'; break;
         /* SHOP-END */
+        /* NEWGAME-BEGIN */
+        case 'open-newgame': SaveManager.save(); location.href = 'Newgame.html'; break;
+        /* NEWGAME-END */
+        /* EVENT-BEGIN */
+        case 'open-event': SaveManager.save(); location.href = 'Event.html'; break;
+        /* EVENT-END */
         case 'open-bag': this.openModal('bag'); break;
         case 'open-quests': this.openModal('quests'); break;
         case 'open-skills': this.openModal('skills'); break;

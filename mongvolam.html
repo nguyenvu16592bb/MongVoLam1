@@ -3675,7 +3675,8 @@ const State = {
     atk: 68, def: 42, speed: 7.5,
     gold: 455, silver: 40932,
     capacity: 13, maxCapacity: 30,
-    weapon: 'Song Ma Thiết Quyền', armorName: 'Hắc Vân Võ Bào', accessory: 'Ngọc Bội Thanh Long'
+    weapon: 'Song Ma Thiết Quyền', armorName: 'Hắc Vân Võ Bào', accessory: 'Ngọc Bội Thanh Long',
+    look: { gender: 'Nam', color: 'do', hair: 'bui-cao' }, sectDesc: ''
   },
   heroes: HERO_DEFS.map(h => ({ id: h.id, level: h.level, bonus: { hp: 0, atk: 0, def: 0, qi: 0, crit: 0 } })),
   leader: 0,
@@ -3689,7 +3690,7 @@ const State = {
   customProps: [],
   stats: { battles: 0, wins: 0, kills: 0 },
   settings: { muted: false, autoBattle: true, autoSkill: true, speed: 1 },
-  flags: { tutorial: false }
+  flags: { tutorial: false, createdVia: '', event: { checkin: { lastDate: '', streak: 0, claimed: {} }, daily: {}, weekly: {}, seasonal: {}, boss: {}, arena: {}, redeem: {} } }
 };
 
 const SaveManager = {
@@ -3736,7 +3737,16 @@ const SaveManager = {
       if (Array.isArray(d.customProps)) State.customProps = d.customProps;
       if (d.stats) Object.assign(State.stats, d.stats);
       if (d.settings) Object.assign(State.settings, d.settings);
-      if (d.flags) Object.assign(State.flags, d.flags);
+      if (d.flags) {
+        Object.assign(State.flags, d.flags);
+        // flags.event: hợp nhất từng nhánh để save cũ (không có event) không mất nhánh mặc định.
+        if (d.flags.event && typeof d.flags.event === 'object') {
+          const ev0 = { checkin: { lastDate: '', streak: 0, claimed: {} }, daily: {}, weekly: {}, seasonal: {}, boss: {}, arena: {}, redeem: {} };
+          State.flags.event = Object.assign(ev0, d.flags.event);
+          if (!State.flags.event.checkin || typeof State.flags.event.checkin !== 'object') State.flags.event.checkin = ev0.checkin;
+          if (!State.flags.event.checkin.claimed || typeof State.flags.event.checkin.claimed !== 'object') State.flags.event.checkin.claimed = {};
+        }
+      }
     } catch (e) { console.warn('[save] load failed', e); }
   },
   reset() {
@@ -4494,6 +4504,13 @@ const CharacterManager = {
       dialogue: 'Đài Tham Bái linh ứng — đệ tử hữu duyên sẽ tự tìm đến. Thiếu hiệp muốn thử vận không?'
     });
 
+    this.create({
+      id: 'eventer', name: 'Sứ Giả Sự Kiện', x: 8.2, z: -0.6,
+      robe: '#dc2626', belt: '#facc15', hair: '#1e1b18', isNpc: true, quest: '📅',
+      role: 'event', portrait: '📅',
+      dialogue: 'Sự kiện giang hồ đang mở! Điểm danh hằng ngày, nhiệm vụ ngày, Boss Thế Giới lúc 12h và 20h, Bang Chiến Thứ 7 — thiếu hiệp ghé trang Sự Kiện nhận quà nhé!'
+    });
+
     const town = [
       { name: 'Thiên Địa Hội [MV]', x: -4.2, z: 6.0, robe: '#166534', hair: '#e2e8f0', hat: true, weapon: '#ef4444', guild: 'Bang Thiên Địa' },
       { name: 'Hùng Luckyet', x: -12.5, z: 4.8, robe: '#15803d', hair: '#cbd5e1', hat: true, weapon: '#ef4444' },
@@ -4719,6 +4736,7 @@ const World = {
             ${npc.role === 'arena' ? `<button class="btn red" data-act="open-battle">⚔️ Chọn chiến trường</button>` : ''}
             ${npc.role === 'elder' ? `<button class="btn" data-act="open-info">📜 Mở hồ sơ đội hình</button>` : ''}
             ${npc.role === 'recruit' ? `<button class="btn" data-act="open-recruit">🙏 Tham Bái Chiêu Mộ</button>` : ''}
+            ${npc.role === 'event' ? `<button class="btn" data-act="open-event">📅 Mở trang Sự Kiện</button>` : ''}
             <button class="btn dark" data-act="close-dialogue">Đa tạ tiền bối</button>
           </div>
         </div>
@@ -7054,6 +7072,7 @@ Object.assign(UI, {
       <div class="side-dock">
         <button class="side-btn" data-act="open-info" title="Hồ sơ nhân vật (C)">🥋</button>
         <button class="side-btn" data-act="open-recruit" title="Tham Bái Chiêu Mộ">⛩️</button>
+        <button class="side-btn" data-act="open-event" title="Sự Kiện">📅</button>
         <button class="side-btn" data-act="open-skills" title="Tàng Kinh Các">🐉</button>
         <button class="side-btn" data-act="open-mail" title="Thư tín">✉️<i class="dot"></i></button>
         <button class="side-btn" data-act="open-chat" title="Kênh thế giới">💬</button>
@@ -7537,6 +7556,7 @@ Object.assign(UI, {
         <div class="mrow"><span>Tự động đánh</span><button class="btn sm" data-act="toggle-auto">${State.settings.autoBattle ? 'BẬT' : 'TẮT'}</button></div>
         <div class="mrow"><span>Tự tung chiêu</span><button class="btn sm" data-act="toggle-auto-skill">${State.settings.autoSkill ? 'BẬT' : 'TẮT'}</button></div>
         <div class="mrow"><span>Lưu tiến trình</span><button class="btn sm" data-act="save-now">Lưu ngay</button></div>
+        <div class="mrow"><span>Về màn hình chính</span><button class="btn sm" data-act="open-newgame">Mở Newgame</button></div>
         <div class="mrow"><span>Khôi phục dữ liệu ban đầu</span><button class="btn sm red" data-act="reset-ask">Đặt lại</button></div>
         <p class="muted tiny">Mộng Võ Lâm 3D · Soha · Three.js + PixiJS · lưu cục bộ trong trình duyệt.</p>`;
       return { icon: '⚙️', title: 'Cài đặt hệ thống', body };
@@ -7732,6 +7752,12 @@ Object.assign(UI, {
         /* SHOP-BEGIN */
         case 'open-shop': SaveManager.save(); location.href = 'Shop.html'; break;
         /* SHOP-END */
+        /* NEWGAME-BEGIN */
+        case 'open-newgame': SaveManager.save(); location.href = 'Newgame.html'; break;
+        /* NEWGAME-END */
+        /* EVENT-BEGIN */
+        case 'open-event': SaveManager.save(); location.href = 'Event.html'; break;
+        /* EVENT-END */
         case 'open-bag': this.openModal('bag'); break;
         case 'open-quests': this.openModal('quests'); break;
         case 'open-skills': this.openModal('skills'); break;
