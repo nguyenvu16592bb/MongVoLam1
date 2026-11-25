@@ -172,6 +172,17 @@ const Engine = {
     this.buildLantern(-10.5, -2.5);
     this.buildLantern(8.5, -6.5);
 
+    // Đài Tham Bái — cạnh Tiên Cô (x -12, z -6): bệ đá + 2 đèn lồng
+    const shrineBase = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.9, .5, 12), trimStoneMat);
+    shrineBase.position.set(-12, .25, -7.6); shrineBase.receiveShadow = true; this.scene.add(shrineBase);
+    const shrineAltar = new THREE.Mesh(new THREE.BoxGeometry(1.4, .9, .7), redWoodMat);
+    shrineAltar.position.set(-12, .95, -7.6); shrineAltar.castShadow = true; this.scene.add(shrineAltar);
+    const shrineTrim = new THREE.Mesh(new THREE.BoxGeometry(1.5, .1, .8), goldTrimMat);
+    shrineTrim.position.set(-12, 1.45, -7.6); this.scene.add(shrineTrim);
+    this.buildLantern(-13.6, -7.6);
+    this.buildLantern(-10.4, -7.6);
+    this.addCollider(-13.6, -10.4, -8.4, -6.8);
+
     const lotus = [
       [-11, 9], [-9, 10.5], [-13, 11.2], [-7.5, 8.8], [-10.2, 12.5], [-6, 11.5],
       [11.2, 8.2], [12.5, 9.6], [10.4, 10.2], [13.5, 7.8]
@@ -583,6 +594,13 @@ const CharacterManager = {
       dialogue: 'Tàng Kinh Các lưu giữ hồ sơ của mọi cao thủ trong đội hình. Muốn xem tư chất, duyên phận hay bồi dưỡng đệ tử, cứ mở hồ sơ nhân vật.'
     });
 
+    this.create({
+      id: 'recruiter', name: 'Tiên Cô Tham Bái', x: -12, z: -6,
+      robe: '#a855f7', belt: '#facc15', hair: '#f8fafc', isNpc: true, quest: '🙏',
+      role: 'recruit', portrait: '🙏',
+      dialogue: 'Đài Tham Bái linh ứng — đệ tử hữu duyên sẽ tự tìm đến. Thiếu hiệp muốn thử vận không?'
+    });
+
     const town = [
       { name: 'Thiên Địa Hội [MV]', x: -4.2, z: 6.0, robe: '#166534', hair: '#e2e8f0', hat: true, weapon: '#ef4444', guild: 'Bang Thiên Địa' },
       { name: 'Hùng Luckyet', x: -12.5, z: 4.8, robe: '#15803d', hair: '#cbd5e1', hat: true, weapon: '#ef4444' },
@@ -807,6 +825,7 @@ const World = {
             ${npc.role === 'merchant' ? `<button class="btn" data-act="merchant-shop">🛒 Mở sạp chợ</button>` : ''}
             ${npc.role === 'arena' ? `<button class="btn red" data-act="open-battle">⚔️ Chọn chiến trường</button>` : ''}
             ${npc.role === 'elder' ? `<button class="btn" data-act="open-info">📜 Mở hồ sơ đội hình</button>` : ''}
+            ${npc.role === 'recruit' ? `<button class="btn" data-act="open-recruit">🙏 Tham Bái Chiêu Mộ</button>` : ''}
             <button class="btn dark" data-act="close-dialogue">Đa tạ tiền bối</button>
           </div>
         </div>

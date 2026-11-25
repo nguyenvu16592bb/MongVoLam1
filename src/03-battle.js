@@ -115,8 +115,9 @@ const Battle = {
     this.arenaGroup = new THREE.Group();
     scene.add(this.arenaGroup);
     this.arena = key;
-    if (key === 'buddha') this.buildBuddha();
-    else if (key === 'city') this.buildCity();
+    const b = (ARENAS[key] && ARENAS[key].builder) || key;
+    if (b === 'buddha') this.buildBuddha();
+    else if (b === 'city') this.buildCity();
     else this.buildBamboo();
     ArenaUI.mark(key);
   },
@@ -358,7 +359,7 @@ const Battle = {
     const pos = [[-5.4, 2.6], [-4.2, 5.0], [-6.4, .6], [-5.0, 6.6]];
     const order = this.heroOrder();
     order.forEach((hi, i) => {
-      const h = HERO_DEFS[hi];
+      const h = heroById(State.heroes[hi].id) || HERO_DEFS[0];
       const st = heroStats(h.id);
       const maxHp = Math.round(5600 + h.level * 11);
       const atk = Math.round(520 + h.level * 1.62);

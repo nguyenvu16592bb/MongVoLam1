@@ -26,6 +26,11 @@ Mở [mongvolam.html](mongvolam.html) là chơi (không cần server, không c�
 5. Bước qua **cầu đá hồ sen** → hoàn thành q3.
 6. Mọi tiến trình lưu vào `localStorage` của trình duyệt; **Cài đặt → Đặt lại** để chơi từ đầu.
 
+## Chọn chiến trường (8 map) & Chiêu mộ đệ tử
+
+- **Chọn map:** gặp **Võ Sư Lôi Đài**, bấm **H. Động / Tỷ Võ Đài** hoặc phím `B` → lưới 8 map (Rừng Trúc, Đài Phật, Biện Kinh + Vân Mộng Đầm, Kiếm Linh Cốc, Xanh Tử Nam, Môn Quan, Thiên Hỏa Đỉnh). Chạm một map để xem huy hiệu, boss trấn giữ, cấp đề nghị (chỉ hiển thị, không khóa map), vật phẩm rơi và thưởng EXP/bạc/KNB, rồi bấm **⚔️ Xuất Chiến**. Độ khó tính theo hệ số quái: ≤1.5 Dễ, ≤2.5 Trung, còn lại Khó. Map mới dùng lại 3 cảnh 3D có sẵn (trúc / Phật / thành); Thiên Hỏa Đỉnh là map boss cuối. Đổi arena giữa trận vẫn dùng 3 tab cũ trong HUD chiến trường.
+- **Chiêu mộ:** gặp **Tiên Cô Tham Bái** ở Đài Tham Bái (phía tây quảng trường, cạnh bệ đá + 2 đèn lồng) hoặc bấm nút **⛩️** ở cột dọc bên phải màn hình thế giới. 3 gói: **Tầm Sư Học Đạo** (miễn phí 1 lượt/ngày, sau đó 5.000 bạc/lần; Bính 70% / Ất 30%), **Danh Môn Cao Đồ** (100 KNB; Giáp 25% / Ất 50% / Bính 25%), **Nhất Đại Tông Sư** (250 KNB; Giáp 65% / Ất 35%). 7 đệ tử mới: Lệnh Hồ Xung, Nghi Lâm (Bính), Nhậm Doanh Doanh, Dương Quá (Ất), Đông Phương Bất Bại, Độc Cô Cầu Bại, Tiểu Long Nữ (Giáp). Trúng đệ tử đã có sẽ chuyển thành bồi dưỡng (+2 cấp). **Lưu ý:** đệ tử mới chỉ ra trận khi làm đội trưởng — mở Hồ sơ (`C`), chọn đệ tử, bấm **Xuất Chiến**. Tiến trình chiêu mộ lưu cùng save game (phiên bản save v2, vẫn đọc được save cũ v1).
+
 ## Kỹ thuật
 
 - Một `THREE.WebGLRenderer` dùng chung cho thế giới (camera orthographic) và chiến trường (camera perspective); hồ sơ dùng canvas + renderer riêng, chỉ chạy khi mở.

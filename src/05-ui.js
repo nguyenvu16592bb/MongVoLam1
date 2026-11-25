@@ -159,6 +159,7 @@ Object.assign(UI, {
 
       <div class="side-dock">
         <button class="side-btn" data-act="open-info" title="Hồ sơ nhân vật (C)">🥋</button>
+        <button class="side-btn" data-act="open-recruit" title="Tham Bái Chiêu Mộ">⛩️</button>
         <button class="side-btn" data-act="open-skills" title="Tàng Kinh Các">🐉</button>
         <button class="side-btn" data-act="open-mail" title="Thư tín">✉️<i class="dot"></i></button>
         <button class="side-btn" data-act="open-chat" title="Kênh thế giới">💬</button>
@@ -303,7 +304,7 @@ Object.assign(UI, {
     if (!Battle.active || !Battle.allies.length) return;
     const leader = Battle.allies[0];
     if (!leader) return;
-    const hero = HERO_DEFS[leader.heroIndex || 0];
+    const hero = heroById(State.heroes[leader.heroIndex || 0].id) || HERO_DEFS[0];
     const st = heroStats(hero.id);
     const set = (id, v) => {
       const el = document.getElementById(id);
@@ -414,6 +415,14 @@ Object.assign(UI, {
     m.setAttribute('aria-hidden', 'true');
   },
 
+  mapDetailHTML(a) {
+    return `<div class="mt"><span class="tag">${esc(a.badge)}</span>${a.isBoss ? '<span class="tag red">🔥 BOSS CUỐI</span>' : ''}</div>
+      <div class="ms" style="margin-top:4px">👹 Trấn giữ: <b style="color:#ffe3ac">${esc(a.boss)}</b></div>
+      <div class="ms">🎖️ Cấp đề nghị: ${esc(a.recLvl)} <span class="muted">(chỉ hiển thị, không khóa map)</span></div>
+      <div class="ms">🎁 Vật phẩm rơi: ${esc(a.drops)}</div>
+      <p style="margin-top:4px">${esc(a.desc)}</p>`;
+  },
+
   modalHTML(kind, d) {
     const p = State.player;
     if (kind === 'tip') {
@@ -421,7 +430,7 @@ Object.assign(UI, {
       return { icon: '📖', title: title, body: `<p style="line-height:1.7">${esc(body)}</p>` };
     }
     if (kind === 'gear') {
-      const h = HERO_DEFS[Info.index];
+      const h = heroById(State.heroes[Info.index].id) || HERO_DEFS[0];
       const meta = GEAR_META[d.slot] || GEAR_META.weapon;
       const name = h[d.slot] || meta.label;
       const lv = GEAR_LV[d.slot] || 1;
@@ -436,21 +445,82 @@ Object.assign(UI, {
       return { icon: meta.icon, title: meta.label + ' · ' + name, body };
     }
     if (kind === 'fate') {
-      const h = HERO_DEFS[Info.index];
+      const h = heroById(State.heroes[Info.index].id) || HERO_DEFS[0];
       const body = `<p class="muted">Đã kích hoạt ${h.fates.filter(f => f[2]).length}/${h.fates.length} duyên phận của ${esc(h.name)}.</p>` +
         h.fates.map(f => `<div class="mrow"><div><div class="mt">${f[2] ? '🔆' : '🔅'} ${esc(f[0])} ${f[2] ? '<span class="tag green">Đã kích hoạt</span>' : '<span class="tag red">Chưa</span>'}</div><div class="ms">${esc(f[1])}</div></div></div>`).join('');
       return { icon: '🔆', title: 'Duyên phận · ' + h.name, body };
     }
     if (kind === 'arena') {
-      const body = Object.keys(ARENAS).map(k => {
+      const diff = a => a.mul <= 1.5 ? ['Dễ', 'green'] : a.mul <= 2.5 ? ['Trung', 'blue'] : ['Khó', 'red'];
+      const sel = (UI._selectedArena && ARENAS[UI._selectedArena]) ? UI._selectedArena
+        : (ARENAS[Battle.arena] ? Battle.arena : 'bamboo');
+      UI._selectedArena = sel;
+      const cards = Object.keys(ARENAS).map(k => {
         const a = ARENAS[k];
-        return `<div class="mrow">
-          <div><div class="mt">${a.icon} ${a.name} <span class="tag ${k === 'city' ? 'red' : k === 'buddha' ? 'blue' : 'green'}">${k === 'city' ? 'Khó' : k === 'buddha' ? 'Trung' : 'Dễ'}</span></div>
-          <div class="ms">${a.tip}<br>Thưởng: +${fmt(a.exp)} EXP · +${fmt(a.silver)} bạc · ${a.gold} KNB</div></div>
-          <button class="btn" data-act="arena-start" data-arena="${k}">Khiêu chiến</button>
+        const [label, cls] = diff(a);
+        return `<div class="map-card ${k === sel ? 'on' : ''} ${a.isBoss ? 'boss' : ''}" data-act="map-select" data-arena="${k}" role="button" tabindex="0">
+          <div class="mt"><span style="font-size:18px">${a.icon}</span> ${esc(a.name)} <span class="tag ${cls}">${label}</span></div>
+          <div class="ms">${esc(a.tip)}</div>
+          <div class="ms" style="color:#ffd97a">+${fmt(a.exp)} EXP · +${fmt(a.silver)} bạc · ${a.gold} KNB</div>
         </div>`;
       }).join('');
-      return { icon: '⚔️', title: 'Chọn chiến trường', body: `<p class="muted" style="margin-bottom:8px">Ba chiến trường, ba độ khó. Đánh bại 3 đợt ma giáo để nhận thưởng lớn.</p>${body}` };
+      const body = `<p class="muted" style="margin-bottom:8px">Tám chiến trường, ba độ khó. Chạm vào một map để xem chi tiết, rồi Xuất Chiến để đánh 3 đợt ma giáo nhận thưởng lớn.</p>
+        <div class="map-grid">${cards}</div>
+        <div class="map-detail" id="map-detail">${this.mapDetailHTML(ARENAS[sel])}</div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+          <button class="btn red btn-lg" id="map-start-btn" data-act="arena-start" data-arena="${sel}">⚔️ Xuất Chiến</button>
+          <button class="btn dark btn-lg" data-act="close-modal">← Quay lại</button>
+        </div>`;
+      return { icon: '⚔️', title: 'Chọn chiến trường', body };
+    }
+    if (kind === 'recruit') {
+      const orb = t => t === 'Giáp' ? 'orb-giap' : t === 'Ất' ? 'orb-at' : 'orb-binh';
+      const price = t => {
+        const pool = RECRUIT_POOLS[t];
+        if (t === 1) return Recruit.freeLeft() > 0
+          ? `<span style="color:#4ade80">Miễn phí hôm nay (${Recruit.freeLeft()}/1 lượt)</span>`
+          : `5.000 bạc / lần`;
+        return `${pool.costGold} KNB / lần`;
+      };
+      const rates = t => RECRUIT_POOLS[t].rates.map(r => `${r.grade} ${r.w}%`).join(' · ');
+      const body = `<div class="mrow"><span>Ngân quỹ hiện có</span><b>🪙 ${fmtFull(p.gold)} · ⚪ ${fmtFull(p.silver)}</b></div>
+        <p class="muted" style="margin-bottom:8px">Đài Tham Bái linh ứng — đệ tử hữu duyên sẽ tự tìm đến. Trúng đệ tử đã có sẽ chuyển thành bồi dưỡng (+2 cấp). Đệ tử mới ra trận khi làm đội trưởng (mở Hồ sơ → chọn → Xuất Chiến).</p>
+        <div class="recruit-grid">${[1, 2, 3].map(t => {
+          const pool = RECRUIT_POOLS[t];
+          return `<div class="recruit-card">
+            <div class="mt" style="font-weight:800;color:#ffe3ac">${pool.name}</div>
+            <div class="ms" style="margin:4px 0">Tỉ lệ: ${rates(t)}</div>
+            <div class="ms" style="margin-bottom:8px">${price(t)}</div>
+            <div style="display:flex;gap:4px;justify-content:center;margin-bottom:8px">
+              ${pool.rates.map(r => `<span class="tag ${orb(r.grade)}">${r.grade}</span>`).join('')}
+            </div>
+            <button class="btn btn-lg" data-act="recruit-draw" data-tier="${t}">🙏 Tham Bái</button>
+          </div>`;
+        }).join('')}</div>`;
+      return { icon: '⛩️', title: 'Tham Bái Chiêu Mộ', body };
+    }
+    if (kind === 'recruit-result') {
+      const h = heroById(d.id) || HERO_DEFS[0];
+      const st = heroStats(h.id);
+      const orbCls = h.type === 'Giáp' ? 'orb-giap' : h.type === 'Ất' ? 'orb-at' : 'orb-binh';
+      const body = `<div style="text-align:center">
+          <div style="width:96px;height:96px;margin:0 auto;border-radius:12px;overflow:hidden;border:2px solid #f0c860">${heroAvatarSVG(h, 'rec')}</div>
+          <h3 style="margin-top:8px;color:#ffd76b;font-size:20px">${esc(h.name)}</h3>
+          <div><span class="tag ${orbCls}">${h.type}</span> <span class="tag">${esc(h.title)}</span> <span class="tag">Lv.${(State.heroes.find(x => x.id === h.id) || { level: h.level }).level}</span></div>
+          <div class="ms" style="margin-top:6px">${esc(h.sect)} · Thiên phú: <b style="color:#ffe3ac">${esc(h.innate)}</b></div>
+          <div class="mrow" style="margin-top:10px;justify-content:space-around;text-align:center">
+            <div><div class="tiny muted">Mệnh</div><b>${fmt(st.hp)}</b></div>
+            <div><div class="tiny muted">Công</div><b>${fmt(st.atk)}</b></div>
+            <div><div class="tiny muted">Thủ</div><b>${fmt(st.def)}</b></div>
+            <div><div class="tiny muted">Khí</div><b>${fmt(st.qi)}</b></div>
+          </div>
+          <p class="muted" style="margin-top:8px">Đã vào đội hình — mở Hồ sơ, chọn làm đội trưởng để xuất chiến.</p>
+          <div style="display:flex;gap:8px;justify-content:center;margin-top:12px">
+            <button class="btn btn-lg" data-act="recruit-confirm">📜 Mở hồ sơ</button>
+            <button class="btn dark btn-lg" data-act="close-modal">Để sau</button>
+          </div>
+        </div>`;
+      return { icon: '🙏', title: 'Chiêu mộ thành công!', body };
     }
     if (kind === 'shop') {
       const body = `<div class="mrow"><span>Ngân quỹ hiện có</span><b>🪙 ${fmtFull(p.gold)} · ⚪ ${fmtFull(p.silver)}</b></div>
@@ -717,6 +787,25 @@ Object.assign(UI, {
         case 'cultivate': Info.cultivate(); break;
         case 'deploy': Info.deploy(); break;
         case 'open-battle': case 'open-arena-modal': this.openModal('arena'); break;
+        case 'map-select': {
+          const key = el.dataset.arena;
+          if (!ARENAS[key]) break;
+          UI._selectedArena = key;
+          $$('.map-card').forEach(c => c.classList.toggle('on', c.dataset.arena === key));
+          const det = $('#map-detail');
+          if (det) det.innerHTML = this.mapDetailHTML(ARENAS[key]);
+          const startBtn = $('#map-start-btn');
+          if (startBtn) startBtn.dataset.arena = key;
+          break;
+        }
+        case 'open-recruit': this.openModal('recruit'); break;
+        case 'recruit-draw': Recruit.draw(+el.dataset.tier); break;
+        case 'recruit-confirm': {
+          this.closeModal();
+          const idx = (Recruit._lastIndex != null) ? Recruit._lastIndex : State.leader;
+          Info.open(idx);
+          break;
+        }
         case 'arena-start': this.closeModal(); Battle.start(el.dataset.arena); break;
         case 'arena': if (Battle.active) Battle.start(el.dataset.arena); break;
         case 'open-shop': this.openModal('shop'); break;

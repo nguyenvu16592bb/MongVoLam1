@@ -157,6 +157,100 @@ const HERO_DEFS = [
   }
 ];
 
+/* Đệ tử chiêu mộ tại Đài Tham Bái (cùng shape field như HERO_DEFS). */
+const RECRUIT_DEFS = [
+  {
+    id: 'lenhho', name: 'Lệnh Hồ Xung', title: 'Thiếu Niên Kiếm Khách', sect: 'Hoa Sơn', type: 'Bính',
+    level: 120, ribbon: '#34d399', robe: '#065f46', hair: '#1e293b', mask: null,
+    weapon: 'Hoa Sơn Trường Kiếm', hat: 'Hoa Sơn Thanh Quan', armor: 'Hoa Sơn Thanh Bào', ring: 'Tiếu Ngạo Ngọc Bội',
+    hp: 950000000, atk: 22000000, def: 18000000, qi: 20000000, crit: 18000,
+    bio: 'Đại đệ tử Hoa Sơn phái, kiếm pháp phóng khoáng, tính tình hào sảng, rượu ngon bạn hiền khắp giang hồ.',
+    innate: 'Hoa Sơn Kiếm Pháp',
+    fates: [
+      ['Tiếu Ngạo Giang Hồ', 'ra trận cùng Nhậm Doanh Doanh được +25% Khí', true],
+      ['Hoa Sơn Kiếm Tông', 'trang bị Hoa Sơn Trường Kiếm được +24% Công', true]
+    ]
+  },
+  {
+    id: 'nghlam', name: 'Nghi Lâm', title: 'Tiểu Sư Muội', sect: 'Hằng Sơn', type: 'Bính',
+    level: 120, ribbon: '#6ee7b7', robe: '#0f766e', hair: '#0f172a', mask: null,
+    weapon: 'Hằng Sơn Phất Trần', hat: 'Hằng Sơn Ni Cô', armor: 'Hằng Sơn Tăng Bào', ring: 'Thanh Tâm Mộc Ngư',
+    hp: 900000000, atk: 20000000, def: 22000000, qi: 26000000, crit: 15000,
+    bio: 'Tiểu sư muội Hằng Sơn phái, tâm tính thuần khiết, tinh thông Hằng Sơn tâm pháp, trị thương cứu người.',
+    innate: 'Hằng Sơn Tâm Pháp',
+    fates: [
+      ['Sư Muội Đồng Môn', 'ra trận cùng Lệnh Hồ Xung được +22% Thủ', true],
+      ['Hằng Sơn Từ Bi', 'trang bị Thanh Tâm Mộc Ngư được +20% Mệnh', true]
+    ]
+  },
+  {
+    id: 'doanh', name: 'Nhậm Doanh Doanh', title: 'Thánh Cô', sect: 'Nhật Nguyệt Thần Giáo', type: 'Ất',
+    level: 200, ribbon: '#38bdf8', robe: '#1e3a8a', hair: '#0f172a', mask: null,
+    weapon: 'Nhật Nguyệt Thần Cầm', hat: 'Thánh Cô Phượng Quan', armor: 'Thánh Cô Hồng Y', ring: 'Tiếu Ngạo Ngọc Tiêu',
+    hp: 1600000000, atk: 40000000, def: 30000000, qi: 45000000, crit: 32000,
+    bio: 'Thánh cô Nhật Nguyệt thần giáo, cầm nghệ tuyệt thế, thông minh tuyệt đỉnh, một khúc Tiếu Ngạo Giang Hồ vang danh thiên hạ.',
+    innate: 'Tiếu Ngạo Giang Hồ Khúc',
+    fates: [
+      ['Tiếu Ngạo Giang Hồ', 'ra trận cùng Lệnh Hồ Xung được +28% Khí', true],
+      ['Thánh Cô Nhật Nguyệt', 'trang bị Nhật Nguyệt Thần Cầm được +26% Công', true]
+    ]
+  },
+  {
+    id: 'duong', name: 'Dương Quá', title: 'Thần Điêu Đại Hiệp', sect: 'Cổ Mộ', type: 'Ất',
+    level: 200, ribbon: '#60a5fa', robe: '#312e81', hair: '#1e1b4b', mask: null,
+    weapon: 'Huyền Thiết Trọng Kiếm', hat: 'Thần Điêu Vũ Quan', armor: 'Cổ Mộ Huyền Bào', ring: 'Huyền Thiết Giới Chỉ',
+    hp: 1750000000, atk: 45000000, def: 32000000, qi: 38000000, crit: 35000,
+    bio: 'Thần Điêu Đại Hiệp, tay cầm Huyền Thiết Trọng Kiếm, Ám Nhiên Tiêu Hồn Chưởng vang danh, một đời chỉ yêu một người.',
+    innate: 'Ám Nhiên Tiêu Hồn Chưởng',
+    fates: [
+      ['Thần Điêu Hiệp Lữ', 'ra trận cùng Tiểu Long Nữ được +30% Công', true],
+      ['Ám Nhiên Tiêu Hồn', 'trang bị Huyền Thiết Trọng Kiếm được +25% Khí', true]
+    ]
+  },
+  {
+    id: 'dongph', name: 'Đông Phương Bất Bại', title: 'Giáo Chủ', sect: 'Nhật Nguyệt Thần Giáo', type: 'Giáp',
+    level: 300, ribbon: '#a855f7', robe: '#7e22ce', hair: '#f8fafc', mask: '#4c1d95',
+    weapon: 'Quỳ Hoa Tú Hoa Châm', hat: 'Giáo Chủ Kim Quan', armor: 'Quỳ Hoa Bảo Y', ring: 'Nhật Nguyệt Giáo Chủ Lệnh',
+    hp: 2400000000, atk: 62000000, def: 45000000, qi: 60000000, crit: 52000,
+    bio: 'Giáo chủ Nhật Nguyệt thần giáo, Quỳ Hoa Bảo Điển luyện đến cảnh giới xuất thần nhập hóa, thiên hạ đệ nhất tốc độ.',
+    innate: 'Quỳ Hoa Bảo Điển',
+    fates: [
+      ['Quỳ Hoa Bảo Điển', 'trang bị Quỳ Hoa Tú Hoa Châm được +30% Công', true],
+      ['Nhật Nguyệt Độc Tôn', 'ra trận cùng Nhậm Doanh Doanh được +26% Khí', true]
+    ]
+  },
+  {
+    id: 'docco', name: 'Độc Cô Cầu Bại', title: 'Kiếm Ma', sect: 'Vô Danh', type: 'Giáp',
+    level: 300, ribbon: '#e879f9', robe: '#1d4ed8', hair: '#e2e8f0', mask: null,
+    weapon: 'Độc Cô Huyền Kiếm', hat: 'Kiếm Ma Diện Cụ', armor: 'Kiếm Ma Hắc Bào', ring: 'Độc Cô Kiếm Giới',
+    hp: 2600000000, atk: 68000000, def: 48000000, qi: 55000000, crit: 58000,
+    bio: 'Kiếm Ma một đời cầu bại mà không được, Độc Cô Cửu Kiếm phá hết thiên hạ kiếm pháp, vô kiếm thắng hữu kiếm.',
+    innate: 'Độc Cô Cửu Kiếm',
+    fates: [
+      ['Kiếm Ma Độc Tôn', 'trang bị Độc Cô Huyền Kiếm được +32% Công', true],
+      ['Vô Kiếm Thắng Hữu Kiếm', 'ra trận cùng Độc Cô Kiếm Thánh được +28% Khí', true]
+    ]
+  },
+  {
+    id: 'longnu', name: 'Tiểu Long Nữ', title: 'Ngọc Nữ', sect: 'Cổ Mộ', type: 'Giáp',
+    level: 300, ribbon: '#f472b6', robe: '#7e22ce', hair: '#0f172a', mask: null,
+    weapon: 'Ngọc Nữ Tố Tâm Kiếm', hat: 'Ngọc Nữ Bạch Quan', armor: 'Cổ Mộ Bạch Y', ring: 'Ngọc Nữ Tâm Bội',
+    hp: 2300000000, atk: 60000000, def: 50000000, qi: 65000000, crit: 48000,
+    bio: 'Ngọc Nữ Cổ Mộ phái, dung nhan tuyệt thế, Ngọc Nữ Tâm Kinh luyện đến thuần thục, lạnh lùng mà trọng tình.',
+    innate: 'Ngọc Nữ Tâm Kinh',
+    fates: [
+      ['Ngọc Nữ Tâm Kinh', 'trang bị Ngọc Nữ Tố Tâm Kiếm được +28% Khí', true],
+      ['Thần Điêu Hiệp Lữ', 'ra trận cùng Dương Quá được +30% Thủ', true]
+    ]
+  }
+];
+
+const RECRUIT_POOLS = {
+  1: { name: 'Tầm Sư Học Đạo', freePerDay: 1, costSilver: 5000, rates: [{ grade: 'Bính', w: 70 }, { grade: 'Ất', w: 30 }] },
+  2: { name: 'Danh Môn Cao Đồ', costGold: 100, rates: [{ grade: 'Giáp', w: 25 }, { grade: 'Ất', w: 50 }, { grade: 'Bính', w: 25 }] },
+  3: { name: 'Nhất Đại Tông Sư', costGold: 250, rates: [{ grade: 'Giáp', w: 65 }, { grade: 'Ất', w: 35 }] }
+};
+
 const SKILLS = [
   { id: 0, name: 'Hỏa Long Phần Thiên', icon: '🐉', cd: 8, mult: 3.4, aoe: true, color: 0xff5500, ring: 0xffaa00, desc: 'Hỏa long gầm thét, thiêu rụi toàn bộ kẻ địch trong phạm vi.' },
   { id: 1, name: 'Tử Lôi Kiếm Khí', icon: '⚡', cd: 6, mult: 2.8, aoe: true, color: 0xc026d3, ring: 0x3b82f6, desc: 'Kiếm khí tím lôi bùng nổ, sát thương diện rộng cực mạnh.' },
@@ -167,15 +261,59 @@ const SKILLS = [
 const ARENAS = {
   bamboo: {
     key: 'bamboo', name: 'Rừng Trúc U Minh', short: 'Rừng Trúc', icon: '🌿', mul: 1,
-    exp: 150, silver: 2800, gold: 1, tip: 'Sương trúc u minh, ma giáo phục kích trong rừng.'
+    exp: 150, silver: 2800, gold: 1, tip: 'Sương trúc u minh, ma giáo phục kích trong rừng.',
+    badge: 'Rừng Trúc U Minh', boss: 'Ma Giáo Cao Thủ (Lv.70)', recLvl: 'Cấp 65 - 70',
+    drops: 'Trúc Diệp Linh Đan, Mảnh Trúc Kiếm', desc: 'Rừng trúc sương mù dày đặc, ma giáo thường phục kích trong bóng trúc.',
+    builder: 'bamboo', isBoss: false
   },
   buddha: {
     key: 'buddha', name: 'Đài Phật Anh Đào', short: 'Đài Phật', icon: '🌸', mul: 2.15,
-    exp: 340, silver: 7600, gold: 2, tip: 'Luận kiếm dưới tượng Phật, hoa anh đào bay khắp trời.'
+    exp: 340, silver: 7600, gold: 2, tip: 'Luận kiếm dưới tượng Phật, hoa anh đào bay khắp trời.',
+    badge: 'Thánh Địa Đài Phật', boss: 'Hộ Pháp Hắc Bạch (Lv.72)', recLvl: 'Cấp 68 - 73',
+    drops: 'Anh Đào Linh Hoa, Phật Quang Xá Lợi', desc: 'Đài Phật linh thiêng, hoa anh đào bay khắp trời, nơi luận kiếm của cao thủ.',
+    builder: 'buddha', isBoss: false
   },
   city: {
     key: 'city', name: 'Biện Kinh Thành Cổ', short: 'Biện Kinh', icon: '🏯', mul: 3.5,
-    exp: 720, silver: 17000, gold: 3, tip: 'Hồ sen Biện Kinh, trận chiến cuối cùng của ma giáo.'
+    exp: 720, silver: 17000, gold: 3, tip: 'Hồ sen Biện Kinh, trận chiến cuối cùng của ma giáo.',
+    badge: 'Kinh Đô Võ Lâm', boss: 'Ma Giáo Giáo Chủ (Lv.75)', recLvl: 'Cấp 73 - 76',
+    drops: 'Biện Kinh Lệnh Bài, Long Văn Bảo Giáp', desc: 'Kinh đô phồn hoa bên hồ sen, nơi diễn ra trận chiến cuối cùng với ma giáo.',
+    builder: 'city', isBoss: false
+  },
+  'van-mong-dam': {
+    key: 'van-mong-dam', name: 'Vân Mộng Đầm', short: 'Vân Mộng', icon: '💧', mul: 1.2,
+    exp: 190, silver: 3600, gold: 1, tip: 'Đầm nước tĩnh lặng phản chiếu bóng núi mờ sương.',
+    badge: 'Thủy Mặc U Cốc', boss: 'Thủy Nguyệt Tiên Tử (Lv.73)', recLvl: 'Cấp 70 - 75',
+    drops: 'Băng Tâm Ngọc Bội, Linh Khí Thủy Nguyên', desc: 'Đầm nước tĩnh lặng, nơi các bậc ẩn sĩ thường ngồi thuyền câu cá ngộ đạo.',
+    builder: 'city', isBoss: false
+  },
+  'kiem-linh-coc': {
+    key: 'kiem-linh-coc', name: 'Kiếm Linh Cốc', short: 'Kiếm Linh', icon: '🗡️', mul: 1.6,
+    exp: 260, silver: 5400, gold: 1, tip: 'Hàng vạn thanh cổ kiếm cắm trên vách đá rít lên từng hồi.',
+    badge: 'Thánh Địa Kiếm Đạo', boss: 'Kiếm Linh Hộ Pháp (Lv.74)', recLvl: 'Cấp 72 - 76',
+    drops: 'Huyền Thiết Tinh Khoáng, Kiếm Ý Đan', desc: 'Thung lũng quanh năm mây mù bao phủ, hàng vạn thanh cổ kiếm cắm trên vách đá.',
+    builder: 'bamboo', isBoss: false
+  },
+  'xanh-tu-nam': {
+    key: 'xanh-tu-nam', name: 'Xanh Tử Nam', short: 'Xanh Tử', icon: '🌲', mul: 2.0,
+    exp: 320, silver: 7000, gold: 2, tip: 'Rừng tùng cổ tự, đạo nhân ngồi thiền dưới gốc tùng nghìn năm.',
+    badge: 'Rừng Tùng Cổ Tự', boss: 'Thanh Tùng Đạo Nhân (Lv.75)', recLvl: 'Cấp 74 - 77',
+    drops: 'Tùng Hạc Diên Niên Đan, Mảnh Áo Choàng', desc: 'Rừng tùng cổ tự ngàn năm, linh khí hội tụ.',
+    builder: 'bamboo', isBoss: false
+  },
+  'mon-quan': {
+    key: 'mon-quan', name: 'Môn Quan', short: 'Môn Quan', icon: '🏰', mul: 2.8,
+    exp: 520, silver: 12000, gold: 2, tip: 'Cửa ải yết hầu, trấn quan đại tướng trấn giữ ngày đêm.',
+    badge: 'Cửa Ải Yết Hầu', boss: 'Trấn Quan Đại Tướng (Lv.76)', recLvl: 'Cấp 75 - 78',
+    drops: 'Lệnh Bài Quân Công, Giáp Trụ Huyền Vũ', desc: 'Cửa ải yết hầu của võ lâm, ai qua được ải này mới xứng danh cao thủ.',
+    builder: 'city', isBoss: false
+  },
+  'thien-hoa-dan-dinh': {
+    key: 'thien-hoa-dan-dinh', name: 'Thiên Hỏa Đỉnh', short: 'Thiên Hỏa', icon: '🔥', mul: 3.8,
+    exp: 820, silver: 19500, gold: 3, tip: 'Lửa thiêng bùng cháy, Hỏa Kỳ Lân trấn giữ đỉnh cao nhất.',
+    badge: 'Trọng Điểm Quyết Chiến', boss: 'Hỏa Kỳ Lân – Viêm Đế (Lv.78)', recLvl: 'Cấp 76+',
+    drops: 'Thần Binh Hỏa Lân, Bí Kíp Cửu Dương, 5000 Vàng', desc: 'Đỉnh núi lửa thiêng, nơi quyết chiến cuối cùng với Hỏa Kỳ Lân.',
+    builder: 'city', isBoss: true
   }
 };
 
@@ -249,7 +387,7 @@ const SaveManager = {
       const data = {
         player: State.player, heroes: State.heroes, leader: State.leader, quests: State.quests,
         guild: State.guild, inventory: State.inventory, customProps: State.customProps,
-        stats: State.stats, settings: State.settings, flags: State.flags, v: 1
+        stats: State.stats, settings: State.settings, flags: State.flags, v: 2
       };
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     } catch (e) {}
@@ -268,6 +406,17 @@ const SaveManager = {
             if (h.bonus) Object.assign(t.bonus, h.bonus);
           }
         });
+        // Đệ tử chiêu mộ (RECRUIT_DEFS) chưa có trong đội hình mặc định: append từ save.
+        d.heroes.forEach(h => {
+          if (State.heroes.find(x => x.id === h.id)) return;
+          const def = heroById(h.id);
+          if (!def) return;
+          State.heroes.push({
+            id: h.id,
+            level: Math.max(1, Math.round(h.level || def.level)),
+            bonus: Object.assign({ hp: 0, atk: 0, def: 0, qi: 0, crit: 0 }, h.bonus || {})
+          });
+        });
       }
       if (typeof d.leader === 'number') State.leader = clamp(d.leader, 0, State.heroes.length - 1);
       if (Array.isArray(d.quests)) State.quests = d.quests;
@@ -284,7 +433,7 @@ const SaveManager = {
   }
 };
 
-const heroById = id => HERO_DEFS.find(h => h.id === id);
+const heroById = id => HERO_DEFS.concat(RECRUIT_DEFS).find(h => h.id === id);
 const heroState = id => State.heroes.find(h => h.id === id) || State.heroes[0];
 const heroStats = id => {
   const d = heroById(id);
@@ -293,6 +442,79 @@ const heroStats = id => {
   return {
     hp: d.hp + b.hp, atk: d.atk + b.atk, def: d.def + b.def, qi: d.qi + b.qi, crit: d.crit + b.crit
   };
+};
+
+/* ============================== CHIÊU MỘ ĐỆ TỬ ============================== */
+const Recruit = {
+  _lastId: null,
+  _lastIndex: null,
+
+  freeLeft() {
+    const today = new Date().toISOString().slice(0, 10);
+    return State.flags.recruitFreeDate === today ? 0 : 1;
+  },
+
+  draw(tier) {
+    const pool = RECRUIT_POOLS[tier];
+    if (!pool) return;
+    const p = State.player;
+    const today = new Date().toISOString().slice(0, 10);
+    const isFree = tier === 1 && this.freeLeft() > 0;
+
+    if (!isFree) {
+      if (pool.costGold && p.gold < pool.costGold) {
+        UI.toast(`Không đủ Kim Nguyên Bảo! Cần ${pool.costGold} KNB để ${pool.name}.`, 'red');
+        return;
+      }
+      if (pool.costSilver && p.silver < pool.costSilver) {
+        UI.toast(`Không đủ bạc! Cần ${fmt(pool.costSilver)} bạc để ${pool.name}.`, 'red');
+        return;
+      }
+    }
+
+    if (isFree) State.flags.recruitFreeDate = today;
+    else if (pool.costGold) p.gold -= pool.costGold;
+    else if (pool.costSilver) p.silver -= pool.costSilver;
+
+    // Random có trọng số theo tỉ lệ phẩm, rồi random đều trong nhóm phẩm đó.
+    const total = pool.rates.reduce((a, r) => a + r.w, 0);
+    let roll = Math.random() * total, grade = pool.rates[pool.rates.length - 1].grade;
+    for (const r of pool.rates) {
+      roll -= r.w;
+      if (roll < 0) { grade = r.grade; break; }
+    }
+    const cands = RECRUIT_DEFS.filter(d => d.type === grade);
+    const def = pick(cands);
+    if (!def) return;
+
+    const existing = State.heroes.find(h => h.id === def.id);
+    if (existing) {
+      existing.level += 2;
+      existing.bonus.hp += 62500;
+      existing.bonus.atk += 225;
+      existing.bonus.def += 49000;
+      existing.bonus.qi += 55000;
+      existing.bonus.crit += 20;
+      this._lastId = def.id;
+      this._lastIndex = State.heroes.indexOf(existing);
+      UI.toast(`Đã có đệ tử này — chuyển thành bồi dưỡng: ${def.name} lên cấp ${existing.level}`, 'gold');
+    } else {
+      State.heroes.push({ id: def.id, level: def.level, bonus: { hp: 0, atk: 0, def: 0, qi: 0, crit: 0 } });
+      this._lastId = def.id;
+      this._lastIndex = State.heroes.length - 1;
+    }
+
+    SaveManager.save();
+    UI.syncWorld();
+    if (Info.built) Info.buildSquad();
+    if (def.type === 'Giáp') {
+      Info.burst();
+      Sfx.win();
+    } else {
+      Sfx.coin();
+    }
+    UI.openModal('recruit-result', { id: def.id });
+  }
 };
 
 function gainExp(amount, silent) {

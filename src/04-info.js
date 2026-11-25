@@ -166,10 +166,10 @@ const Info = {
   buildSquad() {
     const box = $('#ii-squad');
     box.innerHTML = State.heroes.map((hs, i) => {
-      const h = HERO_DEFS[i];
+      const h = heroById(hs.id) || HERO_DEFS[0];
       return `<div class="hero-slot ${i === this.index ? 'active' : ''}" data-act="info-select" data-i="${i}" title="${esc(h.name)} · ${esc(h.title)}">
         ${heroAvatarSVG(h, 'sq' + i)}
-        <span class="hl">${h.level}</span>
+        <span class="hl">${hs.level}</span>
         <span class="stars">★★★</span>
       </div>`;
     }).join('') + `<div class="squad-form" data-act="info-tip" data-tip="Trận Hình Ngũ Hành|Đang kích hoạt đội hình 5 Đại Tông Sư. Lực chiến tổng: 310.420.890."><span class="si">⚔</span>TRẬN<br>HÌNH</div>`;
@@ -202,7 +202,7 @@ const Info = {
     this.select(typeof idx === 'number' ? idx : State.leader, true);
     requestAnimationFrame(() => {
       this.resize();
-      this.applyHeroColors(HERO_DEFS[this.index]);
+      this.applyHeroColors(heroById(State.heroes[this.index].id) || HERO_DEFS[0]);
       this.targetRot = .18;
       this.clock = new THREE.Clock();
       this.animate();
@@ -221,8 +221,9 @@ const Info = {
   },
 
   select(i, keepCam) {
-    this.index = clamp(i, 0, HERO_DEFS.length - 1);
-    const h = HERO_DEFS[this.index];
+    this.index = clamp(i, 0, State.heroes.length - 1);
+    const hs = State.heroes[this.index];
+    const h = heroById(hs.id) || HERO_DEFS[0];
     const st = heroStats(h.id);
     State.leader = this.index;
     if (!keepCam) this.targetRot = .18;
@@ -230,10 +231,10 @@ const Info = {
     $$('#ii-squad .hero-slot').forEach((el, k) => el.classList.toggle('active', k === this.index));
     $('#ii-title').textContent = h.title;
     $('#ii-hname').textContent = h.name;
-    $('#ii-lvl').textContent = h.level;
+    $('#ii-lvl').textContent = hs.level;
     $('#ii-hp').textContent = fmt(st.hp) + ' / ' + fmt(st.hp);
     $('#ii-ava').innerHTML = heroAvatarSVG(h, 'big');
-    $('#ii-avalv').textContent = h.level;
+    $('#ii-avalv').textContent = hs.level;
     $('#ii-rname').textContent = h.name;
     $('#ii-type').textContent = h.type;
     $('#ii-bio').textContent = h.bio;
@@ -485,8 +486,8 @@ const Info = {
   },
 
   cultivate() {
-    const h = HERO_DEFS[this.index];
     const hs = State.heroes[this.index];
+    const h = heroById(hs.id) || HERO_DEFS[0];
     const cost = 12000;
     if (State.player.silver < cost) {
       UI.toast('Không đủ bạc để bồi dưỡng (cần ' + fmt(cost) + ')', 'red');

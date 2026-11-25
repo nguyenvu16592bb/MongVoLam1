@@ -620,3 +620,30 @@ h1,h2,h3,p{margin:0}
   #toasts{left:8px;bottom:calc(env(safe-area-inset-bottom) + 88px);max-width:92vw}
   .arena-tabs{display:none}
 }
+
+/* ============================== CHỌN MAP + CHIÊU MỘ ============================== */
+.map-grid{display:grid;grid-template-columns:1fr;gap:8px}
+@media (min-width:720px){.map-grid{grid-template-columns:1fr 1fr}}
+.map-card{min-height:64px;padding:10px 12px;border-radius:10px;cursor:pointer;
+  background:rgba(255,255,255,.035);border:1px solid rgba(217,168,78,.26);transition:border-color .15s,background .15s}
+.map-card:hover{border-color:rgba(255,215,120,.55)}
+.map-card .mt{font-weight:800;color:#ffe3ac;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.map-card .ms{font-size:var(--ui-s);color:#c9b795;margin-top:2px;line-height:1.4}
+.map-card.on{border-color:#ffd76b;background:rgba(255,215,120,.12);box-shadow:0 0 12px rgba(255,215,120,.25)}
+.map-card.boss{border-color:#ef4444;box-shadow:0 0 14px rgba(239,68,68,.35)}
+.map-card.boss.on{border-color:#ffd76b}
+.map-detail{margin-top:10px;padding:10px 12px;border-radius:10px;
+  background:rgba(255,255,255,.035);border:1px solid rgba(217,168,78,.26)}
+.map-detail .ms{font-size:var(--ui-s);color:#c9b795;margin-top:2px;line-height:1.4}
+.map-detail p{color:#e9dcc6;font-size:var(--ui)}
+.btn-lg{padding:12px 22px;font-size:15px;min-height:48px}
+.recruit-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+@media (max-width:620px){.recruit-grid{grid-template-columns:1fr}}
+.recruit-card{padding:12px;border-radius:11px;text-align:center;
+  background:rgba(255,255,255,.035);border:1px solid rgba(217,168,78,.28);transition:border-color .15s}
+.recruit-card:hover{border-color:rgba(255,215,120,.6)}
+.recruit-card .ms{font-size:var(--ui-s);color:#c9b795;line-height:1.4}
+.recruit-card .btn{min-height:44px;width:100%}
+.tag.orb-binh{background:#10b981;border-color:#6ee7b7;color:#ecfdf5}
+.tag.orb-at{background:#3b82f6;border-color:#93c5fd;color:#eff6ff}
+.tag.orb-giap{background:#a855f7;border-color:#d8b4fe;color:#faf5ff}
