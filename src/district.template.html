@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<!-- DISTRICT: Trang khu vực độc lập — build từ src/district.template.html
+     + src/10-district.js (engine) + src/10b-districts.js (dữ liệu 12 khu).
+     Nhóm B ghép ra map/*.html (pho-dong.html, pho-tay.html, ...), mỗi file
+     chèn đúng 1 DEF (JSON của khu đó). Tự chứa, không CDN, chạy offline.
+     Placeholder (ghi dạng tách để replaceAll của build không chèn nhầm
+     vào comment này): THREE (lib/three.min.js r128), STYLE (CSS riêng),
+     DATA (src/10b-districts.js), ENGINE (src/10-district.js),
+     DEF (JSON 1 khu), TITLE (tên khu). -->
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b0805">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23140c07'/%3E%3Ctext x='32' y='45' font-size='36' text-anchor='middle' fill='%23ffd76b'%3E%E5%9C%B0%3C/text%3E%3C/svg%3E">
+<title>__TITLE__ — Mộng Võ Lâm 3D</title>
+<style>
+/* DISTRICT-BEGIN — CSS riêng gọn nhẹ cho trang khu (đã viết thẳng vào
+   template thay cho placeholder STYLE để file tự chứa đầy đủ; nhóm B
+   khi build chỉ cần thay THREE/DATA/ENGINE/DEF/TITLE trong các thẻ script). */
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html { font-size: 16px; }
+body {
+  font-family: "Palatino Linotype", Georgia, "Times New Roman", serif;
+  background: #0b0805; color: #f5e9c9; min-height: 100vh; overflow: hidden;
+}
+#d-app { position: fixed; inset: 0; overflow: hidden; }
+#d-scene, #d-scene canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+#d-nameplates, #d-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.d-nameplate {
+  position: absolute; transform: translate(-50%, -100%); display: flex; gap: 4px; align-items: center;
+  font-size: .78rem; font-weight: 700; color: #fff; text-shadow: 0 1px 3px #000, 0 0 6px #000;
+  white-space: nowrap; pointer-events: none;
+}
+.d-nameplate.player { color: #7dd3fc; }
+.d-label {
+  position: absolute; transform: translate(-50%, -100%); display: none;
+  font-size: .72rem; color: #ffe9ad; background: #00000088; border: 1px solid #6b5223;
+  border-radius: 8px; padding: 2px 7px; white-space: nowrap; pointer-events: none;
+}
+.d-label.thac { color: #fde68a; border-color: #f59e0b; }
+#d-hud {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 10;
+  display: flex; justify-content: space-between; gap: 8px; align-items: flex-start;
+  padding: 10px 12px; pointer-events: none;
+  background: linear-gradient(180deg, #000000aa, transparent);
+}
+#d-hud h1 { font-size: 1.25rem; color: #ffd76b; text-shadow: 0 1px 3px #000; }
+#d-desc { font-size: .8rem; color: #e7d6a4; max-width: 52vw; line-height: 1.35; text-shadow: 0 1px 2px #000; }
+.d-hud-right { text-align: right; font-size: .9rem; }
+#d-wallet { background: #00000066; border: 1px solid #6b5223; border-radius: 10px; padding: 6px 10px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+#d-wallet b { color: #ffd76b; }
+#d-clock { margin-top: 4px; color: #cbb37a; text-shadow: 0 1px 2px #000; }
+#d-progress { margin-top: 2px; color: #fde68a; font-size: .85rem; text-shadow: 0 1px 2px #000; }
+#d-interact {
+  position: absolute; left: 50%; bottom: 148px; transform: translateX(-50%); z-index: 12;
+  font: inherit; font-size: 1rem; font-weight: 700; color: #1a1208; cursor: pointer;
+  background: linear-gradient(180deg, #fde68a, #f59e0b); border: 1px solid #fde68a;
+  border-radius: 99px; padding: 12px 20px; min-height: 48px; box-shadow: 0 4px 16px #000000aa;
+  max-width: 92vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#d-dpad {
+  position: absolute; left: 12px; bottom: 148px; z-index: 11;
+  display: grid; grid-template-columns: repeat(3, 48px); grid-template-rows: repeat(2, 48px); gap: 4px;
+}
+#d-dpad button {
+  font: inherit; font-size: 1.2rem; color: #ffe9ad; cursor: pointer; min-height: 48px;
+  background: #00000088; border: 1px solid #8a6a2f; border-radius: 12px;
+}
+#d-dpad button:nth-child(1) { grid-column: 2; grid-row: 1; }
+#d-dpad button:nth-child(2) { grid-column: 1; grid-row: 2; }
+#d-dpad button:nth-child(3) { grid-column: 2; grid-row: 2; }
+#d-dpad button:nth-child(4) { grid-column: 3; grid-row: 2; }
+#d-dpad button:active { background: #f59e0b88; }
+#d-bottom {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 10;
+  padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
+  background: linear-gradient(0deg, #160f05f2, transparent);
+}
+#d-activities { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; scrollbar-width: none; }
+#d-activities::-webkit-scrollbar { display: none; }
+.d-act-btn {
+  flex: 0 0 auto; font: inherit; text-align: left; cursor: pointer; color: #f5e9c9; min-height: 56px;
+  background: #241a0c; border: 1px solid #6b5223; border-radius: 12px; padding: 8px 12px;
+  display: flex; flex-direction: column; gap: 2px; max-width: 230px;
+}
+.d-act-btn b { color: #ffe9ad; font-size: .95rem; }
+.d-act-btn span { font-size: .78rem; color: #cbb37a; line-height: 1.3; }
+.d-act-empty { color: #cbb37a; font-size: .9rem; padding: 8px 2px; }
+.d-btn {
+  font: inherit; font-weight: 700; cursor: pointer; color: #1a1208; min-height: 48px;
+  background: linear-gradient(180deg, #fde68a, #f59e0b); border: 1px solid #fde68a;
+  border-radius: 10px; padding: 10px 16px; font-size: 1rem;
+}
+.d-btn.primary { background: linear-gradient(180deg, #fde68a, #f59e0b); }
+.d-btn.big { width: 100%; font-size: 1.1rem; }
+.d-modal {
+  position: absolute; inset: 0; z-index: 30; display: flex; align-items: flex-end; justify-content: center;
+  background: #00000099; padding: 12px;
+}
+@media (min-width: 700px) { .d-modal { align-items: center; } }
+.d-modal-card {
+  width: 100%; max-width: 560px; max-height: 82vh; overflow-y: auto;
+  background: linear-gradient(180deg, #2b1f0e, #1a130a); border: 2px solid #8a6a2f; border-radius: 16px;
+}
+.d-modal-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 14px 6px; }
+.d-modal-head h2 { font-size: 1.15rem; color: #ffd76b; }
+.d-x { font: inherit; font-size: 1.2rem; cursor: pointer; color: #f5e9c9; background: none; border: none; min-width: 44px; min-height: 44px; }
+.d-modal-body { padding: 6px 14px 12px; font-size: .98rem; line-height: 1.55; }
+.d-modal-body p { margin-bottom: 8px; }
+.d-modal-foot { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 14px 14px; }
+.d-modal-foot .d-btn { flex: 1 1 auto; }
+.d-talk { font-size: 1.05rem; color: #ffe9ad; }
+.d-note { color: #cbb37a; font-size: .88rem; }
+.d-lore { color: #e7d6a4; }
+.d-bar { margin: 14px 0 6px; }
+.d-bar-track {
+  position: relative; height: 34px; border-radius: 99px; overflow: hidden;
+  background: #1c1305; border: 2px solid #6b5223;
+}
+.d-zone { position: absolute; top: 0; bottom: 0; opacity: .85; }
+.d-marker {
+  position: absolute; top: -2px; bottom: -2px; width: 6px; margin-left: -3px;
+  background: #fff; border-radius: 3px; box-shadow: 0 0 8px #fff;
+}
+.d-shop-list { display: flex; flex-direction: column; gap: 8px; }
+.d-shop-row {
+  display: flex; justify-content: space-between; gap: 8px; align-items: center;
+  background: #241a0c; border: 1px solid #6b5223; border-radius: 12px; padding: 10px 12px;
+}
+.d-shop-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.d-shop-info b { color: #ffe9ad; }
+.d-shop-info span { font-size: .85rem; color: #cbb37a; }
+.d-shop-buy { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.d-shop-buy b { color: #ffd76b; white-space: nowrap; }
+.d-shop-buy s { color: #cbb37a; font-size: .85rem; }
+.d-shop-buy .d-btn { min-height: 44px; padding: 8px 14px; }
+.d-fight { display: flex; flex-direction: column; gap: 12px; margin: 10px 0; }
+.d-fighter b { color: #ffe9ad; }
+.d-fighter span { font-size: .85rem; color: #cbb37a; }
+.d-hpbar { height: 16px; border-radius: 99px; background: #1c1305; border: 1px solid #6b5223; overflow: hidden; margin: 4px 0; }
+.d-hpbar i { display: block; height: 100%; transition: width .3s; }
+.d-ghost-area { position: relative; height: 180px; background: #0f0f1e; border: 1px solid #6b5223; border-radius: 12px; margin: 10px 0; overflow: hidden; }
+.d-ghost {
+  position: absolute; font: inherit; font-size: 2rem; cursor: pointer; min-width: 56px; min-height: 56px;
+  background: none; border: none; transition: left .5s, top .5s;
+}
+#d-toasts {
+  position: absolute; left: 12px; right: 12px; bottom: 210px; z-index: 40;
+  display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none;
+}
+.d-toast {
+  background: #14532d; color: #dcfce7; border: 1px solid #4ade80; border-radius: 10px;
+  padding: 10px 14px; font-size: .95rem; max-width: 560px; text-align: center; box-shadow: 0 4px 16px #00000088;
+}
+.d-toast.gold { background: #78350f; color: #fef3c7; border-color: #f59e0b; }
+.d-toast.red { background: #7f1d1d; color: #fee2e2; border-color: #f87171; }
+.d-lock {
+  position: absolute; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(180deg, #1a1208, #0b0805); padding: 16px;
+}
+.d-lock-card { max-width: 520px; text-align: center; }
+.d-lock-icon { font-size: 3rem; margin-bottom: 8px; }
+.d-lock-card h2 { color: #ffd76b; margin-bottom: 10px; }
+.d-lock-card p { margin-bottom: 10px; line-height: 1.55; }
+.d-lock-card .d-btn { margin-top: 8px; }
+/* DISTRICT-END */
+</style>
+</head>
+<body>
+<div id="d-app">
+  <!-- ============ 3D ============ -->
+  <div id="d-scene"></div>
+  <div id="d-nameplates"></div>
+  <div id="d-labels"></div>
+
+  <!-- ============ HUD TRÊN ============ -->
+  <div id="d-hud">
+    <div class="d-hud-title">
+      <h1 id="d-title">__TITLE__</h1>
+      <div id="d-desc"></div>
+    </div>
+    <div class="d-hud-right">
+      <div id="d-wallet"></div>
+      <div id="d-clock"></div>
+      <div id="d-progress"></div>
+    </div>
+  </div>
+
+  <!-- ============ NÚT TƯƠNG TÁC THEO NGỮ CẢNH ============ -->
+  <button id="d-interact" data-dact="interact" style="display:none"></button>
+
+  <!-- ============ D-PAD CẢM ỨNG ============ -->
+  <div id="d-dpad" aria-label="Di chuyển">
+    <button data-dpad="w" aria-label="Lên">▲</button>
+    <button data-dpad="a" aria-label="Trái">◀</button>
+    <button data-dpad="s" aria-label="Xuống">▼</button>
+    <button data-dpad="d" aria-label="Phải">▶</button>
+  </div>
+
+  <!-- ============ HOẠT ĐỘNG KHU + VỀ THÀNH ============ -->
+  <div id="d-bottom">
+    <div id="d-activities"></div>
+    <button id="d-back" class="d-btn primary big">🏯 Về Biện Kinh Thành</button>
+  </div>
+
+  <!-- ============ MODAL DÙNG CHUNG ============ -->
+  <div id="d-modal" class="d-modal" style="display:none">
+    <div class="d-modal-card">
+      <div class="d-modal-head">
+        <h2 id="d-modal-title">Thông tin</h2>
+        <button class="d-x" data-dact="close-modal" aria-label="Đóng">✕</button>
+      </div>
+      <div class="d-modal-body" id="d-modal-body"></div>
+      <div class="d-modal-foot" id="d-modal-foot"></div>
+    </div>
+  </div>
+
+  <!-- ============ THÔNG BÁO ============ -->
+  <div id="d-toasts"></div>
+
+  <!-- ============ MÀN HÌNH KHÓA ============ -->
+  <div id="d-lock" class="d-lock" style="display:none">
+    <div class="d-lock-card">
+      <div class="d-lock-icon">🔒</div>
+      <h2>Khu vực đang bị khóa</h2>
+      <p id="d-lock-reason"></p>
+      <p id="d-lock-cond" class="d-note"></p>
+      <button id="d-lock-back" class="d-btn primary big">🏯 Về Biện Kinh Thành</button>
+    </div>
+  </div>
+</div>
+
+<script>
+__THREE__
+</script>
+<script>
+__DATA__
+</script>
+<script>
+__ENGINE__
+</script>
+<script>
+District.boot(__DEF__);
+</script>
+</body>
+</html>
