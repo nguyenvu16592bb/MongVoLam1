@@ -1,8 +1,9 @@
 /* ============================================================================
-   Map Editor — 13-material.js (đợt 2, mục 2)
+   Map Editor — 13-material.js (đợt 2, mục 2; đợt 4: AO + emissive map,
+   xem trước UV 3D)
    ED.Material — Vật liệu & Texture cho object đang chọn:
-   import ảnh thật (albedo/normal/roughness) lưu IndexedDB, tiling/offset,
-   emissive, 6 preset 1 chạm, xem trước UV.
+   import ảnh thật (albedo/normal/roughness/AO/emissive) lưu IndexedDB,
+   tiling/offset, emissive, 6 preset 1 chạm, xem trước UV 2D + 3D.
    Quy tắc DESIGN.md: KHÔNG truy cập document/window/THREE ở top-level;
    mọi khởi tạo trong init(). Logic thuần (preset, validate, normalize,
    clamp, applyPresetToObject, setTextureSlot) không phụ thuộc DOM/THREE
@@ -10,14 +11,23 @@
    IndexedDB 'mongvolam_editor_v1', store 'assets' (keyPath 'key'),
    record {key, name, size, ext, kind:'texture', type, addedAt, data}.
    Key texture: 'tex:<id>'. Gán vào obj.material:
-   {map, normalMap, roughnessMap, repeat:[rx,ry], offset:[ox,oy],
+   {map, normalMap, roughnessMap, aoMap, emissiveMap,
+    repeat:[rx,ry], offset:[ox,oy],
     emissive, emissiveIntensity} (giữ nguyên roughness/metalness/opacity).
+   Project cũ không có aoMap/emissiveMap thì mặc định không có map
+   (normalizeMaterial chỉ giữ khi có chuỗi key hợp lệ).
    LƯU Ý: ED.Viewport.syncObject() rebuild mesh qua buildMesh (chỉ dùng
    color/material cơ bản) nên texture gán trực tiếp lên mesh có thể mất
    khi sync lại — cần hook ED.Material.applyToMesh(obj, group) trong
    syncObject (xem báo cáo bàn giao). Tới lúc đó, init() + onChange +
    restoreAllTextures() dưới đây là cầu nối tạm: texture được nạp lại
    từ IDB và áp lại lên mesh sau khi viewport sync xong.
+   Đợt 4 — AO map: three.js r128 đọc AO từ kênh UV thứ 2 (uv2); primitive
+   Box/Sphere chỉ có uv nên applyToMesh tự copy uv -> uv2 khi có aoMap.
+   Emissive map: màu emissive NHÂN với map, nên mesh live (không đổi
+   obj.material) dùng trắng thay cho đen và cường độ tối thiểu 1 khi
+   có emissiveMap mà emissive đang đen / cường độ đang 0 — nếu không
+   map sẽ đen thui và user tưởng import hỏng.
    ========================================================================== */
 var ED = (typeof ED !== 'undefined') ? ED : {};
 
@@ -27,8 +37,9 @@ ED.Material = (function () {
   var DB_NAME = 'mongvolam_editor_v1';
   var STORE = 'assets';
   var MAX_BYTES = 5 * 1024 * 1024; // 5 MB / ảnh
-  var SLOTS = ['map', 'normalMap', 'roughnessMap'];
-  var SLOT_LABELS = { map: 'Albedo (màu)', normalMap: 'Normal', roughnessMap: 'Nhám' };
+  // Đợt 4: thêm aoMap + emissiveMap (cùng validate/import/IDB như 3 khe cũ).
+  var SLOTS = ['map', 'normalMap', 'roughnessMap', 'aoMap', 'emissiveMap'];
+  var SLOT_LABELS = { map: 'Albedo (màu)', normalMap: 'Normal', roughnessMap: 'Nhám', aoMap: 'AO (bóng mờ)', emissiveMap: 'Emissive (phát sáng)' };
 
   var _cache = {}; // key -> {texture, canvas, image, width, height, promise, _queued}
   var _meta = {}; // key -> {name, size}
@@ -104,6 +115,29 @@ ED.Material = (function () {
     return Date.now().toString(36) + '-' + _idSeq.toString(36);
   }
 
+  // Thuần: '500 B' / '2.0 KB' / '5.0 MB' — hiển thị cạnh tên file đã import.
+  function formatTextureSize(bytes) {
+    var n = Number(bytes);
+    if (!isFinite(n) || n < 0) return '';
+    if (n < 1024) return Math.floor(n) + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+
+  // Báo lỗi không nghiêm trọng ra console, không crash editor (dùng cho
+  // fallback xem trước 3D). An toàn khi không có console.
+  function _warnConsole(msg) {
+    try {
+      if (typeof console !== 'undefined' && console && typeof console.warn === 'function') {
+        console.warn('[ED.Material] ' + msg);
+      }
+    } catch (e) { /* bỏ qua */ }
+  }
+
+  // Thuần: hình preview 3D đang dùng ('box'|'sphere'), đổi qua lại 1 chạm.
+  function nextPreviewShape(shape) { return shape === 'sphere' ? 'box' : 'sphere'; }
+  function previewShapeLabel(shape) { return shape === 'sphere' ? 'Cầu' : 'Hộp'; }
+
   // Chuẩn hoá obj.material: điền mặc định, kẹp giá trị, giữ nguyên các
   // khe texture đã gán. Luôn trả về object MỚI (không sửa object cũ).
   function normalizeMaterial(m) {
@@ -121,6 +155,9 @@ ED.Material = (function () {
     if (typeof m.map === 'string' && m.map) out.map = m.map;
     if (typeof m.normalMap === 'string' && m.normalMap) out.normalMap = m.normalMap;
     if (typeof m.roughnessMap === 'string' && m.roughnessMap) out.roughnessMap = m.roughnessMap;
+    // Đợt 4: project cũ không có 2 khe này thì mặc định không có map.
+    if (typeof m.aoMap === 'string' && m.aoMap) out.aoMap = m.aoMap;
+    if (typeof m.emissiveMap === 'string' && m.emissiveMap) out.emissiveMap = m.emissiveMap;
     if (Array.isArray(m.repeat)) {
       out.repeat = [clampRepeat(m.repeat[0]), clampRepeat(m.repeat[1])];
     }
@@ -253,6 +290,14 @@ ED.Material = (function () {
     return (_meta[key] && _meta[key].name) || null;
   }
 
+  // Đợt 4: tên + kích thước file cho 1 key (bản sao; null nếu chưa nạp
+  // record). UI hiển thị dạng 'ten.png · 123 KB'.
+  function textureMeta(key) {
+    var m = _meta[key];
+    if (!m) return null;
+    return { name: m.name || null, size: (typeof m.size === 'number' ? m.size : null) };
+  }
+
   /* ---- Nạp ảnh -> THREE.Texture (cache theo key) ---- */
 
   function decodeImage(ab) {
@@ -333,6 +378,16 @@ ED.Material = (function () {
       if (!('roughnessMap' in mat)) return false;
       mat.roughnessMap = tex;
       if (THREE.LinearEncoding !== undefined) tex.encoding = THREE.LinearEncoding;
+    } else if (slot === 'aoMap') {
+      // AO là dữ liệu tuyến tính (không phải màu), giống roughness.
+      if (!('aoMap' in mat)) return false;
+      mat.aoMap = tex;
+      if (THREE.LinearEncoding !== undefined) tex.encoding = THREE.LinearEncoding;
+    } else if (slot === 'emissiveMap') {
+      // Emissive map là dữ liệu màu, giống albedo.
+      if (!('emissiveMap' in mat)) return false;
+      mat.emissiveMap = tex;
+      if (THREE.sRGBEncoding !== undefined) tex.encoding = THREE.sRGBEncoding;
     } else {
       return false;
     }
@@ -363,6 +418,22 @@ ED.Material = (function () {
     });
   }
 
+  // Gỡ 1 khe texture khỏi material THREE live. Trả true nếu đã đổi gì.
+  function _clearSlotOnMat(mat, slot) {
+    if (slot === 'map') {
+      if (mat.map) { mat.map = null; return true; }
+    } else if (slot === 'normalMap') {
+      if (('normalMap' in mat) && mat.normalMap) { mat.normalMap = null; return true; }
+    } else if (slot === 'roughnessMap') {
+      if (('roughnessMap' in mat) && mat.roughnessMap) { mat.roughnessMap = null; return true; }
+    } else if (slot === 'aoMap') {
+      if (('aoMap' in mat) && mat.aoMap) { mat.aoMap = null; return true; }
+    } else if (slot === 'emissiveMap') {
+      if (('emissiveMap' in mat) && mat.emissiveMap) { mat.emissiveMap = null; return true; }
+    }
+    return false;
+  }
+
   function _applyToMaterial(mat, m, obj) {
     var changed = false;
     for (var i = 0; i < SLOTS.length; i++) {
@@ -374,24 +445,44 @@ ED.Material = (function () {
           if (_applyTex(mat, slot, entry.texture, m)) changed = true;
         } else {
           // Chưa có texture trong cache: gỡ map cũ rồi nạp ngầm từ IDB.
-          if (slot === 'map' && mat.map) { mat.map = null; changed = true; }
-          else if (slot === 'normalMap' && ('normalMap' in mat) && mat.normalMap) { mat.normalMap = null; changed = true; }
-          else if (slot === 'roughnessMap' && ('roughnessMap' in mat) && mat.roughnessMap) { mat.roughnessMap = null; changed = true; }
+          if (_clearSlotOnMat(mat, slot)) changed = true;
           _ensureTextureLoaded(key, obj);
         }
       } else {
-        if (slot === 'map' && mat.map) { mat.map = null; changed = true; }
-        else if (slot === 'normalMap' && ('normalMap' in mat) && mat.normalMap) { mat.normalMap = null; changed = true; }
-        else if (slot === 'roughnessMap' && ('roughnessMap' in mat) && mat.roughnessMap) { mat.roughnessMap = null; changed = true; }
+        if (_clearSlotOnMat(mat, slot)) changed = true;
       }
     }
     if (mat.emissive && mat.emissive.set && typeof m.emissive === 'string') {
       try { mat.emissive.set(m.emissive); } catch (e) {}
+      // Emissive map NHÂN với màu emissive: màu đen (mặc định) sẽ nuốt
+      // hết map. Chỉ đổi trên mesh live, không đổi obj.material.
+      if (m.emissiveMap) {
+        var _e = (m.emissive || '').toLowerCase();
+        if (_e === '#000000' || _e === '#000') {
+          try { mat.emissive.set('#ffffff'); } catch (e2) {}
+        }
+      }
     }
     if (('emissiveIntensity' in mat) && typeof m.emissiveIntensity === 'number') {
-      mat.emissiveIntensity = m.emissiveIntensity;
+      // Có emissiveMap mà cường độ đang 0 thì map tối thui: dùng 1 trên
+      // mesh live để map hiện ra (không đổi obj.material).
+      mat.emissiveIntensity = (m.emissiveMap && m.emissiveIntensity === 0) ? 1 : m.emissiveIntensity;
     }
     if (changed) mat.needsUpdate = true;
+  }
+
+  // AO map (r128) đọc từ kênh UV thứ 2 (uv2). Primitive chỉ có uv nên
+  // copy uv -> uv2 cho geometry khi object có aoMap. An toàn với stub
+  // (mọi bước đều có guard + try/catch, không crash nếu thiếu API).
+  function _ensureUv2ForAo(geometry) {
+    if (!geometry || !geometry.attributes) return false;
+    if (!geometry.attributes.uv || geometry.attributes.uv2) return false;
+    if (typeof geometry.setAttribute !== 'function') return false;
+    if (!geometry.attributes.uv.clone || typeof geometry.attributes.uv.clone !== 'function') return false;
+    try {
+      geometry.setAttribute('uv2', geometry.attributes.uv.clone());
+      return true;
+    } catch (e) { return false; }
   }
 
   // Áp obj.material (texture + tiling + emissive) lên toàn bộ Mesh trong
@@ -411,6 +502,8 @@ ED.Material = (function () {
         count++;
         _applyToMaterial(mats[i], m, obj);
       }
+      // AO map cần uv2: copy uv -> uv2 cho geometry này (đợt 4).
+      if (m.aoMap) _ensureUv2ForAo(c.geometry);
     });
     return count;
   }
@@ -421,7 +514,9 @@ ED.Material = (function () {
     var g = null;
     try { g = (ED.Viewport && ED.Viewport.meshes) ? ED.Viewport.meshes[obj.id] : null; } catch (e) { g = null; }
     if (!g) return 0;
-    return applyToMesh(obj, g);
+    var n = applyToMesh(obj, g);
+    _refreshPreviews3D(); // xem trước 3D theo kịp material vừa đổi
+    return n;
   }
 
   /* ---- API cho UI: gán/gỡ texture, preset, emissive (có lưu project) ---- */
@@ -433,7 +528,9 @@ ED.Material = (function () {
       var o = objs[i];
       if (exceptId && o.id === exceptId) continue;
       var mm = o.material || {};
-      if (mm.map === key || mm.normalMap === key || mm.roughnessMap === key) return true;
+      for (var s = 0; s < SLOTS.length; s++) {
+        if (mm[SLOTS[s]] === key) return true;
+      }
     }
     return false;
   }
@@ -604,6 +701,186 @@ ED.Material = (function () {
       try { return c.isConnected !== false; } catch (e) { return true; }
     });
     _uvCanvases.forEach(function (c) { drawUvPreview(c); });
+    _refreshPreviews3D(); // xem trước 3D theo kịp texture vừa nạp xong
+  }
+
+  /* ---- Xem trước 3D (đợt 4) ----
+     Mini renderer WebGL riêng (canvas ~220×160) vẽ material hiện tại
+     lên hộp/cầu xoay chậm. Chỉ render khi canvas đang hiển thị
+     (IntersectionObserver + kiểm tra rect trong tick) để không tốn pin.
+     WebGL lỗi -> trả null, UI fallback về canvas UV 2D + báo console,
+     không crash editor. Inspector rebuild (innerHTML='') sẽ gỡ canvas
+     khỏi DOM -> tick tự dispose (isConnected === false). */
+
+  var _previews3D = []; // controller createPreview3D đang sống
+
+  function _refreshPreviews3D() {
+    _previews3D = _previews3D.filter(function (c) {
+      try { return c && !c.disposed && c.canvas && c.canvas.isConnected !== false; } catch (e) { return true; }
+    });
+    _previews3D.forEach(function (c) { try { c.refresh(); } catch (e) {} });
+  }
+
+  // Tạo xem trước 3D trên canvas cho sẵn. getObj() trả về object đang
+  // chọn (đọc material live mỗi lần refresh). Trả controller
+  // {canvas, shape, isSpinning, setShape, setSpinning, refresh, dispose}
+  // hoặc null khi không tạo được WebGL (UI dùng fallback UV 2D).
+  function createPreview3D(canvas, getObj) {
+    if (!canvas || typeof canvas.getContext !== 'function') return null;
+    if (typeof THREE === 'undefined' || !THREE.WebGLRenderer || !THREE.Scene ||
+        !THREE.PerspectiveCamera || !THREE.MeshStandardMaterial ||
+        !THREE.BoxGeometry || !THREE.SphereGeometry || !THREE.Mesh) {
+      _warnConsole('Xem trước 3D: thiếu three.js, dùng xem trước UV 2D.');
+      return null;
+    }
+    var renderer = null;
+    try {
+      renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+    } catch (e) {
+      _warnConsole('Xem trước 3D: không tạo được WebGL renderer (' + (e && e.message ? e.message : 'lỗi') + '), dùng xem trước UV 2D.');
+      return null;
+    }
+    if (!renderer || typeof renderer.render !== 'function') {
+      _warnConsole('Xem trước 3D: WebGL renderer không dùng được, dùng xem trước UV 2D.');
+      return null;
+    }
+    var W = 220, H = 160;
+    try { if (renderer.setPixelRatio) renderer.setPixelRatio(1); } catch (e) {}
+    try { if (renderer.setSize) renderer.setSize(W, H, false); } catch (e) {}
+    var scene = null, camera = null, mesh = null;
+    try {
+      scene = new THREE.Scene();
+      if (THREE.Color) { try { scene.background = new THREE.Color(0x202329); } catch (e) {} }
+      else if (renderer.setClearColor) { try { renderer.setClearColor(0x202329, 1); } catch (e) {} }
+      camera = new THREE.PerspectiveCamera(40, W / H, 0.1, 100);
+      if (camera.position) { camera.position.x = 0; camera.position.y = 0.6; camera.position.z = 3.2; }
+      if (THREE.AmbientLight) { try { scene.add(new THREE.AmbientLight(0xffffff, 0.7)); } catch (e) {} }
+      if (THREE.DirectionalLight) {
+        try {
+          var dl = new THREE.DirectionalLight(0xffffff, 0.9);
+          if (dl.position) { dl.position.x = 2; dl.position.y = 3; dl.position.z = 4; }
+          scene.add(dl);
+        } catch (e) {}
+      }
+      var mat = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.8, metalness: 0 });
+      mesh = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.1, 1.1), mat);
+      if (mesh.rotation) { mesh.rotation.x = 0.35; mesh.rotation.y = 0; }
+      scene.add(mesh);
+    } catch (e) {
+      _warnConsole('Xem trước 3D: không dựng được scene (' + (e && e.message ? e.message : 'lỗi') + '), dùng xem trước UV 2D.');
+      try { if (renderer.dispose) renderer.dispose(); } catch (e2) {}
+      return null;
+    }
+
+    var ctrl = {
+      canvas: canvas, shape: 'box', isSpinning: true, disposed: false,
+      setShape: setShape, setSpinning: setSpinning, refresh: refresh, dispose: dispose
+    };
+    var _angle = 0, _lastT = 0, _rafId = 0, _visible = true, _io = null;
+    var _hasRaf = (typeof requestAnimationFrame === 'function');
+
+    function _isCanvasGone() {
+      try { return canvas.isConnected === false; } catch (e) { return false; }
+    }
+    // Còn hiển thị trên màn hình không (khuất thì bỏ render, giữ rAF rẻ).
+    function _inView() {
+      if (!_visible) return false;
+      try {
+        if (typeof canvas.getBoundingClientRect !== 'function') return true;
+        var r = canvas.getBoundingClientRect();
+        if (!r || r.width === 0 || r.height === 0) return false;
+        if (typeof window !== 'undefined' && window && typeof window.innerHeight === 'number') {
+          if (r.bottom < 0 || r.top > window.innerHeight) return false;
+        }
+      } catch (e) { return true; }
+      return true;
+    }
+    function _renderOnce() {
+      if (ctrl.disposed || _isCanvasGone()) return false;
+      try { renderer.render(scene, camera); return true; } catch (e) {
+        _warnConsole('Xem trước 3D: render lỗi (' + (e && e.message ? e.message : 'lỗi') + '), dừng xem trước 3D.');
+        dispose();
+        return false;
+      }
+    }
+    function _tick(t) {
+      if (ctrl.disposed) return;
+      if (_isCanvasGone()) { dispose(); return; } // inspector rebuild -> tự dọn
+      var dt = 0;
+      if (t && _lastT) dt = Math.min((t - _lastT) / 1000, 0.1);
+      _lastT = t || 0;
+      if (ctrl.isSpinning && _inView()) {
+        _angle += dt * 0.5; // xoay chậm ~0.5 rad/s
+        if (mesh.rotation) mesh.rotation.y = _angle;
+        _renderOnce();
+      }
+      if (!ctrl.disposed && _hasRaf) {
+        try { _rafId = requestAnimationFrame(_tick); } catch (e) { /* dừng vòng lặp */ }
+      }
+    }
+    // Áp lại material hiện tại của object lên mesh preview + vẽ 1 khung.
+    function refresh() {
+      if (ctrl.disposed || _isCanvasGone()) return false;
+      var obj = null;
+      try { obj = (typeof getObj === 'function') ? getObj() : null; } catch (e) { obj = null; }
+      if (!obj || !mesh || !mesh.material) return _renderOnce();
+      var m = normalizeMaterial(obj.material);
+      if (mesh.material.color && mesh.material.color.set && obj.color) {
+        try { mesh.material.color.set(obj.color); } catch (e) {}
+      }
+      _applyToMaterial(mesh.material, m, obj);
+      if (m.aoMap && mesh.geometry) _ensureUv2ForAo(mesh.geometry);
+      return _renderOnce();
+    }
+    function setShape(shape) {
+      if (ctrl.disposed || !shape) return false;
+      var next = (shape === 'sphere') ? 'sphere' : 'box';
+      if (next === ctrl.shape && mesh && mesh.geometry) return true;
+      var geo = null;
+      try {
+        geo = (next === 'sphere') ? new THREE.SphereGeometry(0.75, 24, 18) : new THREE.BoxGeometry(1.1, 1.1, 1.1);
+      } catch (e) { _warnConsole('Xem trước 3D: không tạo được hình ' + next + '.'); return false; }
+      if (!geo) return false;
+      try { if (mesh.geometry && mesh.geometry.dispose) mesh.geometry.dispose(); } catch (e) {}
+      mesh.geometry = geo;
+      ctrl.shape = next;
+      refresh();
+      return true;
+    }
+    function setSpinning(on) {
+      ctrl.isSpinning = !!on;
+      if (ctrl.isSpinning) _lastT = 0;
+      refresh(); // vẽ ngay 1 khung để thấy material mới khi dừng
+      return ctrl.isSpinning;
+    }
+    function dispose() {
+      if (ctrl.disposed) return;
+      ctrl.disposed = true;
+      try { if (_io && _io.disconnect) _io.disconnect(); } catch (e) {}
+      try { if (_hasRaf && _rafId && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(_rafId); } catch (e) {}
+      try { if (mesh && mesh.geometry && mesh.geometry.dispose) mesh.geometry.dispose(); } catch (e) {}
+      try { if (renderer && renderer.dispose) renderer.dispose(); } catch (e) {}
+      for (var i = 0; i < _previews3D.length; i++) {
+        if (_previews3D[i] === ctrl) { _previews3D.splice(i, 1); break; }
+      }
+    }
+
+    if (typeof IntersectionObserver !== 'undefined') {
+      try {
+        _io = new IntersectionObserver(function (entries) {
+          _visible = !!(entries && entries[0] && entries[0].isIntersecting);
+          if (_visible && ctrl.isSpinning) refresh();
+        });
+        _io.observe(canvas);
+      } catch (e) { _io = null; }
+    }
+
+    _previews3D.push(ctrl);
+    refresh();
+    if (_hasRaf) {
+      try { _rafId = requestAnimationFrame(_tick); } catch (e) { /* chỉ vẽ tĩnh */ }
+    }
+    return ctrl;
   }
 
   /* ---- init ---- */
@@ -637,6 +914,8 @@ ED.Material = (function () {
     edMatPreset: edMatPreset, listPresets: listPresets,
     validateTextureFile: validateTextureFile, normalizeMaterial: normalizeMaterial,
     clampRepeat: clampRepeat, clampOffset: clampOffset,
+    formatTextureSize: formatTextureSize, textureMeta: textureMeta,
+    nextPreviewShape: nextPreviewShape, previewShapeLabel: previewShapeLabel,
     setTextureSlot: setTextureSlot, applyPresetToObject: applyPresetToObject,
     setTiling: setTiling, textureKey: textureKey,
     saveTexture: saveTexture, loadTexture: loadTexture, textureName: textureName,
@@ -644,7 +923,8 @@ ED.Material = (function () {
     applyPreset: applyPreset, setEmissive: setEmissive,
     applyToMesh: applyToMesh, applyLive: applyLive,
     restoreObjectTextures: restoreObjectTextures, restoreAllTextures: restoreAllTextures,
-    drawUvPreview: drawUvPreview
+    drawUvPreview: drawUvPreview, createPreview3D: createPreview3D,
+    refreshPreviews3D: _refreshPreviews3D
   };
 })();
 

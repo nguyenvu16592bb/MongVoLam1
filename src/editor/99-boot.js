@@ -62,6 +62,7 @@ ED.Boot = (function () {
     _callInit('Character');
     _callInit('Animation');
     _callInit('NpcAi');
+    _callInit('Nodes');
     _callInit('Play');
     _callInit('GameLink');
     _callInit('Nav');

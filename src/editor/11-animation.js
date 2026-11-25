@@ -13,12 +13,20 @@
    - Blending: chuyển clip dùng crossFadeTo với thời gian fade chỉnh được.
    - Root motion: toggle; khi bật, group nhân vật di chuyển theo delta X/Z
      của xương Hips (track pos.x/pos.z) theo từng frame.
+   - ĐỢT 3: kéo keyframe trực tiếp trên lane (chuột + chạm, snap 0.05s,
+     kẹp [0, duration], kéo qua key khác thì dừng lại ngay trước nó);
+     copy/paste keyframe (chọn 1 hoặc nhiều key cùng track bằng
+     Shift-click, Ctrl+C / Ctrl+V hoặc nút Copy/Paste trên timeline);
+     track scale (scale.x/y/z) cho object — keyframe scale thêm/xoá/kéo/
+     copy-paste như pos/rot, clip tự tạo phát scale bằng
+     NumberKeyframeTrack thật, project JSON lưu cùng định dạng tracks[]
+     (project cũ không có track scale vẫn mở được).
    QUY TẮC DESIGN.md: KHÔNG truy cập document/window/THREE ở top-level;
    mọi khởi tạo trong init(). Logic thuần expose để test bằng vm + stub
-   THREE. Chỉ sửa file này + 07-character.js (API preview). Không sửa file
-   nhóm khác. GIỚI HẠN: chưa render thử trên trình duyệt/điện thoại thật;
-   root motion chỉ có tác dụng khi clip có track vị trí của xương Hips;
-   clip tự tạo chỉ đổi pos/rot (không scale, không morph, không IK). */
+   THREE. Chỉ sửa file này. Không sửa file nhóm khác. GIỚI HẠN: chưa render
+   thử trên trình duyệt/điện thoại thật; root motion chỉ có tác dụng khi
+   clip có track vị trí của xương Hips; clip tự tạo chỉ đổi pos/rot/scale
+   (không morph, không IK). */
 
 var ED = (typeof ED !== 'undefined' && ED) ? ED : {};
 
@@ -35,7 +43,16 @@ var ED_ANIM_CONDITION_LABELS = {
   'hp<=0': 'Hết HP (hp<=0)', key: 'Bấm phím'
 };
 
-/* ---------------- Logic thuần (không DOM/THREE) ---------------- */
+/* Lưới thời gian khi kéo keyframe (giây). */
+var ED_ANIM_DRAG_SNAP = 0.05;
+
+/* Làm tròn thời gian về lưới snap (mặc định 0.05s). */
+function edAnimSnapTime(t, step) {
+  var s = isFinite(Number(step)) && Number(step) > 0 ? Number(step) : ED_ANIM_DRAG_SNAP;
+  var n = Number(t);
+  if (!isFinite(n)) return 0;
+  return Number((Math.round(n / s) * s).toFixed(2));
+}
 
 function edAnimClampFade(v) {
   var n = Number(v);
@@ -99,27 +116,31 @@ function edAnimGetAnimation(project, id) {
   return null;
 }
 
-/* Prop chỉnh được theo target: object đủ pos+rot, xương chỉ rot
-   (xương Mixamo thường chỉ xoay; pos của xương chỉ dùng cho Hips
-   khi bật root motion — vẫn cho key bằng tay qua track pos nếu có). */
+/* Prop chỉnh được theo target: object đủ pos+rot+scale (scale thêm đợt 3),
+   xương chỉ rot (xương Mixamo thường chỉ xoay; pos của xương chỉ dùng cho
+   Hips khi bật root motion — vẫn cho key bằng tay qua track pos nếu có). */
 function edAnimTrackProps(targetType) {
   if (targetType === 'bone') return ['rot.x', 'rot.y', 'rot.z'];
-  return ['pos.x', 'pos.y', 'pos.z', 'rot.x', 'rot.y', 'rot.z'];
+  return ['pos.x', 'pos.y', 'pos.z', 'rot.x', 'rot.y', 'rot.z',
+    'scale.x', 'scale.y', 'scale.z'];
 }
 
 function edAnimPropLabel(prop) {
   var map = {
     'pos.x': 'Vị trí X', 'pos.y': 'Vị trí Y', 'pos.z': 'Vị trí Z',
-    'rot.x': 'Xoay X', 'rot.y': 'Xoay Y', 'rot.z': 'Xoay Z'
+    'rot.x': 'Xoay X', 'rot.y': 'Xoay Y', 'rot.z': 'Xoay Z',
+    'scale.x': 'Tỉ lệ X', 'scale.y': 'Tỉ lệ Y', 'scale.z': 'Tỉ lệ Z'
   };
   return map[prop] || prop;
 }
 
-/* Tên property THREE tương ứng: 'pos.x' -> 'position[x]'. */
+/* Tên property THREE tương ứng: 'pos.x' -> 'position[x]',
+   'scale.y' -> 'scale[y]'. */
 function edAnimPropBinding(prop) {
   var map = {
     'pos.x': 'position[x]', 'pos.y': 'position[y]', 'pos.z': 'position[z]',
-    'rot.x': 'rotation[x]', 'rot.y': 'rotation[y]', 'rot.z': 'rotation[z]'
+    'rot.x': 'rotation[x]', 'rot.y': 'rotation[y]', 'rot.z': 'rotation[z]',
+    'scale.x': 'scale[x]', 'scale.y': 'scale[y]', 'scale.z': 'scale[z]'
   };
   return map[prop] || null;
 }
@@ -182,6 +203,119 @@ function edAnimRemoveKey(anim, prop, t) {
     }
   }
   return false;
+}
+
+/* ---------------- Đợt 3: kéo / copy-paste keyframe (thuần) ---------------- */
+
+/* Kéo 1 keyframe trên cùng track sang thời gian mới.
+   - Snap về lưới 0.05s, kẹp trong [0, duration] (không kéo dài duration).
+   - KHÔNG cho 2 key cùng track trùng thời gian: kéo qua key kề thì DỪNG
+     LẠI NGAY TRƯỚC NÓ (cách đúng 1 ô lưới 0.05s); nếu giữa 2 key kề
+     không còn chỗ trống trên lưới (vd key cách nhau đúng 0.05s) thì key
+     đứng yên và trả ok:false kèm reason.
+   Trả {ok, key, t, moved, reason?}; key là object key đã (không) di chuyển.
+   Không đổi giá trị v, không đổi thứ tự các key khác (chỉ sort lại). */
+function edAnimMoveKeyframe(anim, prop, oldT, newT) {
+  if (!anim || !Array.isArray(anim.tracks)) {
+    return { ok: false, key: null, t: Number(oldT) || 0, reason: 'Animation không hợp lệ.' };
+  }
+  var tr = edAnimFindTrack(anim, prop);
+  if (!tr) {
+    return { ok: false, key: null, t: Number(oldT) || 0, reason: 'Không tìm thấy track ' + prop + '.' };
+  }
+  var idx = -1;
+  for (var i = 0; i < tr.keys.length; i++) {
+    if (Math.abs(tr.keys[i].t - Number(oldT)) < 1e-6) { idx = i; break; }
+  }
+  if (idx < 0) {
+    return { ok: false, key: null, t: Number(oldT) || 0, reason: 'Không tìm thấy keyframe tại ' + Number(oldT).toFixed(2) + 's.' };
+  }
+  var key = tr.keys[idx];
+  var dur = isFinite(Number(anim.duration)) ? Number(anim.duration) : 0;
+  var snapped = edAnimSnapTime(newT, ED_ANIM_DRAG_SNAP);
+  snapped = Math.min(dur, Math.max(0, snapped));
+  if (Math.abs(snapped - key.t) < 1e-6) {
+    return { ok: true, key: key, t: key.t, moved: false };
+  }
+  var prev = (idx > 0) ? tr.keys[idx - 1] : null;
+  var next = (idx < tr.keys.length - 1) ? tr.keys[idx + 1] : null;
+  if (next && snapped >= next.t - 1e-6) {
+    /* Kéo sang phải qua key kề: dừng ngay trước nó (cách 1 ô lưới). */
+    snapped = edAnimSnapTime(next.t - ED_ANIM_DRAG_SNAP, ED_ANIM_DRAG_SNAP);
+    if (snapped >= next.t - 1e-6) snapped = Number((next.t - ED_ANIM_DRAG_SNAP).toFixed(2));
+    if (snapped <= key.t + 1e-6 || (prev && snapped <= prev.t + 1e-6)) {
+      return { ok: false, key: key, t: key.t,
+        reason: 'Không còn chỗ trống giữa 2 keyframe kề nhau (lưới 0.05s) — key đứng yên.' };
+    }
+  } else if (prev && snapped <= prev.t + 1e-6) {
+    /* Kéo sang trái qua key kề: dừng ngay sau nó (cách 1 ô lưới). */
+    snapped = edAnimSnapTime(prev.t + ED_ANIM_DRAG_SNAP, ED_ANIM_DRAG_SNAP);
+    if (snapped <= prev.t + 1e-6) snapped = Number((prev.t + ED_ANIM_DRAG_SNAP).toFixed(2));
+    if (snapped >= key.t - 1e-6 || (next && snapped >= next.t - 1e-6)) {
+      return { ok: false, key: key, t: key.t,
+        reason: 'Không còn chỗ trống giữa 2 keyframe kề nhau (lưới 0.05s) — key đứng yên.' };
+    }
+  }
+  snapped = Math.min(dur, Math.max(0, snapped));
+  key.t = snapped;
+  tr.keys.sort(function (a, b) { return a.t - b.t; });
+  return { ok: true, key: key, t: snapped, moved: true };
+}
+
+/* Copy 1 hoặc nhiều keyframe đã chọn (selection: [{prop, t}, ...]).
+   Trả clipboard thuần {keys:[{prop, t, v}], baseT, count, sourceAnimId}
+   hoặc null nếu không chọn được key nào. baseT = thời gian sớm nhất
+   trong số key đã copy — paste giữ nguyên khoảng cách giữa các key. */
+function edAnimCopyKeys(anim, selection) {
+  if (!anim || !Array.isArray(selection) || !selection.length) return null;
+  var keys = [];
+  selection.forEach(function (sel) {
+    if (!sel || typeof sel.prop !== 'string') return;
+    var tr = edAnimFindTrack(anim, sel.prop);
+    if (!tr) return;
+    for (var i = 0; i < tr.keys.length; i++) {
+      if (Math.abs(tr.keys[i].t - Number(sel.t)) < 1e-6) {
+        keys.push({ prop: sel.prop, t: tr.keys[i].t, v: tr.keys[i].v });
+        break;
+      }
+    }
+  });
+  if (!keys.length) return null;
+  var baseT = keys[0].t;
+  keys.forEach(function (k) { if (k.t < baseT) baseT = k.t; });
+  return { keys: keys, baseT: baseT, count: keys.length, sourceAnimId: anim.id || null };
+}
+
+/* Paste clipboard (từ edAnimCopyKeys) vào animation tại playhead:
+   key đầu tiên (sớm nhất) đặt đúng tại playhead, các key sau giữ nguyên
+   khoảng cách so với key đầu; giá trị v giữ nguyên; trùng thời gian với
+   key cũ trên cùng track thì ghi đè key cũ (đếm vào overwritten).
+   Key paste vượt quá duration thì tự kéo dài duration (như addKey).
+   Trả {ok, added:[key...], overwritten, reason?}. */
+function edAnimPasteKeys(anim, clipboard, playheadT) {
+  if (!anim || !Array.isArray(anim.tracks)) {
+    return { ok: false, added: [], overwritten: 0, reason: 'Animation không hợp lệ.' };
+  }
+  if (!clipboard || !Array.isArray(clipboard.keys) || !clipboard.keys.length) {
+    return { ok: false, added: [], overwritten: 0, reason: 'Chưa copy keyframe nào.' };
+  }
+  var base = isFinite(Number(clipboard.baseT)) ? Number(clipboard.baseT) : clipboard.keys[0].t;
+  var t0 = edAnimClampTime(playheadT, anim.duration);
+  var added = [], overwritten = 0;
+  clipboard.keys.forEach(function (k) {
+    if (!k || !edAnimPropBinding(k.prop)) return;
+    var tt = t0 + (Number(k.t) - base);
+    if (tt < 0) tt = 0;
+    var tr = edAnimFindTrack(anim, k.prop);
+    if (tr) {
+      for (var i = 0; i < tr.keys.length; i++) {
+        if (Math.abs(tr.keys[i].t - tt) < 1e-6) { overwritten++; break; }
+      }
+    }
+    var nk = edAnimAddKey(anim, k.prop, tt, k.v);
+    if (nk) added.push(nk);
+  });
+  return { ok: added.length > 0, added: added, overwritten: overwritten };
 }
 
 /* Nội suy tuyến tính giá trị của 1 track tại thời gian t. Ngoài khoảng
@@ -436,6 +570,11 @@ ED.Animation = {
   findTrack: edAnimFindTrack,
   addKey: edAnimAddKey,
   removeKey: edAnimRemoveKey,
+  snapTime: edAnimSnapTime,
+  dragSnap: ED_ANIM_DRAG_SNAP,
+  moveKeyframe: edAnimMoveKeyframe,
+  copyKeys: edAnimCopyKeys,
+  pasteKeys: edAnimPasteKeys,
   sampleTrack: edAnimSampleTrack,
   sampleAnim: edAnimSampleAnim,
   setDuration: edAnimSetDuration,
@@ -464,6 +603,7 @@ ED.Animation = {
   _playheadEl: null,
   _tracksEl: null,
   _keyInfoEl: null,
+  _clipInfoEl: null,
   _smCharSelectEl: null,
   _smBodyEl: null,
   _playBtn: null,
@@ -476,7 +616,11 @@ ED.Animation = {
     sceneRootName: null, previewOwned: false,
     rootBase: null, rootLastT: null,
     raf: 0, lastTs: 0, scrubbing: false, wasPlaying: false,
-    selectedKey: null, /* {prop, t} */
+    selectedKey: null, /* {prop, t} — key chọn gần nhất (tương thích đợt 2) */
+    selectedKeys: [], /* [{prop, t}, ...] — nhiều key chọn bằng Shift-click (đợt 3) */
+    clipboard: null, /* {keys:[{prop,t,v}], baseT, count, sourceAnimId} (đợt 3) */
+    drag: null, /* {prop, oldT, t, moved, startX, lane, dot} khi đang kéo key (đợt 3) */
+    suppressClick: false, /* true khi vừa kéo xong: click sau drag không chọn lại */
     smCharId: null, collapsed: false
   },
 
@@ -564,6 +708,28 @@ ED.Animation = {
     var self = this;
     var S = this._state;
 
+    /* CSS riêng đợt 3 (inject bằng JS — không sửa editor.css): kéo key
+       không cuộn trang trên điện thoại, chấm đang kéo nổi bật. */
+    if (!document.getElementById('ed-anim-timeline3-style')) {
+      var st = document.createElement('style');
+      st.id = 'ed-anim-timeline3-style';
+      st.textContent = '.ed-anim-lane{touch-action:none}.ed-anim-key{touch-action:none;cursor:grab}' +
+        '.ed-anim-key.dragging{cursor:grabbing}.ed-anim-key.dragging .ed-anim-key-dot{background:#f97316;outline:2px solid #fff;transform:scale(1.3)}' +
+        '.ed-anim-clipinfo{font-size:12px;color:#a7f3d0;white-space:nowrap}';
+      (document.head || host).appendChild(st);
+    }
+    /* Ctrl+C / Ctrl+V copy-paste keyframe (chỉ khi không đang gõ trong
+       input/select/textarea, và đang có animation được chọn). */
+    document.addEventListener('keydown', function (e) {
+      if (!e || !(e.ctrlKey || e.metaKey)) return;
+      var tag = e.target && e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (!self.currentAnim()) return;
+      var k = String(e.key || '').toLowerCase();
+      if (k === 'c') { if (self.copySelectedKeys()) { try { e.preventDefault(); } catch (err) {} } }
+      else if (k === 'v') { if (self.pasteAtPlayhead()) { try { e.preventDefault(); } catch (err) {} } }
+    });
+
     function el(tag, cls, text) {
       var e = document.createElement(tag);
       if (cls) e.className = cls;
@@ -609,6 +775,7 @@ ED.Animation = {
       S.animId = animSel.value || null;
       S.time = 0;
       S.selectedKey = null;
+      S.selectedKeys = [];
       self.refreshTargetLabel();
       self.renderTracks();
     });
@@ -706,7 +873,7 @@ ED.Animation = {
     body.appendChild(ruler);
 
     /* --- Tracks + keyframe --- */
-    var tracksTitle = el('div', 'ed-anim-section-title', 'Track keyframe (bấm “+ Key” để thêm keyframe tại thời gian hiện tại, lấy giá trị hiện tại của object/xương)');
+    var tracksTitle = el('div', 'ed-anim-section-title', 'Track keyframe — bấm “+ Key” để thêm keyframe tại thời gian hiện tại (lấy giá trị hiện tại của object/xương); bấm-giữ 1 chấm rồi kéo ngang để đổi thời gian (lưới 0.05s); Shift-click để chọn nhiều key trên cùng track rồi Copy/Paste.');
     body.appendChild(tracksTitle);
     var tracks = el('div', 'ed-anim-tracks');
     body.appendChild(tracks);
@@ -715,6 +882,11 @@ ED.Animation = {
     var keyInfo = el('span', 'ed-anim-keyinfo', 'Chưa chọn keyframe nào.');
     keyRow.appendChild(keyInfo);
     this._keyInfoEl = keyInfo;
+    keyRow.appendChild(btn('📋 Copy', function () { self.copySelectedKeys(); }));
+    keyRow.appendChild(btn('📥 Paste tại playhead', function () { self.pasteAtPlayhead(); }));
+    var clipInfo = el('span', 'ed-anim-clipinfo', '');
+    keyRow.appendChild(clipInfo);
+    this._clipInfoEl = clipInfo;
     keyRow.appendChild(btn('🗑 Xoá keyframe đã chọn', function () { self.deleteSelectedKey(); }));
     body.appendChild(keyRow);
 
@@ -864,15 +1036,29 @@ ED.Animation = {
       var keys = tr ? tr.keys : [];
       keys.forEach(function (k) {
         var dot = document.createElement('button');
-        dot.className = 'ed-anim-key' + ((S.selectedKey && S.selectedKey.prop === prop &&
-          Math.abs(S.selectedKey.t - k.t) < 1e-6) ? ' selected' : '');
+        var isSel = false;
+        (S.selectedKeys || []).forEach(function (sk) {
+          if (sk.prop === prop && Math.abs(sk.t - k.t) < 1e-6) isSel = true;
+        });
+        if (!isSel && S.selectedKey && S.selectedKey.prop === prop &&
+          Math.abs(S.selectedKey.t - k.t) < 1e-6) isSel = true;
+        dot.className = 'ed-anim-key' + (isSel ? ' selected' : '');
         dot.style.left = (anim.duration > 0 ? (k.t / anim.duration * 100) : 0) + '%';
-        dot.title = edAnimPropLabel(prop) + ' @ ' + k.t.toFixed(2) + 's = ' + Number(k.v).toFixed(2);
+        dot.title = edAnimPropLabel(prop) + ' @ ' + k.t.toFixed(2) + 's = ' + Number(k.v).toFixed(2) +
+          ' — bấm-giữ rồi kéo ngang để đổi thời gian';
         var inner = document.createElement('span');
         inner.className = 'ed-anim-key-dot';
         dot.appendChild(inner);
-        dot.addEventListener('click', function () {
-          S.selectedKey = { prop: prop, t: k.t };
+        /* Kéo keyframe trực tiếp (chuột + chạm, pointer events). */
+        dot.addEventListener('pointerdown', function (ev) {
+          self._keyDragStart(ev, prop, k.t, lane, dot);
+        });
+        dot.addEventListener('click', function (ev) {
+          if (S.suppressClick) { S.suppressClick = false; return; }
+          /* Shift-click: thêm/bỏ key khỏi vùng chọn nhiều key (đợt 3);
+             click thường: chỉ chọn key này. */
+          if (ev && ev.shiftKey) self._toggleKeySelection(prop, k.t);
+          else self._selectKeys([{ prop: prop, t: k.t }]);
           self._renderKeyInfo();
           self.renderTracks();
         });
@@ -896,23 +1082,169 @@ ED.Animation = {
   },
 
   _renderKeyInfo: function () {
-    if (!this._keyInfoEl) return;
-    var S = this._state;
-    var anim = this.currentAnim();
-    if (!anim || !S.selectedKey) {
-      this._keyInfoEl.textContent = 'Chưa chọn keyframe nào — bấm 1 chấm trên track để chọn.';
-      return;
-    }
-    var tr = edAnimFindTrack(anim, S.selectedKey.prop);
-    var v = null;
-    if (tr) {
-      for (var i = 0; i < tr.keys.length; i++) {
-        if (Math.abs(tr.keys[i].t - S.selectedKey.t) < 1e-6) { v = tr.keys[i].v; break; }
+    if (this._keyInfoEl) {
+      var S = this._state;
+      var anim = this.currentAnim();
+      var sel = (S.selectedKeys && S.selectedKeys.length) ? S.selectedKeys
+        : (S.selectedKey ? [S.selectedKey] : []);
+      if (!anim || !sel.length) {
+        this._keyInfoEl.textContent = 'Chưa chọn keyframe nào — bấm 1 chấm trên track để chọn, Shift-click để chọn thêm key trên cùng track.';
+      } else if (sel.length > 1) {
+        this._keyInfoEl.textContent = 'Đã chọn ' + sel.length + ' keyframe — bấm Copy để copy, Xoá để xoá tất cả.';
+      } else {
+        var tr = edAnimFindTrack(anim, sel[0].prop);
+        var v = null;
+        if (tr) {
+          for (var i = 0; i < tr.keys.length; i++) {
+            if (Math.abs(tr.keys[i].t - sel[0].t) < 1e-6) { v = tr.keys[i].v; break; }
+          }
+        }
+        this._keyInfoEl.textContent = (v === null)
+          ? 'Keyframe đã chọn không còn nữa.'
+          : ('Keyframe: ' + edAnimPropLabel(sel[0].prop) + ' @ ' + Number(sel[0].t).toFixed(2) + 's = ' + Number(v).toFixed(2));
       }
     }
-    this._keyInfoEl.textContent = (v === null)
-      ? 'Keyframe đã chọn không còn nữa.'
-      : ('Keyframe: ' + edAnimPropLabel(S.selectedKey.prop) + ' @ ' + Number(S.selectedKey.t).toFixed(2) + 's = ' + Number(v).toFixed(2));
+    if (this._clipInfoEl) {
+      var cb = this._state.clipboard;
+      this._clipInfoEl.textContent = (cb && cb.count)
+        ? ('Đã copy: ' + cb.count + ' keyframe — bấm Paste để dán tại playhead.')
+        : '';
+    }
+  },
+
+  /* Chọn đúng danh sách key (đồng bộ cả selectedKey đợt 2). */
+  _selectKeys: function (list) {
+    var S = this._state;
+    S.selectedKeys = (list || []).slice();
+    S.selectedKey = S.selectedKeys.length ? S.selectedKeys[S.selectedKeys.length - 1] : null;
+  },
+
+  /* Shift-click: thêm key vào vùng chọn nếu chưa có, bỏ ra nếu đã có. */
+  _toggleKeySelection: function (prop, t) {
+    var S = this._state;
+    var list = (S.selectedKeys || []).slice();
+    var found = -1;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].prop === prop && Math.abs(list[i].t - t) < 1e-6) { found = i; break; }
+    }
+    if (found >= 0) list.splice(found, 1);
+    else list.push({ prop: prop, t: t });
+    this._selectKeys(list);
+  },
+
+  /* ---------------- Đợt 3: kéo keyframe trên lane ---------------- */
+
+  _keyDragStart: function (e, prop, t, lane, dot) {
+    var S = this._state;
+    if (!e || (typeof e.button === 'number' && e.button !== 0)) return;
+    if (S.drag) return; /* đang kéo 1 key khác */
+    var anim = this.currentAnim();
+    if (!anim) return;
+    S.drag = { prop: prop, oldT: t, t: t, moved: false,
+      startX: (typeof e.clientX === 'number') ? e.clientX : 0, lane: lane, dot: dot };
+    try { if (dot.setPointerCapture) dot.setPointerCapture(e.pointerId); } catch (err) {}
+    try { if (e.preventDefault) e.preventDefault(); } catch (err2) {}
+    var self = this;
+    function onMove(ev) { self._keyDragMove(ev); }
+    function onUp(ev) {
+      try { dot.removeEventListener('pointermove', onMove); } catch (err) {}
+      try { dot.removeEventListener('pointerup', onUp); } catch (err2) {}
+      try { dot.removeEventListener('pointercancel', onUp); } catch (err3) {}
+      self._keyDragEnd(ev);
+    }
+    dot.addEventListener('pointermove', onMove);
+    dot.addEventListener('pointerup', onUp);
+    dot.addEventListener('pointercancel', onUp);
+  },
+
+  _keyDragMove: function (e) {
+    var S = this._state;
+    var drag = S.drag;
+    if (!drag || !e) return;
+    var anim = this.currentAnim();
+    if (!anim || !drag.lane) return;
+    var x = (typeof e.clientX === 'number') ? e.clientX : drag.startX;
+    if (!drag.moved && Math.abs(x - drag.startX) < 4) return; /* chưa đủ xa: vẫn là click */
+    drag.moved = true;
+    var rect = null;
+    try { rect = drag.lane.getBoundingClientRect(); } catch (err) { return; }
+    if (!rect || !rect.width || !anim.duration) return;
+    var rawT = (x - rect.left) / rect.width * Number(anim.duration);
+    var r = edAnimMoveKeyframe(anim, drag.prop, drag.t, rawT);
+    if (r.ok && r.moved) {
+      drag.t = r.t;
+      S.time = r.t;
+      this._selectKeys([{ prop: drag.prop, t: r.t }]);
+      if (drag.dot) {
+        drag.dot.className = drag.dot.className.replace(/\s*dragging/g, '') + ' dragging selected';
+        drag.dot.style.left = (r.t / Number(anim.duration) * 100) + '%';
+        drag.dot.title = edAnimPropLabel(drag.prop) + ' @ ' + r.t.toFixed(2) + 's';
+      }
+      this._renderKeyInfo();
+    } else if (!r.ok && r.reason) {
+      /* Kéo vào vùng không còn chỗ: giữ nguyên vị trí, báo 1 lần. */
+      if (!drag.warned) { drag.warned = true; this.toast(r.reason); }
+    }
+  },
+
+  _keyDragEnd: function (e) {
+    var S = this._state;
+    var drag = S.drag;
+    S.drag = null;
+    if (!drag) return;
+    if (!drag.moved) return; /* click thường — click handler lo phần chọn */
+    S.suppressClick = true; /* click bắn sau pointerup không được chọn lại */
+    var anim = this.currentAnim();
+    if (anim && drag.t !== drag.oldT) {
+      this.commit('Kéo keyframe ' + drag.prop + ' ' + Number(drag.oldT).toFixed(2) + 's → ' + Number(drag.t).toFixed(2) + 's');
+      this._selectKeys([{ prop: drag.prop, t: drag.t }]);
+      /* Phát lại preview đúng vị trí mới của key vừa kéo. */
+      this.scrubTo(drag.t);
+    }
+    this.renderTracks();
+  },
+
+  /* ---------------- Đợt 3: copy/paste keyframe ---------------- */
+
+  clipboard: function () {
+    return this._state.clipboard;
+  },
+
+  copySelectedKeys: function () {
+    var anim = this.currentAnim();
+    if (!anim) { this.toast('Chưa chọn animation nào.'); return false; }
+    var S = this._state;
+    var sel = (S.selectedKeys && S.selectedKeys.length) ? S.selectedKeys
+      : (S.selectedKey ? [S.selectedKey] : []);
+    if (!sel.length) { this.toast('Chưa chọn keyframe nào — bấm 1 chấm trên track để chọn (Shift-click để chọn nhiều key).'); return false; }
+    var cb = edAnimCopyKeys(anim, sel);
+    if (!cb) { this.toast('Không copy được keyframe đã chọn.'); return false; }
+    S.clipboard = cb;
+    this._renderKeyInfo();
+    this.toast('Đã copy ' + cb.count + ' keyframe — di chuyển playhead rồi bấm Paste (hoặc Ctrl+V).');
+    return true;
+  },
+
+  pasteAtPlayhead: function () {
+    var anim = this.currentAnim();
+    if (!anim) { this.toast('Chưa chọn animation nào.'); return false; }
+    var S = this._state;
+    if (!S.clipboard || !S.clipboard.count) { this.toast('Chưa copy keyframe nào — chọn key rồi bấm Copy (hoặc Ctrl+C) trước.'); return false; }
+    var r = edAnimPasteKeys(anim, S.clipboard, S.time);
+    if (!r.ok) { this.toast(r.reason || 'Không paste được keyframe.'); return false; }
+    this.commit('Paste ' + r.added.length + ' keyframe tại ' + Number(S.time).toFixed(2) + 's');
+    /* addKey chỉ trả {t, v} (không có prop): lấy lại prop từ clipboard
+       theo đúng thứ tự (paste duyệt clipboard.keys theo thứ tự). */
+    var sel = [];
+    for (var i = 0; i < r.added.length && i < S.clipboard.keys.length; i++) {
+      sel.push({ prop: S.clipboard.keys[i].prop, t: r.added[i].t });
+    }
+    this._selectKeys(sel);
+    this.refreshTargetLabel();
+    this.renderTracks();
+    this.toast('Đã paste ' + r.added.length + ' keyframe tại ' + Number(S.time).toFixed(2) + 's' +
+      (r.overwritten ? (' (ghi đè ' + r.overwritten + ' keyframe cũ tại cùng thời gian)') : '') + '.');
+    return true;
   },
 
   refreshSmCharSelect: function () {
@@ -1100,6 +1432,7 @@ ED.Animation = {
     this._state.animId = id;
     this._state.time = 0;
     this._state.selectedKey = null;
+    this._state.selectedKeys = [];
     if (this._animNameEl) this._animNameEl.value = '';
     this.refreshAnimSelect();
     this.refreshTargetLabel();
@@ -1120,6 +1453,7 @@ ED.Animation = {
     this._state.animId = anims.length ? anims[0].id : null;
     this._state.time = 0;
     this._state.selectedKey = null;
+    this._state.selectedKeys = [];
     this.refreshAnimSelect();
     this.refreshTargetLabel();
     this.renderTracks();
@@ -1130,11 +1464,15 @@ ED.Animation = {
   _currentValue: function (prop) {
     var anim = this.currentAnim();
     if (!anim) return null;
-    var axis = prop.slice(-1);
+    var parts = String(prop || '').split('.');
+    if (parts.length !== 2) return null;
+    var kind = parts[0]; /* 'pos' | 'rot' | 'scale' */
+    var axis = parts[1];
     var idx = { x: 0, y: 1, z: 2 }[axis];
     if (idx === undefined) return null;
-    var kind = prop.slice(0, 3);
     if (anim.targetType === 'bone') {
+      /* Xương chỉ có pos/rot (không có scale trong preview). */
+      if (kind === 'scale') return null;
       var bt = null;
       try {
         if (ED.Character && typeof ED.Character.getBoneTransform === 'function') {
@@ -1150,7 +1488,7 @@ ED.Animation = {
       if (ED.Viewport && ED.Viewport.meshes) mesh = ED.Viewport.meshes[anim.targetId];
     } catch (e) { mesh = null; }
     if (mesh) {
-      var v = (kind === 'pos') ? mesh.position : mesh.rotation;
+      var v = (kind === 'pos') ? mesh.position : (kind === 'rot') ? mesh.rotation : mesh.scale;
       return (v && isFinite(Number(v[axis]))) ? Number(v[axis]) : null;
     }
     var obj = null;
@@ -1158,7 +1496,7 @@ ED.Animation = {
       if (ED.Core && typeof ED.Core.getObject === 'function') obj = ED.Core.getObject(anim.targetId);
     } catch (e) { obj = null; }
     if (obj) {
-      var a2 = (kind === 'pos') ? obj.pos : obj.rot;
+      var a2 = (kind === 'pos') ? obj.pos : (kind === 'rot') ? obj.rot : obj.scale;
       return (a2 && isFinite(Number(a2[idx]))) ? Number(a2[idx]) : null;
     }
     return null;
@@ -1176,7 +1514,7 @@ ED.Animation = {
     }
     var key = edAnimAddKey(anim, prop, this._state.time, value);
     if (!key) { this.toast('Không thêm được keyframe (prop không hợp lệ).'); return false; }
-    this._state.selectedKey = { prop: prop, t: key.t };
+    this._selectKeys([{ prop: prop, t: key.t }]);
     this.commit('Thêm keyframe ' + prop + ' @ ' + key.t.toFixed(2) + 's');
     this.refreshTargetLabel();
     this.renderTracks();
@@ -1186,11 +1524,16 @@ ED.Animation = {
   deleteSelectedKey: function () {
     var S = this._state;
     var anim = this.currentAnim();
-    if (!anim || !S.selectedKey) { this.toast('Chưa chọn keyframe nào để xoá.'); return false; }
-    var ok = edAnimRemoveKey(anim, S.selectedKey.prop, S.selectedKey.t);
-    if (!ok) { this.toast('Không tìm thấy keyframe đó.'); return false; }
-    S.selectedKey = null;
-    this.commit('Xoá keyframe');
+    var sel = (S.selectedKeys && S.selectedKeys.length) ? S.selectedKeys
+      : (S.selectedKey ? [S.selectedKey] : []);
+    if (!anim || !sel.length) { this.toast('Chưa chọn keyframe nào để xoá.'); return false; }
+    var removed = 0;
+    sel.forEach(function (sk) {
+      if (edAnimRemoveKey(anim, sk.prop, sk.t)) removed++;
+    });
+    if (!removed) { this.toast('Không tìm thấy keyframe đó.'); return false; }
+    this._selectKeys([]);
+    this.commit('Xoá ' + removed + ' keyframe');
     this.renderTracks();
     return true;
   },

@@ -101,7 +101,7 @@ if (A) {
     clip && clip.name === 'Chạy thử' && clip.tracks.length === 1 &&
     clip.tracks[0].name === 'obj-3.position[x]');
   check('createClip prop sai -> track do bi loai',
-    A.buildClipData({ name: 'X', duration: 2, targetId: 'o', tracks: [{ prop: 'scale.x', keys: [{ t: 0, v: 1 }] }] }).tracks.length === 0);
+    A.buildClipData({ name: 'X', duration: 2, targetId: 'o', tracks: [{ prop: 'foo.x', keys: [{ t: 0, v: 1 }] }] }).tracks.length === 0);
   check('setDuration kep 0.5-60 (100->60, 0.1->0.5)',
     A.setDuration(anim, 100) === 60 && A.setDuration(anim, 0.1) === 0.5);
   check('validateAnim dung -> ok, {} -> khong ok',

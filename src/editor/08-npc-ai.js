@@ -27,6 +27,15 @@
    khi vào detectionRadius (đi theo đường findPath nếu caller truyền
    findPathFn/stepAlongFn, không có thì đuổi thẳng), đứng lại đánh khi vào
    attackRadius. Không đụng UI editor của NPC.
+   ĐỢT 4 (AI có trí nhớ): edNpcNextAiState — máy trạng thái thuần
+   chase/attack -> alert -> search -> patrol/idle: mất dấu địch thì nhớ
+   lastSeenPos/lastSeenAt, đi tới chỗ thấy địch lần cuối (A* qua ED.Nav
+   nếu có, không có thì đi thẳng), tìm vòng nhỏ quanh đó trong
+   searchDuration (mặc định 5s, chỉnh được qua npc.searchDuration),
+   thấy lại thì quay về chase, hết giờ thì về home (waypoint đầu/spawn)
+   + patrol/idle. 2 state mới 'alert'/'search' (ED_NPC_AI_STATES).
+   Nhãn tiếng Việt cho mọi state: ED_NPC_AI_STATE_LABELS (09-play.js vẽ
+   lên đầu NPC trong Play Mode bằng THREE.Sprite + canvas).
    QUY TẮC DESIGN.md: KHÔNG truy cập document/window/THREE ở top-level;
    logic thuần expose để nhóm D test bằng vm + stub THREE. */
 
@@ -38,6 +47,18 @@ var ED_NPC_FACTIONS = ['Thiếu Lâm', 'Võ Đang', 'Nga Mi', 'Cái Bang', 'Minh
 var ED_NPC_TYPES = ['Thương nhân', 'Thợ rèn', 'Dược sư', 'Quest giver', 'Sư phụ', 'Bảo vệ', 'Dịch chuyển', 'Boss', 'Quái'];
 var ED_NPC_AI_MODES = ['idle', 'patrol', 'wander', 'follow', 'chase', 'attack'];
 var ED_NPC_AI_LABELS = { idle: 'Idle (đứng yên)', patrol: 'Patrol (tuần tra)', wander: 'Wander (lang thang)', follow: 'Follow (đi theo)', chase: 'Chase (đuổi theo)', attack: 'Attack (tấn công)' };
+/* Đợt 4 — danh sách state AI RUNTIME (6 mode gốc + 2 state trí nhớ).
+   ED_NPC_AI_MODES giữ nguyên 6 mode chọn được trong Inspector (hành vi
+   gốc của NPC); 'alert'/'search' chỉ xuất hiện lúc chạy Play Mode nên
+   KHÔNG đưa vào dropdown Inspector. */
+var ED_NPC_AI_STATES = ['idle', 'patrol', 'wander', 'follow', 'chase', 'attack', 'alert', 'search'];
+var ED_NPC_AI_STATE_LABELS = {
+  idle: 'Đứng yên', patrol: 'Tuần tra', wander: 'Lang thang', follow: 'Đi theo',
+  chase: 'Đuổi theo', attack: 'Tấn công', alert: 'Cảnh giác', search: 'Tìm kiếm'
+};
+var ED_NPC_AI_SEARCH_DURATION_DEFAULT = 5; /* giây tìm quanh lastSeenPos, mặc định */
+var ED_NPC_AI_SEARCH_RADIUS = 2;           /* bán kính vòng tìm nhỏ quanh lastSeenPos */
+var ED_NPC_AI_ALERT_TIMEOUT_DEFAULT = 10;  /* giây: alert quá lâu không tới được lastSeenPos thì bỏ về nhà */
 var ED_NPC_IDLE_ANIMS = ['idle', 'walk', 'talk'];
 var ED_QUEST_TYPES = ['Chính', 'Tuyến', 'Phụ', 'Hằng ngày', 'Boss', 'Thu thập', 'Giết quái', 'Nói chuyện'];
 
@@ -59,6 +80,10 @@ function edNpcNewNpc(id) {
     interactRadius: 2, idleAnim: 'idle',
     pos: [0, 0], patrol: [], ai: 'idle',
     detectionRadius: 5, attackRadius: 1.5,
+    /* Đợt 4 — trí nhớ AI: thời gian tìm quanh lastSeenPos (giây).
+       NPC cũ (project đã lưu) không có field này thì nextAiState mặc
+       định 5s. */
+    searchDuration: 5,
     robe: '#334155', hair: '#1e1b18', weapon: null, aura: null
   };
 }
@@ -319,6 +344,89 @@ function edNpcAttackStep(npc, pos, heroPos, dt, navState, findPathFn, stepAlongF
   return { pos: c.pos, state: state, chasing: true, attacking: false };
 }
 
+/* ---- Đợt 4: AI có trí nhớ — máy trạng thái thuần (test được bằng vm) ---- */
+
+/* Nhãn tiếng Việt của 1 state AI (hiện trên đầu NPC trong Play Mode). */
+function edNpcAiStateLabel(state) {
+  return ED_NPC_AI_STATE_LABELS[state] || String(state || 'idle');
+}
+
+/* Chuyển trạng thái AI 1 bước (THUẦN, không DOM/THREE, không sửa npc).
+   npc: entry npcs[] hoặc object view của Play Mode — chỉ đọc các field:
+     ai (hành vi gốc), aiState (state runtime hiện tại, không có thì lấy ai),
+     lastSeenPos [x,z]|null (vị trí thấy địch lần cuối),
+     homePos [x,z]|null (điểm về khi hết tìm; không có thì waypoint đầu
+       patrol[], không có nữa thì null = đứng yên tại chỗ),
+     patrol [[x,z],...], attackRadius, detectionRadius (không dùng trực
+       tiếp ở đây — caller tính targetVisible từ detectionRadius),
+     searchDuration (giây, mặc định 5), alertTimeout (giây, mặc định 10).
+   ctx: {distToTarget, targetVisible, timeSinceSeen (giây từ lúc thấy địch
+     lần cuối, Infinity nếu chưa từng thấy), searchElapsed (giây đã tìm,
+     chỉ tính khi đang ở state 'search'), atLastSeen (đã tới lastSeenPos
+     chưa, <=0.5 ô), atHome (đã về home chưa, <=0.5 ô)}.
+   Trả {state, moveTo:[x,z]|null, lookAround:bool}:
+   - thấy địch: trong attackRadius -> 'attack', còn lại -> 'chase'.
+   - mất dấu lúc đang chase/attack: có lastSeenPos -> 'alert' đi tới đó,
+     không có -> về home (patrol nếu có waypoint, không thì idle).
+   - alert: tới lastSeenPos -> 'search' (lookAround=true); quá
+     alertTimeout mà chưa tới được (kẹt đường) -> về home.
+   - search: hết searchDuration -> về home (patrol/idle, moveTo=home;
+     moveTo=null nếu đã đứng đúng home); chưa hết -> ở lại 'search',
+     lookAround=true (caller cho đi vòng nhỏ bán kính ~2 quanh lastSeenPos).
+   - patrol/idle/wander/follow: giữ nguyên state, không di chuyển. */
+function edNpcNextAiState(npc, ctx) {
+  var n = npc || {};
+  var c = ctx || {};
+  var cur = (typeof n.aiState === 'string' && n.aiState) ? n.aiState : ((typeof n.ai === 'string' && n.ai) ? n.ai : 'idle');
+  if (ED_NPC_AI_STATES.indexOf(cur) < 0) cur = 'idle';
+  var attackR = Number(n.attackRadius);
+  if (!(attackR > 0)) attackR = 1.5;
+  var searchDur = Number(n.searchDuration);
+  if (!(searchDur > 0)) searchDur = ED_NPC_AI_SEARCH_DURATION_DEFAULT;
+  var alertTimeout = Number(n.alertTimeout);
+  if (!(alertTimeout > 0)) alertTimeout = ED_NPC_AI_ALERT_TIMEOUT_DEFAULT;
+  var lastSeen = (Array.isArray(n.lastSeenPos) && n.lastSeenPos.length >= 2)
+    ? [Number(n.lastSeenPos[0]) || 0, Number(n.lastSeenPos[1]) || 0] : null;
+  var home = null;
+  if (Array.isArray(n.homePos) && n.homePos.length >= 2) {
+    home = [Number(n.homePos[0]) || 0, Number(n.homePos[1]) || 0];
+  } else if (Array.isArray(n.patrol) && n.patrol.length && Array.isArray(n.patrol[0])) {
+    home = [Number(n.patrol[0][0]) || 0, Number(n.patrol[0][1]) || 0];
+  }
+  var hasPatrol = Array.isArray(n.patrol) && n.patrol.length > 0;
+  var base = hasPatrol ? 'patrol' : 'idle';
+  function goHome() {
+    return { state: base, moveTo: c.atHome ? null : home, lookAround: false };
+  }
+  /* Thấy địch -> đuổi/đánh (caller cập nhật lastSeenPos/lastSeenAt
+     trước khi gọi, nên ở đây chỉ cần chuyển state). */
+  if (c.targetVisible) {
+    var dist = Number(c.distToTarget);
+    if (!isFinite(dist)) dist = Infinity;
+    if (dist <= attackR) return { state: 'attack', moveTo: null, lookAround: false };
+    return { state: 'chase', moveTo: null, lookAround: false };
+  }
+  var timeSinceSeen = Number(c.timeSinceSeen);
+  if (!isFinite(timeSinceSeen) || timeSinceSeen < 0) timeSinceSeen = Infinity;
+  var searchElapsed = Number(c.searchElapsed);
+  if (!isFinite(searchElapsed) || searchElapsed < 0) searchElapsed = 0;
+  if (cur === 'chase' || cur === 'attack') {
+    if (!lastSeen) return goHome();
+    return { state: 'alert', moveTo: lastSeen, lookAround: false };
+  }
+  if (cur === 'alert') {
+    if (c.atLastSeen) return { state: 'search', moveTo: null, lookAround: true };
+    if (timeSinceSeen > alertTimeout) return goHome();
+    if (!lastSeen) return goHome();
+    return { state: 'alert', moveTo: lastSeen, lookAround: false };
+  }
+  if (cur === 'search') {
+    if (searchElapsed >= searchDur) return goHome();
+    return { state: 'search', moveTo: null, lookAround: true };
+  }
+  return { state: cur, moveTo: null, lookAround: false };
+}
+
 function edNpcClampNum(v, min, max, fallback) {
   var n = Number(v);
   if (!isFinite(n)) return fallback;
@@ -373,6 +481,14 @@ ED.NpcAi = {
   NPC_TYPES: ED_NPC_TYPES,
   AI_MODES: ED_NPC_AI_MODES,
   AI_LABELS: ED_NPC_AI_LABELS,
+  /* Đợt 4 — state runtime + nhãn tiếng Việt + hàm trí nhớ (test bằng vm). */
+  AI_STATES: ED_NPC_AI_STATES,
+  AI_STATE_LABELS: ED_NPC_AI_STATE_LABELS,
+  SEARCH_DURATION_DEFAULT: ED_NPC_AI_SEARCH_DURATION_DEFAULT,
+  SEARCH_RADIUS: ED_NPC_AI_SEARCH_RADIUS,
+  ALERT_TIMEOUT_DEFAULT: ED_NPC_AI_ALERT_TIMEOUT_DEFAULT,
+  nextAiState: edNpcNextAiState,
+  aiStateLabel: edNpcAiStateLabel,
   IDLE_ANIMS: ED_NPC_IDLE_ANIMS,
   QUEST_TYPES: ED_QUEST_TYPES,
   newNpc: edNpcNewNpc,

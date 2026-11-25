@@ -656,7 +656,8 @@ ED.UI = (function () {
   }
 
   // Section "Vật liệu & Texture" (ED.Material, 13-material.js):
-  // xem trước UV, 3 khe texture, tiling/offset, emissive, preset 1 chạm.
+  // xem trước 3D (hộp/cầu xoay, fallback UV 2D), 5 khe texture
+  // (đợt 4 thêm AO + emissive), tiling/offset, emissive, preset 1 chạm.
   function _materialTextureFields(obj) {
     var wrap = document.createElement('div');
     obj.material = obj.material || { roughness: 0.8, metalness: 0, opacity: 1 };
@@ -671,13 +672,51 @@ ED.UI = (function () {
     var mat = M.normalizeMaterial ? M.normalizeMaterial(obj.material) : obj.material;
     obj.material = mat;
 
-    // Xem trước UV: ảnh đang gán + lưới, chưa có thì lưới trống + chữ.
+    // Xem trước 3D (đợt 4): mini renderer riêng vẽ material hiện tại
+    // lên hộp/cầu xoay chậm, có nút xoay/dừng + đổi hình. WebGL lỗi
+    // (createPreview3D trả null) -> fallback canvas UV 2D cũ.
     var uv = document.createElement('canvas');
     uv.className = 'ed-mat-uv';
     uv.width = 220; uv.height = 220;
     uv.setAttribute('aria-label', 'Xem trước UV');
-    wrap.appendChild(uv);
-    M.drawUvPreview(uv);
+    var pvWrap = document.createElement('div');
+    pvWrap.className = 'ed-mat-preview3d';
+    var pvCanvas = document.createElement('canvas');
+    pvCanvas.className = 'ed-mat-preview3d-canvas';
+    pvCanvas.width = 220; pvCanvas.height = 160;
+    pvCanvas.setAttribute('aria-label', 'Xem trước vật liệu 3D');
+    pvWrap.appendChild(pvCanvas);
+    var pvRow = document.createElement('div');
+    pvRow.className = 'ed-mat-preview3d-row';
+    var pvSpin = document.createElement('button');
+    pvSpin.className = 'ed-mat-preview3d-btn';
+    pvSpin.textContent = 'Dừng xoay';
+    var pvShape = document.createElement('button');
+    pvShape.className = 'ed-mat-preview3d-btn';
+    pvShape.textContent = 'Hình: Hộp';
+    pvRow.appendChild(pvSpin);
+    pvRow.appendChild(pvShape);
+    pvWrap.appendChild(pvRow);
+    wrap.appendChild(pvWrap);
+    var pv = null;
+    try { pv = (M.createPreview3D) ? M.createPreview3D(pvCanvas, function () { return obj; }) : null; } catch (e) { pv = null; }
+    if (pv) {
+      pvSpin.addEventListener('click', function () {
+        var next = !pv.isSpinning;
+        pv.setSpinning(next);
+        pvSpin.textContent = next ? 'Dừng xoay' : 'Xoay';
+      });
+      pvShape.addEventListener('click', function () {
+        var next = (M.nextPreviewShape) ? M.nextPreviewShape(pv.shape) : (pv.shape === 'sphere' ? 'box' : 'sphere');
+        pv.setShape(next);
+        pvShape.textContent = 'Hình: ' + ((M.previewShapeLabel) ? M.previewShapeLabel(next) : next);
+      });
+    } else {
+      // Fallback: không có WebGL -> xem trước UV 2D như đợt 2.
+      pvWrap.style.display = 'none';
+      wrap.appendChild(uv);
+      M.drawUvPreview(uv);
+    }
 
     // 1 input file ẩn dùng chung cho cả 3 khe texture.
     var picker = document.createElement('input');
@@ -699,11 +738,11 @@ ED.UI = (function () {
       });
     });
 
-    var slots = [
-      ['map', 'Albedo (màu)'],
-      ['normalMap', 'Normal'],
-      ['roughnessMap', 'Nhám']
-    ];
+    // 5 khe texture (đợt 4 thêm AO + emissive), lấy từ M.SLOTS để khỏi
+    // lệch với 13-material.js; module cũ chưa có thì về 3 khe đợt 2.
+    var slots = (M.SLOTS || ['map', 'normalMap', 'roughnessMap']).map(function (slot) {
+      return [slot, (M.SLOT_LABELS && M.SLOT_LABELS[slot]) || slot];
+    });
     slots.forEach(function (s) {
       var slot = s[0];
       var row = document.createElement('div');
@@ -715,8 +754,13 @@ ED.UI = (function () {
       var key = obj.material[slot];
       var name = document.createElement('span');
       name.className = 'ed-mat-slot-name';
-      name.textContent = key ? (M.textureName(key) || 'Đã gán texture') : 'Chưa có';
-      name.title = key || '';
+      // Đợt 4: tên file + kích thước ('ao.png · 123 KB'); chưa nạp record
+      // thì chỉ tên, chưa gán thì 'Chưa có'.
+      var meta = (M.textureMeta) ? M.textureMeta(key) : null;
+      var metaName = (meta && meta.name) ? meta.name : (key ? (M.textureName(key) || 'Đã gán texture') : 'Chưa có');
+      var metaSize = (meta && typeof meta.size === 'number' && M.formatTextureSize) ? M.formatTextureSize(meta.size) : '';
+      name.textContent = key ? (metaSize ? metaName + ' · ' + metaSize : metaName) : 'Chưa có';
+      name.title = key ? (metaName + (metaSize ? ' (' + metaSize + ')' : '')) : '';
       row.appendChild(name);
       var pick = document.createElement('button');
       pick.className = 'ed-mat-slot-btn';
@@ -934,7 +978,8 @@ ED.UI = (function () {
     if (!_els.perfHud) return;
     _els.perfHud.textContent =
       'FPS ' + p.fps + ' · Draw ' + p.calls + ' · Tri ' + p.tris +
-      ' · Vert ' + p.verts + (p.mem ? ' · ' + p.mem + ' MB' : '');
+      ' · Vert ' + p.verts + (p.mem ? ' · ' + p.mem + ' MB' : '') +
+      (p.chunks ? ' · Chunk ' + p.chunks : '');
   }
 
   return {

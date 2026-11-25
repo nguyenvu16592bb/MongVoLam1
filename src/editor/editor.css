@@ -323,3 +323,33 @@ body > #export-panel { position: fixed; right: 8px; bottom: 8px; width: min(320p
 .ed-anim-sm-state-label { flex: 0 0 80px; font-size: 12px; color: #9aa0a6; }
 .ed-anim-sm-trans { flex: 1; min-width: 160px; font-size: 12px; }
 .ed-anim-fallback { padding: 8px 10px; background: #2f3339; }
+
+/* Đợt 4 — Material: xem trước 3D */
+.ed-mat-preview3d { margin-bottom: 8px; }
+.ed-mat-preview3d-canvas { display: block; width: 100%; max-width: 220px; height: auto; margin: 0 auto 6px; border: 1px solid #3a3f46; border-radius: 6px; background: #202329; }
+.ed-mat-preview3d-row { display: flex; gap: 6px; justify-content: center; }
+.ed-mat-preview3d-btn { flex: 1; min-height: 40px; max-width: 140px; }
+.ed-mat-slot-btn { min-height: 40px; min-width: 40px; }
+
+/* Đợt 4 — Terrain: thanh tiến trình xói mòn + hàng checkbox */
+.ed-progress { height: 10px; background: #22262c; border: 1px solid #2d3138; border-radius: 5px; overflow: hidden; margin: 2px 0 6px; }
+.ed-progress-fill { height: 100%; width: 0%; background: #38bdf8; transition: width 0.15s linear; }
+.ed-check-row label { display: flex; align-items: center; gap: 8px; min-height: 40px; font-size: 13px; color: #d4d4d8; }
+.ed-check-row input[type="checkbox"] { width: 20px; height: 20px; accent-color: #38bdf8; }
+
+/* Đợt 4 — panel chi tiết part nhà (14-building.js) */
+.ed-bldg-params { display: flex; flex-direction: column; gap: 6px; }
+.ed-bldg-param { display: flex; align-items: center; gap: 8px; min-height: 40px; }
+.ed-bldg-param-label { flex: 0 0 110px; font-size: 12px; color: #c8ccd2; }
+.ed-bldg-param input[type="range"] { flex: 1; min-width: 0; min-height: 40px; accent-color: #ffd76b; }
+.ed-bldg-param input[type="color"] { min-width: 48px; min-height: 40px; padding: 2px; background: #26292e; border: 1px solid #3a3f46; border-radius: 6px; }
+.ed-bldg-param b { color: #ffd76b; font-weight: 700; }
+.ed-bldg-sub2 { font-weight: 700; font-size: 11px; color: #9aa0a6; text-transform: uppercase; letter-spacing: .04em; margin-top: 4px; }
+
+/* Đợt 4 — Character: panel số liệu bone weight + retarget */
+.ed-char-bw-stats, .ed-char-retarget { margin-top: 8px; padding: 8px; border: 1px solid #444a55; border-radius: 6px; }
+.ed-char-bw-body { font-size: 13px; line-height: 1.5; }
+.ed-char-bw-top { padding-left: 8px; font-variant-numeric: tabular-nums; }
+.ed-char-retarget select { margin: 6px 0; }
+.ed-char-retarget .ed-btn { width: 100%; margin-top: 6px; }
+.ed-char-clips .ed-btn.active { outline: 2px solid #facc15; }

@@ -36,6 +36,27 @@
    - Quest chạy thật trong phiên Play: kill/talk/collect đếm tiến độ
      thật, đủ count thì thưởng vàng/bạc, tiến độ CHỈ sống trong phiên
      Play (Stop là mất, không sửa project gốc).
+   ĐỢT 4 (AI có trí nhớ + sửa bug cũ): NPC ai='chase'/'attack' nhớ
+   lastSeenPos/lastSeenAt — mất dấu thì alert (đi tới chỗ thấy địch lần
+   cuối, A* qua ED.Nav nếu có, không có thì đi thẳng) -> search (đi vòng
+   nhỏ bán kính ~2 quanh đó, mặc định 5s, chỉnh qua npc.searchDuration)
+   -> về home (waypoint đầu/spawn) + patrol/idle; thấy lại thì về chase.
+   Mọi chuyển state qua ED.NpcAi.nextAiState (thuần). Trạng thái AI hiện
+   trên đầu NPC trong Play Mode bằng THREE.Sprite + canvas texture
+   (nhãn tiếng Việt, chỉ vẽ lại khi state đổi, thoát Play thì ẩn).
+   SỬA BUG: ED.Viewport.getTerrainMesh() đã có thật (01-viewport.js đợt
+   4, delegate ED.Terrain.getMesh() -> mesh Viewport -> null) nên
+   _raycastGround dùng được; _navFindPath sửa luôn bug truyền mảng
+   [x,z] vào ED.Nav.findPath(x0,z0,x1,z1) (Number([x,z]) = NaN nên đường
+   A* của quái attack trước đây luôn tính sai).
+   ĐỢT 3 (physics-lite, ED.Physics 17-physics.js — VẬT LÝ ĐƠN GIẢN, KHÔNG
+   phải rigid-body đầy đủ): trọng lực + nhảy (Space / nút ⬆ Nhảy, chỉ
+   khi chạm đất, không nhảy đôi), chặn tường capsule-vs-box + trượt dọc
+   tường, thùng (type crate hoặc extra.pushable) đẩy được, prop trên cao
+   rơi xuống đất. Bật/tắt trong panel Vật lý (mặc định bật). Khi module
+   17-physics.js chưa nối vào build (coordinator nối sau) thì chơi như
+   cũ, không crash. Space khi vật lý bật = nhảy (đánh chuyển sang phím
+   X / nút ⚔️); vật lý tắt thì Space = đánh như cũ.
    QUY TẮC DESIGN.md: KHÔNG truy cập document/window/THREE ở top-level;
    logic thuần expose để nhóm D test bằng vm + stub THREE.
    GIỚI HẠN: chưa render thử trên trình duyệt/điện thoại thật; click-to-
@@ -519,9 +540,24 @@ ED.Play = {
   _hpFill: null,
   _goldText: null,
   _lastHud: null,
+  /* Đợt 3 — physics-lite (ED.Physics, 17-physics.js). Trạng thái phiên
+     Play, Stop là mất (snapshot khôi phục vị trí object). */
+  _physicsOn: true,      /* nút bật/tắt trong panel Vật lý (mặc định bật) */
+  _heroVy: 0,            /* vận tốc dọc hero (đơn vị/giây) */
+  _heroY: 0,             /* y bàn chân hero (đáy capsule) */
+  _heroGrounded: true,   /* hero có đang chạm đất / mặt đỡ không */
+  _crateVel: {},         /* crateId -> {vel:[vx,vz]} (chỉ trong phiên Play) */
+  _fallingProps: [],     /* [{id, velY, resting}] prop đang rơi (phiên Play) */
+  _physPanel: null,      /* panel Vật lý (góc phải trên, chỉ trong Play) */
+  _physToggleBtn: null,
+  _physStatus: null,     /* dòng trạng thái grounded/đang rơi */
+  _jumpBtn: null,        /* nút ⬆ Nhảy trên thanh Play (điện thoại) */
   _boundKeyDown: null,
   _boundKeyUp: null,
   _boundPointer: null,
+  /* Đợt 4 — nhãn trạng thái AI trên đầu NPC (THREE.Sprite + canvas,
+     chỉ trong Play Mode; thoát Play thì _hideAiLabels dọn hết). */
+  _aiLabels: {},         /* npcId -> {sprite, canvas, ctx2d, texture, state} */
 
   /* Project đang sửa: ED.Core.getProject() (nhóm A) nếu có. Lưu ý:
      ED.Core KHÔNG có thuộc tính .project. */
@@ -640,17 +676,37 @@ ED.Play = {
     this._fxCounter = 0;
     this._dropMeshes = {};
     this._lastHud = null;
+    /* Đợt 3: khởi tạo physics-lite — hero y = mặt đất tại spawn (đứng
+       trên terrain hoặc nóc box), prop trên cao chuẩn bị rơi. Không có
+       ED.Physics (chưa nối build) thì _heroY giữ đúng pos[1] cũ. */
+    this._heroVy = 0;
+    this._heroGrounded = true;
+    this._heroY = this._physOn()
+      ? this._groundHeightAt(this._heroPos[0], this._heroPos[1], (hero.pos && Number(hero.pos[1])) || 0)
+      : ((hero.pos && Number(hero.pos[1])) || 0);
+    this._crateVel = {};
+    this._initFallingProps();
     this._initQuests();
     this._refreshQuestBox();
-    /* Khởi tạo trạng thái NPC (pos hiện tại + waypoint 0). */
+    /* Khởi tạo trạng thái NPC (pos hiện tại + waypoint 0 + trí nhớ AI
+       đợt 4: homePos = waypoint đầu nếu có, không thì vị trí spawn). */
     var self = this;
     (project.npcs || []).forEach(function (npc) {
       if (!npc || !npc.id) return;
       self._npcState[npc.id] = {
         wpIndex: 0, target: null,
-        pos: (Array.isArray(npc.pos)) ? [Number(npc.pos[0]) || 0, Number(npc.pos[1]) || 0] : [0, 0]
+        pos: (Array.isArray(npc.pos)) ? [Number(npc.pos[0]) || 0, Number(npc.pos[1]) || 0] : [0, 0],
+        aiState: npc.ai || 'idle',
+        homePos: (Array.isArray(npc.patrol) && npc.patrol.length)
+          ? [Number(npc.patrol[0][0]) || 0, Number(npc.patrol[0][1]) || 0]
+          : ((Array.isArray(npc.pos)) ? [Number(npc.pos[0]) || 0, Number(npc.pos[1]) || 0] : [0, 0]),
+        lastSeenPos: null, lastSeenAt: null,
+        searchStartedAt: null, searchTarget: null,
+        returningHome: false, returnTarget: null,
+        nav: null, alertNav: null
       };
     });
+    this._hideAiLabels(); /* nhãn AI cũ của phiên trước (nếu còn) */
     /* Ẩn gizmo + panel edit: class 'playing' (nhóm A xử lý CSS) + fallback
        ẩn bằng style.display (khôi phục ở stop). */
     try {
@@ -667,8 +723,14 @@ ED.Play = {
     /* Đợt 2 — nhạc nền ambient (ED.Export, 15-export.js): phát khi vào Play. */
     try { if (ED.Export && typeof ED.Export.playAmbient === 'function') ED.Export.playAmbient(); } catch (e) {}
     this._lastT = 0;
-    this.log('▶ Play Mode: điều khiển "' + (hero.name || 'Hero') + '" bằng WASD hoặc click xuống đất. Space / nút ⚔️ để đánh quái gần. Skill: bấm 4 nút dưới màn hình hoặc phím 1-4.');
-    this.toast('▶ Play Mode — WASD di chuyển, Space để đánh, nút skill / phím 1-4 để dùng kỹ năng.');
+    /* Đợt 3: vật lý bật thì Space = nhảy, X = đánh; tắt thì Space = đánh như cũ. */
+    if (this._physOn()) {
+      this.log('▶ Play Mode (vật lý đơn giản: trọng lực + nhảy, chặn tường, đẩy thùng): điều khiển "' + (hero.name || 'Hero') + '" bằng WASD hoặc click xuống đất. Space / nút ⬆ Nhảy để nhảy, X / nút ⚔️ để đánh quái gần. Skill: bấm 4 nút dưới màn hình hoặc phím 1-4.');
+      this.toast('▶ Play Mode — WASD di chuyển, Space để nhảy, X để đánh, nút skill / phím 1-4.');
+    } else {
+      this.log('▶ Play Mode: điều khiển "' + (hero.name || 'Hero') + '" bằng WASD hoặc click xuống đất. Space / nút ⚔️ để đánh quái gần. Skill: bấm 4 nút dưới màn hình hoặc phím 1-4.');
+      this.toast('▶ Play Mode — WASD di chuyển, Space để đánh, nút skill / phím 1-4 để dùng kỹ năng.');
+    }
     var self2 = this;
     if (typeof requestAnimationFrame !== 'undefined') {
       var tick = function (t) {
@@ -716,6 +778,8 @@ ED.Play = {
     this._showBar(false);
     /* Đợt 2 — dừng nhạc nền khi thoát Play Mode. */
     try { if (ED.Export && typeof ED.Export.stopAmbient === 'function') ED.Export.stopAmbient(); } catch (e) {}
+    /* Đợt 4 — nhạc theo ngữ cảnh: thoát Play thì về explore ngay. */
+    try { if (ED.Export && typeof ED.Export.setCombatMode === 'function') ED.Export.setCombatMode(false, true); } catch (e) {}
     /* Khôi phục project từ snapshot (ED.Core.load thay toàn bộ project,
        đúng API nhóm A; load() cũng chuẩn hoá lại các mảng thiếu). */
     var restored = edPlayRestoreProject(this._snapshot);
@@ -739,6 +803,8 @@ ED.Play = {
         }
       } catch (e) {}
     }
+    /* Đợt 4: ẩn nhãn trạng thái AI trên đầu NPC (chỉ hiện trong Play). */
+    this._hideAiLabels();
     /* Đợt 2: dọn vật rơi còn trên đất + xoá trạng thái phiên Play
        (vàng/bạc/quest/skill/HP chỉ sống trong phiên, Stop là mất). */
     this._clearDrops();
@@ -753,6 +819,12 @@ ED.Play = {
     this._heroHp = 0;
     this._playTime = 0;
     this._lastHud = null;
+    /* Đợt 3: dọn trạng thái physics phiên Play (vị trí object đã được
+       snapshot khôi phục ở trên). */
+    this._crateVel = {};
+    this._fallingProps = [];
+    this._heroVy = 0;
+    this._heroGrounded = true;
     this._snapshot = null;
     this._heroId = null;
     this._tempHeroId = null;
@@ -797,14 +869,23 @@ ED.Play = {
       if (r.arrived) this._moveTarget = null;
     }
     if (moved) {
-      pos = this._tryMove(pos);
+      pos = this._tryMove(pos, dt);
       this._heroPos = pos;
       this._applyHeroPos();
     }
+    /* Đợt 3: trọng lực + nhảy + thùng trượt + vật rơi — chạy cả khi hero
+       đứng yên (rơi/nhảy không cần di chuyển ngang). */
+    this._updatePhysicsVertical(dt);
     /* NPC AI (chỉ trong Play Mode). */
     this._updateNpcs(dt);
     /* Đợt 2: quái đánh lại + nhặt vật rơi + HUD (HP/vàng/skill/quest). */
     this._updateMonsterAttacks();
+    /* Đợt 4 — nhạc theo ngữ cảnh: có quái trong tầm tấn công thì vào combat. */
+    try {
+      if (ED.Export && typeof ED.Export.setCombatMode === 'function') {
+        ED.Export.setCombatMode(!!this._nearestMonster(6));
+      }
+    } catch (e) {}
     this._updateDrops();
     /* Camera follow + kiểm tra NPC gần / quái gần. */
     this._followCamera();
@@ -813,13 +894,68 @@ ED.Play = {
     this._refreshHud(false);
   },
 
-  /* Thử đi tới pos mới: chặn bởi collider box / ô nước; trượt theo từng
-     trục nếu đi chéo bị chặn (đi được theo x thì đi x, không thì thử z). */
-  _tryMove: function (target) {
+  /* Thử đi tới pos mới.
+     Đợt 3: vật lý bật + ED.Physics đã nối -> capsule-vs-box (trượt dọc
+     tường là hệ quả tự nhiên của push-out theo pháp tuyến) + đẩy thùng
+     trước rồi mới giải va chạm hero; vẫn chặn ô nước như cũ. Không có
+     ED.Physics (hoặc vật lý tắt) thì giữ đúng đường cũ: chặn bởi
+     collider box / ô nước, trượt theo từng trục khi đi chéo bị chặn. */
+  _tryMove: function (target, dt) {
     var project = this.project();
     var cur = [this._heroPos[0], this._heroPos[1]];
     var half = (project.terrain && Number(project.terrain.size) > 0) ? Number(project.terrain.size) / 2 : 48;
     var t = edPlayClampToBounds(target, half);
+    if (this._physOn()) {
+      var P = ED.Physics;
+      var terrain = project.terrain || {};
+      var r = P.CAPSULE_RADIUS, h = P.CAPSULE_HEIGHT;
+      var y = this._heroY;
+      var dx = t[0] - cur[0], dz = t[1] - cur[1];
+      var boxes = this._physBoxes();
+      /* Đẩy thùng: hero đi vào thùng (type crate hoặc extra.pushable)
+         thì thùng trượt theo hướng đẩy; thùng kẹt thì hero bị chặn ở
+         mặt thùng (thùng vẫn nằm trong boxes khi giải va chạm hero). */
+      if ((dx !== 0 || dz !== 0) && (Number(dt) > 0)) {
+        var len = Math.sqrt(dx * dx + dz * dz);
+        var dir = [dx / len, dz / len];
+        var statics = [];
+        for (var si = 0; si < boxes.length; si++) if (!boxes[si].pushable) statics.push(boxes[si]);
+        for (var bi = 0; bi < boxes.length; bi++) {
+          var cb = boxes[bi];
+          if (!cb.pushable) continue;
+          if (!P.capsuleHitsBox(t[0], t[1], y, r, h, cb)) continue;
+          var obj = null;
+          for (var k = 0; k < project.objects.length; k++) {
+            if (project.objects[k] && project.objects[k].id === cb.id) { obj = project.objects[k]; break; }
+          }
+          if (!obj) continue;
+          var crate = {
+            pos: [Number(obj.pos[0]) || 0, Number(obj.pos[1]) || 0, Number(obj.pos[2]) || 0],
+            vel: [0, 0], size: [cb.hx * 2, cb.hz * 2]
+          };
+          var st = this._crateVel[cb.id];
+          if (st) crate.vel = [st.vel[0], st.vel[1]];
+          var pr = P.pushCrate(crate, dir, dt, statics, {});
+          this._crateVel[cb.id] = { vel: pr.crate.vel };
+          if (pr.moved) {
+            obj.pos = [pr.crate.pos[0], pr.crate.pos[1], pr.crate.pos[2]];
+            this._syncObjPos(obj);
+          }
+          if (pr.crate.vel[0] === 0 && pr.crate.vel[1] === 0) delete this._crateVel[cb.id];
+        }
+        boxes = this._physBoxes(); /* vị trí thùng mới nhất */
+      }
+      var mv = P.moveCapsule(cur, dx, dz, y, r, h, boxes);
+      var res = mv.pos;
+      if (edPlayIsWaterCell(terrain.paints, terrain.size, terrain.segments, res[0], res[1])) {
+        var mx = P.moveCapsule(cur, dx, 0, y, r, h, boxes).pos;
+        if (!edPlayIsWaterCell(terrain.paints, terrain.size, terrain.segments, mx[0], mx[1])) return edPlayClampToBounds(mx, half);
+        var mz = P.moveCapsule(cur, 0, dz, y, r, h, boxes).pos;
+        if (!edPlayIsWaterCell(terrain.paints, terrain.size, terrain.segments, mz[0], mz[1])) return edPlayClampToBounds(mz, half);
+        return cur;
+      }
+      return edPlayClampToBounds(res, half);
+    }
     if (this._isBlocked(t)) {
       var tx = [t[0], cur[1]];
       var tz = [cur[0], t[1]];
@@ -843,7 +979,9 @@ ED.Play = {
     for (var i = 0; i < project.objects.length; i++) {
       var o = project.objects[i];
       if (o && o.id === this._heroId) {
-        o.pos = [this._heroPos[0], (o.pos && typeof o.pos[1] === 'number') ? o.pos[1] : 0, this._heroPos[1]];
+        /* Đợt 3: y = _heroY (bàn chân capsule, do trọng lực tính). Vật lý
+           tắt thì _heroY giữ đúng pos[1] lúc vào Play nên không đổi gì. */
+        o.pos = [this._heroPos[0], this._heroY, this._heroPos[1]];
         try {
           if (ED.Viewport && typeof ED.Viewport.syncObject === 'function') ED.Viewport.syncObject(o);
           else if (ED.Viewport && ED.Viewport.meshes && ED.Viewport.meshes[o.id]) {
@@ -865,19 +1003,36 @@ ED.Play = {
         st = { wpIndex: 0, target: null, pos: [Number(npc.pos[0]) || 0, Number(npc.pos[1]) || 0] };
         self._npcState[npc.id] = st;
       }
+      /* Đợt 4 — homePos + aiState mặc định cho NPC thêm giữa phiên Play
+         (start() đã khởi tạo cho NPC có sẵn lúc vào Play). */
+      if (!st.homePos) {
+        st.homePos = (Array.isArray(npc.patrol) && npc.patrol.length)
+          ? [Number(npc.patrol[0][0]) || 0, Number(npc.patrol[0][1]) || 0]
+          : [Number(npc.pos[0]) || 0, Number(npc.pos[1]) || 0];
+      }
+      if (!st.aiState) st.aiState = npc.ai || 'idle';
       var r;
-      if (npc.ai === 'attack' && ED.NpcAi && typeof ED.NpcAi.attackStep === 'function') {
-        /* Đợt 2: quái attack đuổi theo đường Nav nếu có (guard typeof
-           trong _navFindPath/_navStepAlong), không có Nav thì đuổi thẳng. */
+      var useMemory = (npc.ai === 'attack' || npc.ai === 'chase') &&
+        ED.NpcAi && typeof ED.NpcAi.nextAiState === 'function';
+      if (useMemory) {
+        /* Đợt 4: NPC đuổi/đánh có trí nhớ (alert/search/về nhà). */
+        r = self._updateAggressiveNpc(npc, st, dt);
+      } else if (npc.ai === 'attack' && ED.NpcAi && typeof ED.NpcAi.attackStep === 'function') {
+        /* Fallback khi ED.NpcAi.nextAiState chưa có (bản build cũ):
+           giữ đúng đường đợt 2 — quái attack đuổi theo đường Nav nếu có
+           (guard typeof trong _navFindPath/_navStepAlong), không có Nav
+           thì đuổi thẳng. */
         if (!st.nav) st.nav = {};
         var self2 = self;
         var findPathFn = function (from, to) { return self2._navFindPath(from, to); };
         var stepAlongFn = function (path, p, speed, dt2, idx) { return self2._navStepAlong(path, p, speed, dt2, idx); };
         var ar = ED.NpcAi.attackStep(npc, st.pos, self._heroPos, dt, st.nav, findPathFn, stepAlongFn, self._playTime * 1000);
         st.nav = ar.state;
-        r = { pos: ar.pos, wpIndex: st.wpIndex, target: st.target };
+        st.aiState = ar.attacking ? 'attack' : (ar.chasing ? 'chase' : 'idle');
+        r = { pos: ar.pos, wpIndex: st.wpIndex, target: st.target, state: st.aiState };
       } else {
         r = edPlayUpdateNpc(npc, self._heroPos, st.pos, dt, st.wpIndex, st.target);
+        st.aiState = r.state;
       }
       st.pos = r.pos;
       st.wpIndex = r.wpIndex;
@@ -901,18 +1056,265 @@ ED.Play = {
           }
         } catch (e) {}
       }
+      /* Đợt 4: nhãn trạng thái AI trên đầu NPC (chỉ trong Play Mode). */
+      self._updateAiLabel(npc, st);
     });
+  },
+
+  /* ---- Đợt 4: NPC chase/attack có trí nhớ (ED.NpcAi.nextAiState) ----
+     Thấy hero trong detectionRadius thì đuổi/đánh như đợt 2; mất dấu thì
+     alert (đi tới lastSeenPos) -> search (đi vòng nhỏ quanh đó, tối đa
+     npc.searchDuration, mặc định 5s) -> về home + patrol/idle. Thấy lại
+     bất cứ lúc nào thì quay về chase/attack. Trả {pos, wpIndex, target,
+     state} như edPlayUpdateNpc để _updateNpcs dùng chung phần sau. */
+  _updateAggressiveNpc: function (npc, st, dt) {
+    var nowMs = this._playTime * 1000;
+    var stats = (ED.NpcAi && typeof ED.NpcAi.attackStats === 'function')
+      ? ED.NpcAi.attackStats(npc)
+      : { atk: 10, def: 0, detectionRadius: 5, attackRadius: 1.5, cooldown: 1.2, speed: 2 };
+    var speed = stats.speed;
+    var dx = this._heroPos[0] - st.pos[0];
+    var dz = this._heroPos[1] - st.pos[1];
+    var dist = Math.sqrt(dx * dx + dz * dz);
+    var visible = dist <= stats.detectionRadius;
+    if (visible) {
+      st.lastSeenPos = [this._heroPos[0], this._heroPos[1]];
+      st.lastSeenAt = nowMs;
+    }
+    var lastSeen = st.lastSeenPos || null;
+    var dLast = lastSeen
+      ? Math.sqrt(Math.pow(st.pos[0] - lastSeen[0], 2) + Math.pow(st.pos[1] - lastSeen[1], 2)) : Infinity;
+    var dHome = Math.sqrt(Math.pow(st.pos[0] - st.homePos[0], 2) + Math.pow(st.pos[1] - st.homePos[1], 2));
+    var ctx = {
+      distToTarget: dist, targetVisible: visible,
+      timeSinceSeen: (typeof st.lastSeenAt === 'number') ? (nowMs - st.lastSeenAt) / 1000 : Infinity,
+      searchElapsed: (st.aiState === 'search' && typeof st.searchStartedAt === 'number')
+        ? (nowMs - st.searchStartedAt) / 1000 : 0,
+      atLastSeen: dLast <= 0.5,
+      atHome: dHome <= 0.5
+    };
+    var view = {
+      ai: npc.ai, aiState: st.aiState || npc.ai,
+      lastSeenPos: lastSeen, homePos: st.homePos, patrol: npc.patrol,
+      attackRadius: stats.attackRadius, detectionRadius: stats.detectionRadius,
+      searchDuration: npc.searchDuration, alertTimeout: npc.alertTimeout
+    };
+    var res = ED.NpcAi.nextAiState(view, ctx);
+    var prev = st.aiState || npc.ai;
+    st.aiState = res.state;
+    if (res.state === 'search' && prev !== 'search') {
+      st.searchStartedAt = nowMs;
+      st.searchTarget = null;
+    }
+    if (res.state === 'chase' || res.state === 'attack') {
+      st.returningHome = false;
+      st.returnTarget = null;
+      st.searchTarget = null;
+      if (npc.ai === 'attack') {
+        if (!st.nav) st.nav = {};
+        var self2 = this;
+        var findPathFn = function (from, to) { return self2._navFindPath(from, to); };
+        var stepAlongFn = function (path, p, speed2, dt2, idx) { return self2._navStepAlong(path, p, speed2, dt2, idx); };
+        var ar = ED.NpcAi.attackStep(npc, st.pos, this._heroPos, dt, st.nav, findPathFn, stepAlongFn, nowMs);
+        st.nav = ar.state;
+        return { pos: ar.pos, wpIndex: st.wpIndex, target: st.target, state: res.state };
+      }
+      var c = edPlayUpdateNpc(npc, this._heroPos, st.pos, dt, st.wpIndex, st.target);
+      return { pos: c.pos, wpIndex: c.wpIndex, target: c.target, state: res.state };
+    }
+    if (res.state === 'alert') {
+      st.returningHome = false;
+      st.returnTarget = null;
+      var p = this._aiWalkTo(st, res.moveTo, speed, dt, nowMs);
+      this._faceMesh(npc.id, st.pos, res.moveTo);
+      return { pos: p, wpIndex: st.wpIndex, target: st.target, state: 'alert' };
+    }
+    if (res.state === 'search') {
+      var sp = this._aiSearchStep(npc, st, dt);
+      return { pos: sp, wpIndex: st.wpIndex, target: st.target, state: 'search' };
+    }
+    /* patrol/idle: hết giờ tìm -> về home trước rồi mới tuần tra/đứng yên. */
+    if (res.moveTo) {
+      st.returningHome = true;
+      st.returnTarget = [Number(res.moveTo[0]) || 0, Number(res.moveTo[1]) || 0];
+    }
+    if (st.returningHome && st.returnTarget) {
+      var hp = this._aiWalkTo(st, st.returnTarget, speed, dt, nowMs);
+      this._faceMesh(npc.id, st.pos, st.returnTarget);
+      var dh = Math.sqrt(Math.pow(hp[0] - st.returnTarget[0], 2) + Math.pow(hp[1] - st.returnTarget[1], 2));
+      if (dh <= 0.5) {
+        st.returningHome = false;
+        st.returnTarget = null;
+        st.wpIndex = 0; /* về waypoint đầu rồi mới tuần tra tiếp */
+      }
+      return { pos: hp, wpIndex: st.wpIndex, target: st.target, state: res.state };
+    }
+    if (res.state === 'patrol') {
+      /* NPC chase/attack có waypoint: tuần tra lại bằng đúng logic patrol
+         (đi chậm speed*0.5, vòng qua các waypoint). */
+      var pr = edPlayUpdateNpc(
+        { ai: 'patrol', patrol: npc.patrol, speed: speed },
+        this._heroPos, st.pos, dt, st.wpIndex, st.target);
+      return { pos: pr.pos, wpIndex: pr.wpIndex, target: pr.target, state: 'patrol' };
+    }
+    return { pos: [st.pos[0], st.pos[1]], wpIndex: st.wpIndex, target: st.target, state: 'idle' };
+  },
+
+  /* Đi tới target: ưu tiên đường A* qua ED.Nav (đúng chữ ký
+     findPath(x0,z0,x1,z1) / stepAlong(path,pos,speed,dt) -> {pos, path});
+     không có Nav hoặc tìm đường lỗi thì đi thẳng. Tính lại đường khi
+     đích đổi >0.5 ô hoặc đường cũ >1s. Đường alert/search giữ riêng ở
+     st.alertNav (không đụng st.nav của attackStep). */
+  _aiWalkTo: function (st, target, speed, dt, nowMs) {
+    if (!target) return [st.pos[0], st.pos[1]];
+    var tx = Number(target[0]) || 0, tz = Number(target[1]) || 0;
+    try {
+      if (typeof ED !== 'undefined' && ED.Nav &&
+          typeof ED.Nav.findPath === 'function' && typeof ED.Nav.stepAlong === 'function') {
+        var nav = st.alertNav || null;
+        var need = !nav || !Array.isArray(nav.path) || !nav.path.length ||
+          !nav.target || Math.abs(nav.target[0] - tx) + Math.abs(nav.target[1] - tz) > 0.5 ||
+          (typeof nowMs === 'number' && typeof nav.lastPathAt === 'number' && nowMs - nav.lastPathAt > 1000);
+        if (need) {
+          var p = ED.Nav.findPath(st.pos[0], st.pos[1], tx, tz);
+          if (Array.isArray(p) && p.length) nav = { path: p, target: [tx, tz], lastPathAt: nowMs };
+          else nav = null;
+        }
+        if (nav && Array.isArray(nav.path) && nav.path.length) {
+          var r = ED.Nav.stepAlong(nav.path, st.pos, speed, dt);
+          if (r && Array.isArray(r.pos)) {
+            nav.path = Array.isArray(r.path) ? r.path : [];
+            st.alertNav = nav;
+            return [Number(r.pos[0]) || 0, Number(r.pos[1]) || 0];
+          }
+          nav = null;
+        }
+        st.alertNav = nav;
+      }
+    } catch (e) { st.alertNav = null; }
+    var s = edPlayStepToward(st.pos, [tx, tz], speed, dt);
+    return s.pos;
+  },
+
+  /* 1 bước tìm kiếm quanh lastSeenPos: đi vòng nhỏ trong bán kính ~2
+     (điểm mới chọn bằng ED.NpcAi.pickWanderTarget, tốc độ chậm
+     speed*0.5), tới điểm thì chọn điểm khác; đồng thời xoay mesh về
+     hướng đang đi (quay các hướng lúc tìm). */
+  _aiSearchStep: function (npc, st, dt) {
+    var center = st.lastSeenPos || st.pos;
+    var speed = 2;
+    try {
+      if (ED.NpcAi && typeof ED.NpcAi.attackStats === 'function') speed = ED.NpcAi.attackStats(npc).speed;
+    } catch (e) {}
+    var radius = 2;
+    try {
+      if (ED.NpcAi && typeof ED.NpcAi.SEARCH_RADIUS === 'number') radius = ED.NpcAi.SEARCH_RADIUS;
+    } catch (e) {}
+    if (!st.searchTarget) {
+      st.searchTarget = (ED.NpcAi && typeof ED.NpcAi.pickWanderTarget === 'function')
+        ? ED.NpcAi.pickWanderTarget(center, radius)
+        : [center[0], center[1]];
+    }
+    var s = edPlayStepToward(st.pos, st.searchTarget, speed * 0.5, dt);
+    if (s.arrived) st.searchTarget = null;
+    this._faceMesh(npc.id, st.pos, st.searchTarget || center);
+    return s.pos;
+  },
+
+  /* Xoay mesh NPC về hướng đi (yaw = atan2(dx, dz)); mesh chưa có hoặc
+     đang đứng yên thì giữ nguyên. Không crash khi không có Viewport. */
+  _faceMesh: function (id, fromPos, toPos) {
+    try {
+      if (!toPos || !ED.Viewport || !ED.Viewport.meshes || !ED.Viewport.meshes[id]) return;
+      var dx = (Number(toPos[0]) || 0) - fromPos[0];
+      var dz = (Number(toPos[1]) || 0) - fromPos[1];
+      if (Math.sqrt(dx * dx + dz * dz) < 0.05) return;
+      ED.Viewport.meshes[id].rotation.y = Math.atan2(dx, dz);
+    } catch (e) {}
+  },
+
+  /* ---- Đợt 4: nhãn trạng thái AI trên đầu NPC (chỉ trong Play Mode) ----
+     Dùng THREE.Sprite + canvas texture (repo chưa có bảng tên/label nào
+     sẵn). Tạo 1 sprite/NPC, treo cao 2.2 trên đầu mesh, chỉ vẽ lại
+     canvas khi state đổi (text tiếng Việt từ ED.NpcAi.aiStateLabel).
+     Thoát Play thì _hideAiLabels() gỡ hết sprite + dispose texture. */
+  _updateAiLabel: function (npc, st) {
+    if (typeof document === 'undefined' || typeof THREE === 'undefined') return;
+    try {
+      var scene = null;
+      if (ED.Viewport && typeof ED.Viewport.getScene === 'function') scene = ED.Viewport.getScene();
+      else if (ED.Viewport && ED.Viewport.scene) scene = ED.Viewport.scene;
+      if (!scene) return;
+      var label = (ED.NpcAi && typeof ED.NpcAi.aiStateLabel === 'function')
+        ? ED.NpcAi.aiStateLabel(st.aiState || npc.ai || 'idle')
+        : String(st.aiState || npc.ai || 'idle');
+      var rec = this._aiLabels[npc.id];
+      if (!rec) {
+        var canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 64;
+        var ctx2d = canvas.getContext('2d');
+        if (!ctx2d) return;
+        var texture = new THREE.CanvasTexture(canvas);
+        var mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+        var sprite = new THREE.Sprite(mat);
+        sprite.scale.set(2.4, 0.6, 1);
+        sprite.renderOrder = 999;
+        sprite.userData.isAiLabel = true;
+        scene.add(sprite);
+        rec = { sprite: sprite, canvas: canvas, ctx2d: ctx2d, texture: texture, state: null };
+        this._aiLabels[npc.id] = rec;
+      }
+      var mesh = (ED.Viewport && ED.Viewport.meshes && ED.Viewport.meshes[npc.id]) || null;
+      var mx = st.pos[0], my = 0, mz = st.pos[1];
+      if (mesh && mesh.position) { mx = mesh.position.x; my = mesh.position.y; mz = mesh.position.z; }
+      rec.sprite.position.set(mx, my + 2.2, mz);
+      if (rec.state !== label) {
+        rec.state = label;
+        var c = rec.ctx2d;
+        c.clearRect(0, 0, 256, 64);
+        c.fillStyle = 'rgba(15, 23, 42, 0.82)';
+        c.fillRect(8, 8, 240, 48);
+        c.fillStyle = '#ffffff';
+        c.font = 'bold 28px sans-serif';
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        c.fillText(label, 128, 34);
+        rec.texture.needsUpdate = true;
+      }
+    } catch (e) {}
+  },
+
+  _hideAiLabels: function () {
+    var self = this;
+    Object.keys(this._aiLabels || {}).forEach(function (id) {
+      var rec = self._aiLabels[id];
+      if (!rec) return;
+      try {
+        if (rec.sprite && rec.sprite.parent) rec.sprite.parent.remove(rec.sprite);
+        if (rec.sprite && rec.sprite.material) {
+          if (rec.sprite.material.map && rec.sprite.material.map.dispose) rec.sprite.material.map.dispose();
+          if (rec.sprite.material.dispose) rec.sprite.material.dispose();
+        }
+      } catch (e) {}
+    });
+    this._aiLabels = {};
   },
 
   /* ---- Đợt 2: Nav (guard typeof — ED.Nav CHƯA có trong repo) ---- */
 
-  /* Đường đi từ Nav nếu có: ED.Nav.findPath(from [x,z], to [x,z]) ->
-     [[x,z],...] | null. Không có ED.Nav (hiện tại) thì trả null và quái
-     đuổi thẳng — KHÔNG throw, KHÔNG cần Nav để chơi được. */
+  /* Đường đi từ Nav nếu có: ED.Nav.findPath(x0, z0, x1, z1) -> [[x,z],...]
+     | null. Không có ED.Nav (hiện tại) thì trả null và quái đuổi thẳng —
+     KHÔNG throw, KHÔNG cần Nav để chơi được.
+     Đợt 4 — SỬA BUG: ED.Nav.findPath nhận 4 SỐ, không phải 2 mảng [x,z].
+     Bản cũ truyền thẳng (from, to) -> Number([x,z]) = NaN nên _worldToGrid
+     luôn nhận (0,0), đường A* của quái attack tính sai từ đầu. */
   _navFindPath: function (from, to) {
     try {
       if (typeof ED === 'undefined' || !ED.Nav || typeof ED.Nav.findPath !== 'function') return null;
-      var p = ED.Nav.findPath(from, to);
+      var p = ED.Nav.findPath(
+        Number(from && from[0]) || 0, Number(from && from[1]) || 0,
+        Number(to && to[0]) || 0, Number(to && to[1]) || 0);
       if (!Array.isArray(p)) return null;
       return p;
     } catch (e) { return null; }
@@ -977,6 +1379,10 @@ ED.Play = {
     this._heroHp = this._heroMaxHp;
     this._heroPos = [ED_PLAY_SPAWN[0], ED_PLAY_SPAWN[1]];
     this._moveTarget = null;
+    /* Đợt 3: hồi sinh thì vận tốc dọc về 0, đứng trên mặt đất tại spawn. */
+    this._heroVy = 0;
+    this._heroGrounded = true;
+    if (this._physOn()) this._heroY = this._groundHeightAt(ED_PLAY_SPAWN[0], ED_PLAY_SPAWN[1], 0);
     this._applyHeroPos();
     this.toast('💫 Bạn đã hồi sinh tại điểm spawn với đầy HP.');
     this.log('💫 Hero hồi sinh tại spawn (' + ED_PLAY_SPAWN[0] + ', ' + ED_PLAY_SPAWN[1] + '), HP đầy.');
@@ -1268,7 +1674,7 @@ ED.Play = {
       var r = edPlaySkillReady(last, sk.cooldown, nowMs);
       skillTxt += r.ready ? 'R' : ('C' + Math.ceil(r.remain));
     });
-    var key = hpTxt + '|' + goldTxt + '|' + skillTxt;
+    var key = hpTxt + '|' + goldTxt + '|' + skillTxt + '|' + this._physStatusText();
     if (!force && key === this._lastHud) return;
     this._lastHud = key;
     if (this._hpText) this._hpText.textContent = hpTxt;
@@ -1278,6 +1684,8 @@ ED.Play = {
       this._hpFill.style.background = pct > 50 ? '#4ade80' : (pct > 25 ? '#facc15' : '#ef4444');
     }
     if (this._goldText) this._goldText.textContent = goldTxt;
+    /* Đợt 3: trạng thái vật lý (chạm đất / đang rơi / tắt). */
+    if (this._physStatus) this._physStatus.textContent = this._physStatusText();
     this._refreshSkillButtons();
   },
 
@@ -1549,6 +1957,9 @@ ED.Play = {
     /* Đợt 2: thanh skill + hộp quest hiện/ẩn cùng thanh Play. */
     if (this._skillBar) this._skillBar.style.display = show ? 'flex' : 'none';
     if (this._questBox) this._questBox.style.display = show ? 'block' : 'none';
+    /* Đợt 3: panel Vật lý + nút Nhảy hiện/ẩn cùng thanh Play. */
+    if (this._physPanel) this._physPanel.style.display = show ? 'block' : 'none';
+    if (show) this._refreshPhysPanel();
     if (show && this._pauseBtn) this._pauseBtn.textContent = this._paused ? '▶ Tiếp tục' : '⏸ Tạm dừng';
     if (show) {
       this._checkMonsterNear();
@@ -1564,9 +1975,14 @@ ED.Play = {
       if (!self._playing) return;
       if (e.code === 'Space') {
         e.preventDefault();
-        self.attack();
+        /* Đợt 3: vật lý bật thì Space = nhảy (chỉ khi chạm đất, không
+           nhảy đôi); vật lý tắt thì Space = đánh như cũ. Đánh bằng
+           phím X / nút ⚔️ khi vật lý bật. */
+        if (self._physOn()) self._tryJump();
+        else self.attack();
         return;
       }
+      if (e.code === 'KeyX') { self.attack(); return; }
       /* Đợt 2: phím 1-4 thi triển skill (bản desktop; điện thoại bấm nút). */
       if (e.code === 'Digit1' || e.code === 'Numpad1') { self.castSkill(0); return; }
       if (e.code === 'Digit2' || e.code === 'Numpad2') { self.castSkill(1); return; }
@@ -1614,8 +2030,10 @@ ED.Play = {
   },
 
   /* Click xuống đất -> [x,z]: ưu tiên ED.Viewport.raycastGround (nhóm A),
-     không có thì Raycaster với terrain mesh (nếu lấy được), không có nữa
-     thì trả null (chỉ WASD vẫn chạy). */
+     không có thì Raycaster với terrain mesh — đợt 4 ED.Viewport đã có
+     getter getTerrainMesh() thật (delegate ED.Terrain.getMesh(), guard
+     typeof giữ nguyên) nên nhánh này chạy được, không có nữa thì trả
+     null (chỉ WASD vẫn chạy). */
   _raycastGround: function (e) {
     try {
       if (ED.Viewport && typeof ED.Viewport.raycastGround === 'function') {
@@ -1639,6 +2057,287 @@ ED.Play = {
       if (hits && hits.length) return [hits[0].point.x, hits[0].point.z];
       return null;
     } catch (err) { return null; }
+  },
+
+  /* ---------------- Đợt 3: physics-lite (ED.Physics, 17-physics.js) ----
+     Mọi tính toán nằm trong ED.Physics (hàm thuần, test bằng vm); ở đây
+     chỉ là wiring: đọc state Play, gọi hàm thuần, ghi kết quả về object
+     project + đồng bộ mesh. Tất cả đều guard typeof ED.Physics — file
+     17-physics.js chưa nối vào build thì chơi như cũ, không crash. */
+
+  /* Module vật lý đã nối vào build chưa? */
+  _physAvailable: function () {
+    try {
+      return (typeof ED !== 'undefined' && ED.Physics && typeof ED.Physics.moveCapsule === 'function');
+    } catch (e) { return false; }
+  },
+
+  /* Vật lý đang bật VÀ dùng được? */
+  _physOn: function () {
+    return !!this._physicsOn && this._physAvailable();
+  },
+
+  /* Box rắn hiện tại trong scene (tĩnh + thùng đẩy được). */
+  _physBoxes: function () {
+    try {
+      if (this._physAvailable()) return ED.Physics.boxesFromObjects(this.project().objects);
+    } catch (e) {}
+    return [];
+  },
+
+  /* Mặt đất đỡ tại (x, z) với chân ở y: terrain + nóc box (đứng được
+     trên nóc). Không có ED.Physics thì dùng ED.Terrain.heightAt. */
+  _groundHeightAt: function (x, z, y, excludeId) {
+    var project = this.project();
+    var t = project.terrain || {};
+    try {
+      if (this._physAvailable()) {
+        return ED.Physics.groundHeightAt(t.heights, x, z, this._physBoxes(),
+          (typeof y === 'number' ? y : 0), t.size, t.segments, excludeId);
+      }
+      if (ED.Terrain && typeof ED.Terrain.heightAt === 'function') return ED.Terrain.heightAt(x, z);
+    } catch (e) {}
+    return 0;
+  },
+
+  /* Dòng trạng thái vật lý cho panel + HUD: rẻ (chỉ đổi khi grounded
+     đổi), không tính toán nặng. */
+  _physStatusText: function () {
+    if (!this._physAvailable()) return '⚪ Vật lý: chưa nối build';
+    if (!this._physicsOn) return '⚪ Vật lý: TẮT';
+    return this._heroGrounded ? '🟢 Chạm đất' : '🪂 Đang rơi';
+  },
+
+  /* Cập nhật nhãn nút bật/tắt + trạng thái + nút Nhảy (gọi khi vào/ra
+     Play và khi bấm nút bật/tắt). Guard document để vm-test không cần DOM. */
+  _refreshPhysPanel: function () {
+    if (typeof document === 'undefined') return;
+    if (this._physToggleBtn) {
+      this._physToggleBtn.textContent = 'Vật lý: ' + ((this._physicsOn && this._physAvailable()) ? 'BẬT' : 'TẮT');
+    }
+    if (this._physStatus) this._physStatus.textContent = this._physStatusText();
+    if (this._jumpBtn) this._jumpBtn.style.display = this._physOn() ? '' : 'none';
+  },
+
+  /* Bật/tắt vật lý trong Play. Chưa có ED.Physics thì báo rõ là chưa
+     nối build và giữ tắt (không crash, không bật giả). Tắt giữa chừng:
+     vận tốc dọc về 0, hero đứng yên tại y hiện tại. */
+  setPhysics: function (on) {
+    var want = !!on;
+    if (want && !this._physAvailable()) {
+      this._physicsOn = false;
+      this.toast('Module vật lý (17-physics.js) chưa nối vào bản build — coordinator sẽ nối sau, hiện chơi như cũ.');
+      this.log('Physics-lite: ED.Physics chưa có (17-physics.js chưa nối build) nên không bật được.');
+      this._refreshPhysPanel();
+      return false;
+    }
+    this._physicsOn = want;
+    if (!want) this._heroVy = 0;
+    this.log('Physics-lite: ' + (want ? 'BẬT (trọng lực + nhảy + chặn tường + đẩy thùng + vật rơi).' : 'TẮT (chơi như cũ, Space lại là đánh).'));
+    this.toast(want ? '⚙️ Vật lý đơn giản: BẬT.' : '⚙️ Vật lý đơn giản: TẮT.');
+    this._refreshPhysPanel();
+    return true;
+  },
+
+  /* Nhảy 1 lần (Space / nút ⬆ Nhảy). Chỉ khi đang chơi, không pause,
+     vật lý bật, và đang chạm đất — đang bay thì không nhảy đôi. */
+  _tryJump: function () {
+    if (!this._playing || this._paused || !this._physOn()) return false;
+    var body = {
+      pos: [this._heroPos[0], this._heroY, this._heroPos[1]],
+      vel: [0, this._heroVy, 0], grounded: this._heroGrounded,
+      radius: ED.Physics.CAPSULE_RADIUS, height: ED.Physics.CAPSULE_HEIGHT
+    };
+    var res = ED.Physics.jump(body);
+    if (res.vel[1] === this._heroVy && res.grounded === this._heroGrounded) return false;
+    this._heroVy = res.vel[1];
+    this._heroGrounded = res.grounded;
+    return true;
+  },
+
+  /* Prop đặt trên cao (y > mặt đất) khi vào Play thì rơi; prop nằm dưới
+     mặt đất (địa hình nâng sau khi đặt) thì đặt lên mặt đất ngay. Chỉ
+     xét type 'prop'/'crate', không xét nhà/NPC/quái (đứng yên theo
+     thiết kế). Chạy 1 lần lúc start(). */
+  _initFallingProps: function () {
+    this._fallingProps = [];
+    if (!this._physOn()) return;
+    var project = this.project();
+    var self = this;
+    (project.objects || []).forEach(function (o) {
+      if (!o || !o.pos) return;
+      if (o.type !== 'prop' && o.type !== 'crate') return;
+      if (o.id === self._heroId) return;
+      var x = Number(o.pos[0]) || 0, y = Number(o.pos[1]) || 0, z = Number(o.pos[2]) || 0;
+      var g = self._groundHeightAt(x, z, y, o.id);
+      if (y > g + 0.05) {
+        self._fallingProps.push({ id: o.id, velY: 0, resting: false });
+      } else if (y < g - 0.05) {
+        o.pos = [x, g, z];
+        self._syncObjPos(o);
+      }
+    });
+  },
+
+  /* 1 frame vật lý dọc (gọi trong update, cả khi hero đứng yên):
+     hero chịu trọng lực (rơi/chạm đất/đứng trên nóc box), thùng đang
+     trượt thì ma sát làm chậm dần rồi dừng, prop trên cao rơi xuống
+     đất. Vị trí đổi thật trong project object + mesh (snapshot lúc
+     Stop khôi phục lại). */
+  _updatePhysicsVertical: function (dt) {
+    if (!this._physOn()) return;
+    var project = this.project();
+    var t = project.terrain || {};
+    var boxes = this._physBoxes();
+    var env = { gravity: ED.Physics.GRAVITY, heights: t.heights, boxes: boxes, size: t.size, segments: t.segments };
+    /* Hero: trọng lực + chạm đất (terrain hoặc nóc box). */
+    var body = {
+      pos: [this._heroPos[0], this._heroY, this._heroPos[1]],
+      vel: [0, this._heroVy, 0], grounded: this._heroGrounded,
+      radius: ED.Physics.CAPSULE_RADIUS, height: ED.Physics.CAPSULE_HEIGHT
+    };
+    var res = ED.Physics.stepBody(body, dt, env);
+    var yChanged = Math.abs(res.pos[1] - this._heroY) > 1e-9;
+    this._heroY = res.pos[1];
+    this._heroVy = res.vel[1];
+    this._heroGrounded = res.grounded;
+    if (yChanged) this._applyHeroPos();
+    /* Thùng đang trượt (hết lực đẩy): ma sát làm chậm dần rồi dừng. */
+    var self = this;
+    var statics = [];
+    for (var i = 0; i < boxes.length; i++) if (!boxes[i].pushable) statics.push(boxes[i]);
+    Object.keys(this._crateVel || {}).forEach(function (id) {
+      var st = self._crateVel[id];
+      if (!st) return;
+      var obj = null;
+      for (var k = 0; k < project.objects.length; k++) {
+        if (project.objects[k] && project.objects[k].id === id) { obj = project.objects[k]; break; }
+      }
+      if (!obj) { delete self._crateVel[id]; return; }
+      var crate = {
+        pos: [Number(obj.pos[0]) || 0, Number(obj.pos[1]) || 0, Number(obj.pos[2]) || 0],
+        vel: [st.vel[0], st.vel[1]],
+        size: (Array.isArray(obj.scale) ? [obj.scale[0], obj.scale[2]] : [1, 1])
+      };
+      var r = ED.Physics.pushCrate(crate, null, dt, statics, {});
+      st.vel = r.crate.vel;
+      if (r.moved) {
+        obj.pos = [r.crate.pos[0], r.crate.pos[1], r.crate.pos[2]];
+        self._syncObjPos(obj);
+      }
+      if (r.crate.vel[0] === 0 && r.crate.vel[1] === 0) delete self._crateVel[id];
+    });
+    /* Vật rơi: prop trên cao rơi xuống đất, chạm đất thì nằm lại. */
+    (this._fallingProps || []).forEach(function (fp) {
+      if (!fp || fp.resting) return;
+      var obj = null;
+      for (var k = 0; k < project.objects.length; k++) {
+        if (project.objects[k] && project.objects[k].id === fp.id) { obj = project.objects[k]; break; }
+      }
+      if (!obj) { fp.resting = true; return; }
+      var pr = ED.Physics.stepFallingProp(
+        { pos: [Number(obj.pos[0]) || 0, Number(obj.pos[1]) || 0, Number(obj.pos[2]) || 0], velY: fp.velY },
+        dt, { gravity: env.gravity, heights: env.heights, boxes: env.boxes, size: env.size, segments: env.segments, excludeId: fp.id });
+      fp.velY = pr.velY;
+      fp.resting = pr.resting;
+      if (pr.moved) {
+        obj.pos = [pr.pos[0], pr.pos[1], pr.pos[2]];
+        self._syncObjPos(obj);
+      }
+    });
+  },
+
+  /* Đồng bộ vị trí 1 object ra mesh (dùng cho thùng/prop bị vật lý dời):
+     ưu tiên ED.Viewport.syncObject, không có thì set trực tiếp meshes. */
+  _syncObjPos: function (obj) {
+    try {
+      if (ED.Viewport && typeof ED.Viewport.syncObject === 'function') { ED.Viewport.syncObject(obj); return; }
+      if (ED.Viewport && ED.Viewport.meshes && ED.Viewport.meshes[obj.id]) {
+        ED.Viewport.meshes[obj.id].position.set(obj.pos[0], obj.pos[1], obj.pos[2]);
+      }
+    } catch (e) {}
+  },
+
+  /* Bật/tắt flag đẩy được cho object đang chọn (nút trong panel Vật lý).
+     Chỉ trong phiên Play; Stop khôi phục lại nhờ snapshot (không sửa
+     project gốc vĩnh viễn). Object đang chọn lấy từ ED.Core.selectedId. */
+  _markPushableSelected: function () {
+    if (typeof document === 'undefined') return;
+    var id = null;
+    try {
+      if (ED.Core && ED.Core.selectedId) id = ED.Core.selectedId;
+      else if (ED.Core && typeof ED.Core.getSelectedId === 'function') id = ED.Core.getSelectedId();
+    } catch (e) {}
+    if (!id) {
+      this.toast('Chưa chọn object nào — chọn 1 prop/thùng trong Editor trước khi bấm Play.');
+      return;
+    }
+    var project = this.project();
+    var obj = null;
+    for (var i = 0; i < project.objects.length; i++) {
+      if (project.objects[i] && project.objects[i].id === id) { obj = project.objects[i]; break; }
+    }
+    if (!obj) { this.toast('Không tìm thấy object đang chọn.'); return; }
+    if (obj.type === 'character' || obj.type === 'npc' || obj.type === 'monster' ||
+        obj.type === 'terrain' || obj.type === 'water' || obj.type === 'fx' ||
+        obj.type === 'light' || obj.type === 'waypoint' || obj.type === 'collider') {
+      this.toast('Object "' + (obj.name || obj.type) + '" không làm thùng đẩy được.');
+      return;
+    }
+    if (!obj.extra) obj.extra = {};
+    obj.extra.pushable = !obj.extra.pushable;
+    this.toast(obj.extra.pushable
+      ? ('📦 "' + (obj.name || obj.type) + '" giờ đẩy được — đi vào là thùng trượt theo.')
+      : ('📦 "' + (obj.name || obj.type) + '" không còn đẩy được.'));
+    this.log('Physics-lite: ' + (obj.name || obj.id) + ' pushable=' + !!obj.extra.pushable + ' (chỉ trong phiên Play, Stop là khôi phục).');
+  },
+
+  /* Panel Vật lý trong Play Mode (tạo 1 lần trong init, hiện/ẩn cùng
+     thanh Play qua _showBar). Tự tạo DOM riêng — KHÔNG sửa 02-ui.js,
+     editor.css hay template. */
+  _initPhysPanel: function () {
+    if (typeof document === 'undefined') return;
+    var self = this;
+    var p = document.createElement('div');
+    p.className = 'ed-play-physics';
+    p.style.display = 'none';
+    p.style.position = 'fixed';
+    p.style.top = '12px';
+    p.style.right = '12px';
+    p.style.zIndex = '9999';
+    p.style.maxWidth = '46vw';
+    var title = document.createElement('div');
+    title.className = 'ed-play-quest-title';
+    title.textContent = '⚙️ Vật lý đơn giản';
+    p.appendChild(title);
+    var note = document.createElement('div');
+    note.className = 'ed-play-quest-line';
+    note.textContent = 'Physics-lite — KHÔNG phải rigid-body đầy đủ: chỉ trọng lực + nhảy, chặn tường (capsule-vs-box), đẩy thùng, vật rơi. Không xoay, không mô-men.';
+    p.appendChild(note);
+    var toggle = document.createElement('button');
+    toggle.className = 'ed-btn';
+    toggle.style.minHeight = '44px';
+    toggle.textContent = 'Vật lý: BẬT';
+    toggle.addEventListener('click', function () { self.setPhysics(!self._physicsOn); });
+    p.appendChild(toggle);
+    this._physToggleBtn = toggle;
+    var status = document.createElement('div');
+    status.className = 'ed-play-quest-line';
+    status.textContent = '🟢 Chạm đất';
+    p.appendChild(status);
+    this._physStatus = status;
+    var markBtn = document.createElement('button');
+    markBtn.className = 'ed-btn';
+    markBtn.style.minHeight = '44px';
+    markBtn.textContent = '📦 Thùng đẩy được: bật/tắt cho object đang chọn';
+    markBtn.addEventListener('click', function () { self._markPushableSelected(); });
+    p.appendChild(markBtn);
+    var hint = document.createElement('div');
+    hint.className = 'ed-play-quest-note';
+    hint.textContent = 'Nhảy: phím Space / nút ⬆ Nhảy (chỉ khi chạm đất).';
+    p.appendChild(hint);
+    document.body.appendChild(p);
+    this._physPanel = p;
   },
 
   /* Thanh Play + hộp thoại NPC: tạo 1 lần trong init (DOM). */
@@ -1669,6 +2368,9 @@ ED.Play = {
     barBtn('⏹ Dừng (về Editor)', function () { self.stop(); });
     this._attackBtn = barBtn('⚔️ Đánh', function () { self.attack(); });
     this._attackBtn.style.display = 'none';
+    /* Đợt 3: nút Nhảy cho điện thoại (Space trên bàn phím). Ẩn/hiện theo
+       _refreshPhysPanel (chỉ hiện khi vật lý bật). */
+    this._jumpBtn = barBtn('⬆ Nhảy', function () { self._tryJump(); });
     /* Đợt 2: thanh HP + vàng trong thanh Play (cập nhật ở _refreshHud). */
     var hpWrap = document.createElement('div');
     hpWrap.className = 'ed-play-hp-wrap';
@@ -1750,6 +2452,10 @@ ED.Play = {
     dlg.style.maxWidth = '92vw';
     document.body.appendChild(dlg);
     this._dlgBox = dlg;
+
+    /* Đợt 3: panel Vật lý (góc phải trên, hiện cùng thanh Play). */
+    this._initPhysPanel();
+    this._refreshPhysPanel();
     return true;
   }
 };

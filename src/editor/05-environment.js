@@ -5,9 +5,15 @@
    (particle Points rơi), wind (viewport animation loop đọc
    ED.Environment.wind; cây/đèn đung đưa theo ED.Environment.sway()),
    preset thành cổ / rừng trúc / núi tuyết / chùa / võ đài.
+   Đợt 3 — shadow thật (renderer.shadowMap PCFSoft + directional light
+   castShadow/mapSize/bias + flag cast/receive theo type), fog nâng cấp
+   (màu fog chỉnh được + fog theo chiều cao camera), mặt nước phản chiếu
+   thật (THREE.Reflector r128 — viewport thay mặt phẳng bằng Reflector;
+   module này chỉ giữ setting nước trong project.env).
    Lưu tất cả vào project.env; đổi là markDirty + pushHistory GỘP
    (chỉ push khi thả slider/change, không push mỗi tick input).
-   Logic thuần (computeSun, preset, sway) test được bằng vm, không cần THREE.
+   Logic thuần (computeSun, preset, sway, shadow/fog/water normalize)
+   test được bằng vm, không cần THREE.
    Quy tắc DESIGN.md: KHÔNG truy cập document/window/THREE ở top-level.
    ========================================================================== */
 var ED = (typeof ED !== 'undefined') ? ED : {};
@@ -15,18 +21,23 @@ var ED = (typeof ED !== 'undefined') ? ED : {};
 ED.Environment = (function () {
   'use strict';
 
-  /* State nội bộ; đồng bộ 2 chiều với project.env qua syncFrom/ToProject. */
-  var _env = { timeOfDay: 10, fog: 0.01, weather: 'none', wind: 0.5, preset: 'thanh-co', skyColor: '#87b5d6' };
+  /* State nội bộ; đồng bộ 2 chiều với project.env qua syncFrom/ToProject.
+     Đợt 3: shadow {enabled, mapSize, bias}, water {reflect, color, opacity},
+     fogColor '' = theo màu trời, fogHeight 0..1 = độ mạnh của fog theo cao. */
+  var _env = defaultEnv();
   var _scene = null, _sun = null, _moon = null, _hemi = null;
   var _weather = null; // {type, points, velocities:Float32Array, count}
   var _weatherTick = 0;
+  var _fogLastY = null, _fogTick = 0; // throttle cập nhật fog theo chiều cao camera
 
   var PRESETS = {
     'thanh-co': { name: 'Thành cổ', timeOfDay: 10, fog: 0.008, weather: 'none', wind: 0.3, skyColor: '#87b5d6',
       assets: [{ type: 'house', dx: -6, dz: 0 }, { type: 'house', dx: 6, dz: 0 }, { type: 'gate', dx: 0, dz: -8 }, { type: 'lantern', dx: -3, dz: 4 }, { type: 'lantern', dx: 3, dz: 4 }] },
     'rung-truc': { name: 'Rừng trúc', timeOfDay: 9, fog: 0.02, weather: 'none', wind: 0.8, skyColor: '#9db98a',
+      fogColor: '#a8bf9a', fogHeight: 0.7,
       assets: [{ type: 'bamboo', dx: -6, dz: -4 }, { type: 'bamboo', dx: -4, dz: 2 }, { type: 'bamboo', dx: 5, dz: -3 }, { type: 'bamboo', dx: 6, dz: 4 }, { type: 'rock', dx: 0, dz: 6 }, { type: 'grass', dx: -2, dz: 5 }] },
     'nui-tuyet': { name: 'Núi tuyết', timeOfDay: 11, fog: 0.015, weather: 'snow', wind: 0.6, skyColor: '#cfdce8',
+      fogColor: '#dfe9f2', fogHeight: 0.8,
       assets: [{ type: 'rock', dx: -5, dz: -3 }, { type: 'rock', dx: 4, dz: -5 }, { type: 'rock', dx: 6, dz: 3 }, { type: 'tree', dx: -2, dz: 4 }] },
     'chua': { name: 'Chùa', timeOfDay: 17, fog: 0.012, weather: 'none', wind: 0.2, skyColor: '#e8b07a',
       assets: [{ type: 'temple', dx: 0, dz: -6 }, { type: 'lantern', dx: -4, dz: 0 }, { type: 'lantern', dx: 4, dz: 0 }, { type: 'flower', dx: -2, dz: 4 }, { type: 'flower', dx: 2, dz: 4 }] },
@@ -84,9 +95,108 @@ ED.Environment = (function () {
     return Math.sin(time * 1.8 + (phase || 0)) * amp;
   }
 
+  /* ---- Đợt 3 — logic thuần: shadow / fog nâng cấp / nước. ---- */
+  function _merge(a, b) {
+    var out = {}, k;
+    for (k in a) if (Object.prototype.hasOwnProperty.call(a, k)) out[k] = a[k];
+    if (b) for (k in b) if (Object.prototype.hasOwnProperty.call(b, k)) out[k] = b[k];
+    return out;
+  }
+  /* Shadow mặc định cho project cũ (chưa có field shadow): bật, 1024, bias 0. */
+  function defaultShadow() { return { enabled: true, mapSize: 1024, bias: 0 }; }
+  /* Chuẩn hoá setting shadow: mapSize chỉ 512/1024/2048 (lạ -> 1024),
+     bias kẹp -0.005..0.005. Thuần. */
+  function normalizeShadow(input) {
+    var d = defaultShadow();
+    if (!input || typeof input !== 'object') return d;
+    var out = { enabled: d.enabled, mapSize: d.mapSize, bias: d.bias };
+    if (input.enabled != null) out.enabled = !!input.enabled;
+    if (input.mapSize != null) {
+      var s = Number(input.mapSize);
+      out.mapSize = (s === 512 || s === 2048) ? s : 1024;
+    }
+    if (input.bias != null) {
+      var b = Number(input.bias);
+      out.bias = isFinite(b) ? clamp(b, -0.005, 0.005) : 0;
+    }
+    return out;
+  }
+  /* Mô tả những gì applyShadows() sẽ áp lên renderer + directional light.
+     Thuần — test assert trên object này thay vì cần WebGL thật. */
+  function computeShadowSettings(shadow) {
+    var s = normalizeShadow(shadow);
+    return { enabled: s.enabled, mapSize: s.mapSize, bias: s.bias,
+      shadowMapType: 'PCFSoftShadowMap',
+      shadowCamera: { left: -45, right: 45, top: 45, bottom: -45, near: 1, far: 160 } };
+  }
+  /* Quy tắc cast/receive theo type (đợt 3). Mesh nào 03-assets đã gán
+     cast/receive = true thì applyShadowFlags GIỮ nguyên (chỉ bật thêm,
+     không tắt) — xem applyShadowFlags. */
+  var SHADOW_FLAGS = {
+    terrain: { cast: false, receive: true },
+    house: { cast: true, receive: true }, temple: { cast: true, receive: true },
+    tower: { cast: true, receive: true }, gate: { cast: true, receive: true },
+    bridge: { cast: true, receive: true },
+    tree: { cast: true, receive: true }, bamboo: { cast: true, receive: true },
+    rock: { cast: true, receive: true }, lantern: { cast: true, receive: true },
+    table: { cast: true, receive: true }, chair: { cast: true, receive: true },
+    prop: { cast: true, receive: true },
+    character: { cast: true, receive: false }, npc: { cast: true, receive: false },
+    monster: { cast: true, receive: false }, imported: { cast: true, receive: false },
+    water: { cast: false, receive: false }, grass: { cast: false, receive: false },
+    flower: { cast: false, receive: false }, fx: { cast: false, receive: false },
+    light: { cast: false, receive: false }, collider: { cast: false, receive: false },
+    waypoint: { cast: false, receive: false }, group: { cast: false, receive: false }
+  };
+  function computeShadowFlags(type) {
+    var f = SHADOW_FLAGS[type];
+    return f ? { cast: f.cast, receive: f.receive } : { cast: true, receive: false };
+  }
+  /* Nước mặc định: phản chiếu bật, màu xanh hồ, độ trong 0.85. */
+  function defaultWater() { return { reflect: true, color: '#4da39e', opacity: 0.85 }; }
+  /* Chuẩn hoá setting nước: opacity kẹp 0.1..1. Thuần. */
+  function normalizeWater(input) {
+    var d = defaultWater();
+    if (!input || typeof input !== 'object') return d;
+    var out = { reflect: d.reflect, color: d.color, opacity: d.opacity };
+    if (input.reflect != null) out.reflect = !!input.reflect;
+    if (input.color) out.color = String(input.color);
+    if (input.opacity != null) {
+      var o = Number(input.opacity);
+      out.opacity = isFinite(o) ? clamp(o, 0.1, 1) : d.opacity;
+    }
+    return out;
+  }
+  /* Màu fog thực dùng: fogColor rỗng = theo màu trời. Thuần. */
+  function resolveFogColor(fogColor, skyColor) {
+    return (fogColor && String(fogColor).trim() !== '') ? String(fogColor) : (skyColor || '#87b5d6');
+  }
+  /* Fog nâng cấp (thuần): mật độ -> near/far như cũ; chiều cao camera càng
+     cao thì fog càng loãng — far dài thêm (tối đa +120%) và màu fog trộn dần
+     về màu trời. camY: độ cao camera (m); heightStrength 0..1 (0 = tắt
+     hiệu ứng chiều cao). Không phải volumetric fog thật: chỉ là 1 lớp
+     THREE.Fog tuyến tính, đổi màu + tầm xa theo độ cao camera. */
+  function computeFog(density, fogColor, skyColor, camY, heightStrength) {
+    density = clamp(Number(density) || 0, 0, 0.08);
+    if (density <= 0) return { enabled: false, color: null, near: 0, far: 0, heightFactor: 0 };
+    var baseFar = 30 + Math.max(10, 1 / Math.max(density, 0.001) * 0.9);
+    var h = clamp((Number(camY) || 0) / 40, 0, 1) * clamp(Number(heightStrength) || 0, 0, 1);
+    var resolved = resolveFogColor(fogColor, skyColor);
+    var color = lerpColor(resolved, skyColor || '#87b5d6', h * 0.5);
+    return { enabled: true, color: color, near: 30,
+      far: +(baseFar * (1 + h * 1.2)).toFixed(1), heightFactor: +h.toFixed(3) };
+  }
+
   /* ---- State + đồng bộ project.env ---- */
-  function getEnv() { return { timeOfDay: _env.timeOfDay, fog: _env.fog, weather: _env.weather, wind: _env.wind, preset: _env.preset, skyColor: _env.skyColor }; }
+  function getEnv() {
+    return { timeOfDay: _env.timeOfDay, fog: _env.fog, weather: _env.weather, wind: _env.wind,
+      preset: _env.preset, skyColor: _env.skyColor, fogColor: _env.fogColor, fogHeight: _env.fogHeight,
+      shadow: { enabled: _env.shadow.enabled, mapSize: _env.shadow.mapSize, bias: _env.shadow.bias },
+      water: { reflect: _env.water.reflect, color: _env.water.color, opacity: _env.water.opacity } };
+  }
   function getWind() { return _env.wind; }
+  function getShadow() { return { enabled: _env.shadow.enabled, mapSize: _env.shadow.mapSize, bias: _env.shadow.bias }; }
+  function getWater() { return { reflect: _env.water.reflect, color: _env.water.color, opacity: _env.water.opacity }; }
   function setEnv(partial, opts) {
     opts = opts || {};
     if (!partial) return getEnv();
@@ -96,6 +206,10 @@ ED.Environment = (function () {
     if (partial.wind != null) _env.wind = clamp(Number(partial.wind) || 0, 0, 1);
     if (partial.preset) _env.preset = partial.preset;
     if (partial.skyColor) _env.skyColor = partial.skyColor;
+    if (partial.fogColor != null) _env.fogColor = String(partial.fogColor);
+    if (partial.fogHeight != null) _env.fogHeight = clamp(Number(partial.fogHeight) || 0, 0, 1);
+    if (partial.shadow) _env.shadow = normalizeShadow(_merge(_env.shadow, partial.shadow));
+    if (partial.water) _env.water = normalizeWater(_merge(_env.water, partial.water));
     if (opts.commit !== false) { syncToProject(); applyToScene(); }
     if (opts.dirty !== false && ED.Core && typeof ED.Core.markDirty === 'function') ED.Core.markDirty();
     if (opts.history && ED.Core && typeof ED.Core.pushHistory === 'function') ED.Core.pushHistory(opts.history);
@@ -105,7 +219,14 @@ ED.Environment = (function () {
     var p = ED.Core && typeof ED.Core.getProject === 'function' ? ED.Core.getProject() : null;
     if (!p) p = ED.Core && ED.Core.project;
     if (!p || !p.env) return false;
+    /* Reset về mặc định trước rồi mới áp env của project — project cũ
+       thiếu field shadow/water/fogColor/fogHeight sẽ nhận mặc định đợt 3
+       thay vì dính setting của project mở trước đó. */
+    _env = defaultEnv();
     setEnv(p.env, { commit: false, dirty: false });
+    if (ED.Viewport && typeof ED.Viewport.refreshWater === 'function') {
+      try { ED.Viewport.refreshWater(); } catch (e) {}
+    }
     return true;
   }
   function syncToProject() {
@@ -116,7 +237,8 @@ ED.Environment = (function () {
     return true;
   }
   function defaultEnv() {
-    return { timeOfDay: 10, fog: 0.01, weather: 'none', wind: 0.5, preset: 'thanh-co', skyColor: '#87b5d6' };
+    return { timeOfDay: 10, fog: 0.01, weather: 'none', wind: 0.5, preset: 'thanh-co', skyColor: '#87b5d6',
+      fogColor: '', fogHeight: 0.5, shadow: defaultShadow(), water: defaultWater() };
   }
 
   /* ---- Áp dụng env lên scene thật (cần THREE + viewport). ----
@@ -160,12 +282,125 @@ ED.Environment = (function () {
     _hemi.intensity = sun.hemiIntensity;
     var sky = _env.skyColor || sun.skyColor;
     scene.background = new THREE.Color(sky);
-    if (_env.fog > 0) {
-      scene.fog = new THREE.Fog(new THREE.Color(sky), 30, 30 + Math.max(10, 1 / Math.max(_env.fog, 0.001) * 0.9));
+    var camY = 10;
+    try {
+      var _cam = ED.Viewport && typeof ED.Viewport.getCamera === 'function' ? ED.Viewport.getCamera() : null;
+      if (_cam && _cam.position) camY = _cam.position.y;
+    } catch (e) {}
+    var f = computeFog(_env.fog, _env.fogColor, sky, camY, _env.fogHeight);
+    if (f.enabled) {
+      scene.fog = new THREE.Fog(new THREE.Color(f.color), f.near, f.far);
     } else {
       scene.fog = null;
     }
+    _fogLastY = camY;
+    applyShadows();
     setWeather(_env.weather);
+    return true;
+  }
+  /* Bật/tắt flag cast/receive cho 1 group theo type của object.
+     CHỈ BẬT THÊM, không tắt flag mesh đã có (03-assets đã gán castShadow
+     cho nhiều mesh — giữ nguyên). Viewport.syncObject gọi hàm này mỗi khi
+     sync 1 object mới. Bỏ qua mesh Reflector nước (shader không nhận bóng). */
+  function applyShadowFlags(group, obj) {
+    if (!group || typeof group.traverse !== 'function') return false;
+    var flags = computeShadowFlags(obj && obj.type);
+    group.traverse(function (c) {
+      if (!c || !c.isMesh) return;
+      if (c.userData && c.userData.isWaterReflector) return;
+      if (flags.cast) c.castShadow = true;
+      if (flags.receive) c.receiveShadow = true;
+    });
+    return true;
+  }
+  /* Áp shadow thật lên renderer + đèn mặt trời/mặt trăng + toàn scene.
+     Đổi mapSize phải dispose shadow map cũ để three.js tạo lại đúng cỡ. */
+  function applyShadows() {
+    if (typeof THREE === 'undefined') return false;
+    var s = computeShadowSettings(_env.shadow);
+    var renderer = null;
+    try {
+      renderer = ED.Viewport && ED.Viewport.renderer;
+      if (!renderer && ED.Viewport && typeof ED.Viewport.getRenderer === 'function') renderer = ED.Viewport.getRenderer();
+    } catch (e) {}
+    if (renderer && renderer.shadowMap) {
+      if (renderer.shadowMap.enabled !== s.enabled) {
+        renderer.shadowMap.enabled = s.enabled;
+        /* r128: đổi shadowMap.enabled cần biên dịch lại material. */
+        if (_scene) {
+          _scene.traverse(function (o) {
+            if (o && o.isMesh && o.material) {
+              var ms = Array.isArray(o.material) ? o.material : [o.material];
+              ms.forEach(function (m) { m.needsUpdate = true; });
+            }
+          });
+        }
+      }
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.shadowMap.needsUpdate = true;
+    }
+    [_sun, _moon].forEach(function (light) {
+      if (!light || !light.shadow) return;
+      light.castShadow = s.enabled;
+      if (light.shadow.mapSize.x !== s.mapSize || light.shadow.mapSize.y !== s.mapSize) {
+        light.shadow.mapSize.set(s.mapSize, s.mapSize);
+        if (light.shadow.map) { light.shadow.map.dispose(); light.shadow.map = null; }
+      }
+      light.shadow.bias = s.bias;
+      var cam = light.shadow.camera;
+      if (cam) {
+        cam.left = s.shadowCamera.left; cam.right = s.shadowCamera.right;
+        cam.top = s.shadowCamera.top; cam.bottom = s.shadowCamera.bottom;
+        cam.near = s.shadowCamera.near; cam.far = s.shadowCamera.far;
+        if (cam.updateProjectionMatrix) cam.updateProjectionMatrix();
+      }
+    });
+    /* Flag cho mọi mesh trong scene (tìm objectId bằng cách đi lên parent). */
+    if (_scene) {
+      _scene.traverse(function (o) {
+        if (!o || !o.isMesh) return;
+        if (o.userData && o.userData.isWaterReflector) return;
+        var p = o, id = null;
+        while (p) {
+          if (p.userData && p.userData.objectId) { id = p.userData.objectId; break; }
+          p = p.parent;
+        }
+        if (!id) {
+          /* Terrain: mesh gốc scene, objectId null, PlaneGeometry. */
+          if (o.parent && o.parent.isScene && o.geometry && o.geometry.type === 'PlaneGeometry' && s.enabled) {
+            o.receiveShadow = true;
+          }
+          return;
+        }
+        var obj = null;
+        try { obj = ED.Core && typeof ED.Core.getObject === 'function' ? ED.Core.getObject(id) : null; } catch (e) {}
+        if (!obj) return;
+        var fl = computeShadowFlags(obj.type);
+        if (fl.cast) o.castShadow = true;
+        if (fl.receive) o.receiveShadow = true;
+      });
+    }
+    return true;
+  }
+  /* Fog theo chiều cao camera: gọi định kỳ từ tick() (mỗi ~0.3s, chỉ tính
+     lại khi độ cao camera đổi > 0.5m). Force = true để tính ngay. */
+  function updateHeightFog(force) {
+    if (typeof THREE === 'undefined' || !_scene || _env.fog <= 0) return false;
+    var cam = null;
+    try { cam = ED.Viewport && typeof ED.Viewport.getCamera === 'function' ? ED.Viewport.getCamera() : null; } catch (e) {}
+    var camY = (cam && cam.position) ? cam.position.y : 10;
+    if (!force && _fogLastY != null && Math.abs(camY - _fogLastY) < 0.5) return false;
+    _fogLastY = camY;
+    var sky = _env.skyColor || computeSun(_env.timeOfDay).skyColor;
+    var f = computeFog(_env.fog, _env.fogColor, sky, camY, _env.fogHeight);
+    if (!f.enabled) return false;
+    if (!_scene.fog) {
+      _scene.fog = new THREE.Fog(new THREE.Color(f.color), f.near, f.far);
+    } else {
+      _scene.fog.color.set(f.color);
+      _scene.fog.near = f.near;
+      _scene.fog.far = f.far;
+    }
     return true;
   }
   /* Đèn lồng sáng dần ban đêm: viewport gọi mỗi frame hoặc sau khi đổi giờ. */
@@ -220,6 +455,9 @@ ED.Environment = (function () {
     return true;
   }
   function tick(dt) {
+    /* Fog theo chiều cao camera: kiểm tra định kỳ, không tính mỗi frame. */
+    _fogTick += Math.min(Number(dt) || 0, 0.1);
+    if (_fogTick >= 0.3) { _fogTick = 0; try { updateHeightFog(); } catch (e) {} }
     if (!_weather || !_weather.points) return;
     dt = Math.min(Number(dt) || 0, 0.1);
     var attr = _weather.points.geometry.attributes.position;
@@ -249,7 +487,14 @@ ED.Environment = (function () {
     var before = getEnv();
     _env.timeOfDay = p.timeOfDay; _env.fog = p.fog; _env.weather = p.weather;
     _env.wind = p.wind; _env.preset = name; _env.skyColor = p.skyColor;
+    _env.fogColor = p.fogColor || '';
+    _env.fogHeight = (p.fogHeight != null) ? p.fogHeight : 0.5;
+    _env.shadow = defaultShadow();
+    _env.water = defaultWater();
     syncToProject(); applyToScene();
+    if (ED.Viewport && typeof ED.Viewport.refreshWater === 'function') {
+      try { ED.Viewport.refreshWater(); } catch (e) {}
+    }
     if (ED.Core && typeof ED.Core.markDirty === 'function') ED.Core.markDirty();
     if (ED.Core && typeof ED.Core.pushHistory === 'function') ED.Core.pushHistory('Preset: ' + p.name);
     /* Chỉ thêm asset khi scene trống (chưa có object nào ngoài terrain). */
@@ -286,21 +531,48 @@ ED.Environment = (function () {
     var opts = listPresets().map(function (p) {
       return '<option value="' + p.id + '"' + (p.id === _env.preset ? ' selected' : '') + '>' + p.name + '</option>';
     }).join('');
+    var hasReflector = (typeof THREE !== 'undefined' && !!THREE.Reflector);
+    var fogColorShown = resolveFogColor(_env.fogColor, _env.skyColor);
+    var shadowSizeOpts = [512, 1024, 2048].map(function (s) {
+      return '<option value="' + s + '"' + (s === _env.shadow.mapSize ? ' selected' : '') + '>' + s + ' px</option>';
+    }).join('');
     panel.innerHTML =
       '<div class="ed-panel-title">🌤 Môi trường</div>' +
       '<div class="ed-row"><label>Preset</label><select id="ed-env-preset">' + opts + '</select></div>' +
       '<div class="ed-row"><label>Giờ <span id="ed-env-time-v">' + _env.timeOfDay + 'h</span></label>' +
-      '<input id="ed-env-time" type="range" min="0" max="24" step="0.5" value="' + _env.timeOfDay + '"></div>' +
+      '<input id="ed-env-time" type="range" min="0" max="24" step="0.5" value="' + _env.timeOfDay + '" style="min-height:40px"></div>' +
       '<div class="ed-row"><label>Sương mù <span id="ed-env-fog-v">' + _env.fog.toFixed(3) + '</span></label>' +
-      '<input id="ed-env-fog" type="range" min="0" max="0.08" step="0.002" value="' + _env.fog + '"></div>' +
+      '<input id="ed-env-fog" type="range" min="0" max="0.08" step="0.002" value="' + _env.fog + '" style="min-height:40px"></div>' +
       '<div class="ed-row"><label>Gió <span id="ed-env-wind-v">' + _env.wind.toFixed(2) + '</span></label>' +
-      '<input id="ed-env-wind" type="range" min="0" max="1" step="0.05" value="' + _env.wind + '"></div>' +
+      '<input id="ed-env-wind" type="range" min="0" max="1" step="0.05" value="' + _env.wind + '" style="min-height:40px"></div>' +
       '<div class="ed-row"><label>Thời tiết</label><select id="ed-env-weather">' +
       '<option value="none"' + (_env.weather === 'none' ? ' selected' : '') + '>Không</option>' +
       '<option value="rain"' + (_env.weather === 'rain' ? ' selected' : '') + '>🌧 Mưa</option>' +
       '<option value="snow"' + (_env.weather === 'snow' ? ' selected' : '') + '>❄ Tuyết</option>' +
       '</select></div>' +
-      '<div class="ed-hint">Kéo giờ để xem ngày/đêm; đèn lồng sáng dần khi trời tối.</div>';
+      '<div class="ed-panel-title">🌑 Bóng đổ</div>' +
+      '<div class="ed-row"><label>Bật bóng đổ</label>' +
+      '<input id="ed-env-shadow-on" type="checkbox"' + (_env.shadow.enabled ? ' checked' : '') + ' style="min-height:40px;min-width:40px"></div>' +
+      '<div class="ed-row"><label>Độ nét bóng</label><select id="ed-env-shadow-size">' + shadowSizeOpts + '</select></div>' +
+      '<div class="ed-row"><label>Độ lệch bóng <span id="ed-env-shadow-bias-v">' + _env.shadow.bias.toFixed(4) + '</span></label>' +
+      '<input id="ed-env-shadow-bias" type="range" min="-0.005" max="0.005" step="0.0005" value="' + _env.shadow.bias + '" style="min-height:40px"></div>' +
+      '<div class="ed-panel-title">🌫 Sương mù nâng cao</div>' +
+      '<div class="ed-row"><label>Màu sương mù</label>' +
+      '<input id="ed-env-fog-color" type="color" value="' + fogColorShown + '" style="min-height:40px;min-width:44px">' +
+      '<button id="ed-env-fog-color-auto" type="button">Theo trời</button></div>' +
+      '<div class="ed-row"><label>Sương theo cao <span id="ed-env-fog-h-v">' + Math.round(_env.fogHeight * 100) + '%</span></label>' +
+      '<input id="ed-env-fog-h" type="range" min="0" max="1" step="0.05" value="' + _env.fogHeight + '" style="min-height:40px"></div>' +
+      '<div class="ed-panel-title">💧 Mặt nước</div>' +
+      '<div class="ed-row"><label>Phản chiếu thật</label>' +
+      '<input id="ed-env-water-reflect" type="checkbox"' + (_env.water.reflect ? ' checked' : '') + (hasReflector ? '' : ' disabled') + ' style="min-height:40px;min-width:40px"></div>' +
+      '<div class="ed-row"><label>Màu nước</label>' +
+      '<input id="ed-env-water-color" type="color" value="' + _env.water.color + '" style="min-height:40px;min-width:44px"></div>' +
+      '<div class="ed-row"><label>Độ trong <span id="ed-env-water-opacity-v">' + _env.water.opacity.toFixed(2) + '</span></label>' +
+      '<input id="ed-env-water-opacity" type="range" min="0.1" max="1" step="0.05" value="' + _env.water.opacity + '" style="min-height:40px"></div>' +
+      (hasReflector
+        ? '<div class="ed-hint">Phản chiếu dùng THREE.Reflector (render lại cảnh 1 lần mỗi mặt nước). Điện thoại yếu thì tắt nếu thấy giật.</div>'
+        : '<div class="ed-hint">Chưa có Reflector trong bản build này nên mặt nước đang là mặt phẳng thường — bật phản chiếu sẽ có hiệu lực sau khi build nối lib/Reflector.js.</div>') +
+      '<div class="ed-hint">Kéo giờ để xem ngày/đêm; đèn lồng sáng dần khi trời tối. Sương mù loãng dần khi camera lên cao (theo thanh "Sương theo cao").</div>';
     var preset = panel.querySelector('#ed-env-preset');
     preset.addEventListener('change', function () { applyPreset(preset.value); });
     function bindSlider(id, labelId, key, fmt, histLabel) {
@@ -321,6 +593,71 @@ ED.Environment = (function () {
     w.addEventListener('change', function () {
       setEnv({ weather: w.value }, { history: 'Môi trường: thời tiết ' + w.value });
     });
+    /* ---- Đợt 3: bóng đổ / fog nâng cao / mặt nước ---- */
+    function refreshWater() {
+      if (ED.Viewport && typeof ED.Viewport.refreshWater === 'function') {
+        try { ED.Viewport.refreshWater(); } catch (e) {}
+      }
+    }
+    function liveWaterMaterial() {
+      if (ED.Viewport && typeof ED.Viewport.updateWaterMaterial === 'function') {
+        try { ED.Viewport.updateWaterMaterial(); } catch (e) {}
+      }
+    }
+    var shadowOn = panel.querySelector('#ed-env-shadow-on');
+    shadowOn.addEventListener('change', function () {
+      setEnv({ shadow: { enabled: shadowOn.checked } },
+        { history: 'Môi trường: bóng đổ ' + (shadowOn.checked ? 'bật' : 'tắt') });
+    });
+    var shadowSize = panel.querySelector('#ed-env-shadow-size');
+    shadowSize.addEventListener('change', function () {
+      setEnv({ shadow: { mapSize: Number(shadowSize.value) } },
+        { history: 'Môi trường: độ nét bóng ' + shadowSize.value });
+    });
+    /* bindSlider chỉ set được key phẳng trong setEnv — 2 slider đợt 3 dùng
+       field lồng (shadow.bias, water.opacity) nên tự bind tay, cùng quy ước
+       input = áp live + đổi nhãn, change = pushHistory 1 lần. */
+    function bindNestedSlider(elId, labId, fmt, apply, histLabel) {
+      var el = panel.querySelector(elId), lab = panel.querySelector(labId);
+      el.addEventListener('input', function () {
+        apply(Number(el.value));
+        lab.textContent = fmt(Number(el.value));
+      });
+      el.addEventListener('change', function () {
+        if (ED.Core && typeof ED.Core.pushHistory === 'function') ED.Core.pushHistory(histLabel);
+      });
+    }
+    bindNestedSlider('#ed-env-shadow-bias', '#ed-env-shadow-bias-v', function (v) { return v.toFixed(4); },
+      function (v) { setEnv({ shadow: { bias: v } }, { history: null }); }, 'Môi trường: độ lệch bóng');
+    bindNestedSlider('#ed-env-water-opacity', '#ed-env-water-opacity-v', function (v) { return v.toFixed(2); },
+      function (v) { setEnv({ water: { opacity: v } }, { history: null }); liveWaterMaterial(); }, 'Môi trường: độ trong nước');
+    var fogColor = panel.querySelector('#ed-env-fog-color');
+    fogColor.addEventListener('input', function () {
+      setEnv({ fogColor: fogColor.value }, { history: null });
+    });
+    fogColor.addEventListener('change', function () {
+      if (ED.Core && typeof ED.Core.pushHistory === 'function') ED.Core.pushHistory('Môi trường: màu sương mù');
+    });
+    var fogColorAuto = panel.querySelector('#ed-env-fog-color-auto');
+    fogColorAuto.addEventListener('click', function () {
+      setEnv({ fogColor: '' }, { history: 'Môi trường: sương mù theo màu trời' });
+      fogColor.value = resolveFogColor('', _env.skyColor);
+    });
+    bindSlider('#ed-env-fog-h', '#ed-env-fog-h-v', 'fogHeight', function (v) { return Math.round(v * 100) + '%'; }, 'Môi trường: sương mù theo cao');
+    var waterReflect = panel.querySelector('#ed-env-water-reflect');
+    waterReflect.addEventListener('change', function () {
+      setEnv({ water: { reflect: waterReflect.checked } },
+        { history: 'Môi trường: phản chiếu nước ' + (waterReflect.checked ? 'bật' : 'tắt') });
+      refreshWater();
+    });
+    var waterColor = panel.querySelector('#ed-env-water-color');
+    waterColor.addEventListener('input', function () {
+      setEnv({ water: { color: waterColor.value } }, { history: null });
+      liveWaterMaterial();
+    });
+    waterColor.addEventListener('change', function () {
+      if (ED.Core && typeof ED.Core.pushHistory === 'function') ED.Core.pushHistory('Môi trường: màu nước');
+    });
   }
 
   return {
@@ -330,7 +667,13 @@ ED.Environment = (function () {
     syncFromProject: syncFromProject, syncToProject: syncToProject, defaultEnv: defaultEnv,
     applyToScene: applyToScene, updateLanterns: updateLanterns, findScene: findScene,
     setWeather: setWeather, getWeather: getWeather, tick: tick,
-    applyPreset: applyPreset, listPresets: listPresets, init: init
+    applyPreset: applyPreset, listPresets: listPresets, init: init,
+    /* Đợt 3 — hàm thuần + áp scene, harness đợt 3 test được qua ED.Environment. */
+    defaultShadow: defaultShadow, normalizeShadow: normalizeShadow,
+    computeShadowSettings: computeShadowSettings, computeShadowFlags: computeShadowFlags,
+    getShadow: getShadow, applyShadowFlags: applyShadowFlags, applyShadows: applyShadows,
+    defaultWater: defaultWater, normalizeWater: normalizeWater, getWater: getWater,
+    resolveFogColor: resolveFogColor, computeFog: computeFog, updateHeightFog: updateHeightFog
   };
 })();
 

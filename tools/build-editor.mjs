@@ -22,7 +22,7 @@ function readText(p) {
 const ORDERED = [
   '00-core.js', '01-viewport.js', '02-ui.js',
   '03-assets.js', '14-building.js', '04-terrain.js', '05-environment.js', '06-fx.js',
-  '07-character.js', '11-animation.js', '08-npc-ai.js', '09-play.js', '10-game-link.js',
+  '07-character.js', '11-animation.js', '08-npc-ai.js', '16-nodes.js', '17-physics.js', '09-play.js', '10-game-link.js',
   '12-nav.js', '13-material.js', '15-export.js',
   '99-boot.js'
 ];
@@ -58,6 +58,17 @@ if (!objLoader) console.warn('WARN: lib/OBJLoader.js chua co — import OBJ tam 
 const gltfExporterPath = path.join(lib, 'GLTFExporter.js');
 const gltfExporter = existsSync(gltfExporterPath) ? readText(gltfExporterPath) : '';
 if (!gltfExporter) console.warn('WARN: lib/GLTFExporter.js chua co — nut Xuat .GLB tam an.');
+// Reflector (đợt 3): vendor từ three@0.128.0 examples/js/objects — mặt nước
+// phản chiếu thật trong 01-viewport.js. Chưa có thì placeholder rỗng +
+// cảnh báo (nước khi đó vẽ mặt phẳng thường, không phản chiếu).
+const reflectorPath = path.join(lib, 'Reflector.js');
+const reflector = existsSync(reflectorPath) ? readText(reflectorPath) : '';
+if (!reflector) console.warn('WARN: lib/Reflector.js chua co — nuoc phan chieu tam tat.');
+// JSZip (đợt 4): vendor jszip@3.10.1 UMD — export project .ZIP trong 15-export.js.
+// Chưa có thì placeholder rỗng + cảnh báo (nút ZIP khi đó chỉ hiện hint).
+const jszipPath = path.join(lib, 'jszip.min.js');
+const jszip = existsSync(jszipPath) ? readText(jszipPath) : '';
+if (!jszip) console.warn('WARN: lib/jszip.min.js chua co — nut Xuat project .ZIP tam an.');
 const tpl = readText(path.join(editorDir, 'editor.template.html'));
 
 // Kiểm tra giống tools/build.mjs: lib/CSS không được chứa '</script'.
@@ -74,6 +85,8 @@ const libChecks = [
 if (gltfLoader) libChecks.push(['GLTFLoader.js', gltfLoader]);
 if (objLoader) libChecks.push(['OBJLoader.js', objLoader]);
 if (gltfExporter) libChecks.push(['GLTFExporter.js', gltfExporter]);
+if (reflector) libChecks.push(['Reflector.js', reflector]);
+if (jszip) libChecks.push(['jszip.min.js', jszip]);
 for (const [name, text] of libChecks) {
   if (text.includes('</script')) throw new Error(name + ' chua </script');
 }
@@ -86,7 +99,7 @@ for (const f of parts) {
 }
 js = js.replaceAll('</script', () => '<\\/script');
 
-for (const ph of ['__EDITOR_STYLE__', '__THREE__', '__FFLATE__', '__FBXLOADER__', '__GLTFLOADER__', '__OBJLOADER__', '__GLTFEXPORTER__', '__EDITOR_JS__']) {
+for (const ph of ['__EDITOR_STYLE__', '__THREE__', '__FFLATE__', '__FBXLOADER__', '__GLTFLOADER__', '__OBJLOADER__', '__GLTFEXPORTER__', '__REFLECTOR__', '__JSZIP__', '__EDITOR_JS__']) {
   if (!tpl.includes(ph)) throw new Error('src/editor/editor.template.html thieu placeholder ' + ph);
 }
 
@@ -100,6 +113,8 @@ const out = tpl
   .replaceAll('__GLTFLOADER__', () => gltfLoader)
   .replaceAll('__OBJLOADER__', () => objLoader)
   .replaceAll('__GLTFEXPORTER__', () => gltfExporter)
+  .replaceAll('__REFLECTOR__', () => reflector)
+  .replaceAll('__JSZIP__', () => jszip)
   .replaceAll('__EDITOR_JS__', () => js);
 
 const dest = path.join(root, 'mapeditor.html');

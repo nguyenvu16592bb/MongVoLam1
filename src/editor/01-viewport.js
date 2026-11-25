@@ -40,6 +40,10 @@ ED.Viewport = (function () {
     _renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     _renderer.setSize(container.clientWidth || 800, container.clientHeight || 600);
     _renderer.setClearColor(0x1a1d21, 1);
+    /* Đợt 3 — shadow: kiểu PCFSoft; enabled do ED.Environment.applyShadows()
+       bật/tắt theo project.env.shadow (mặc định bật). */
+    _renderer.shadowMap.enabled = false;
+    _renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     _canvas = _renderer.domElement;
     _canvas.style.display = 'block';
     _canvas.style.touchAction = 'none';
@@ -107,7 +111,17 @@ ED.Viewport = (function () {
             calls: info.render.calls,
             tris: info.render.triangles,
             verts: info.render.triangles * 3,
-            mem: mem
+            mem: mem,
+            /* Đợt 4 — số chunk terrain (hiển thị "Chunk 16/16" trên HUD). */
+            chunks: (function () {
+              try {
+                if (typeof ED !== 'undefined' && ED.Terrain && typeof ED.Terrain.getChunkInfo === 'function') {
+                  var ci = ED.Terrain.getChunkInfo();
+                  return ci ? (ci.visible + '/' + ci.chunks) : null;
+                }
+              } catch (e) {}
+              return null;
+            })()
           });
         }
       }
@@ -222,6 +236,12 @@ ED.Viewport = (function () {
                 ED.Material.applyToMesh(o, parsed);
               }
             } catch (e) { /* giữ material cơ bản */ }
+            // Bóng đổ (đợt 3): model import thay cả group nên gán lại flag ở đây.
+            try {
+              if (ED.Environment && typeof ED.Environment.applyShadowFlags === 'function') {
+                ED.Environment.applyShadowFlags(parsed, o);
+              }
+            } catch (e) { /* giữ mặc định */ }
             if (_selectedId === o.id) _showSelection();
           });
         } catch (e) { /* giữ hộp tạm */ }
@@ -252,6 +272,17 @@ ED.Viewport = (function () {
         ED.Material.applyToMesh(obj, group);
       }
     } catch (e) { /* giữ material cơ bản */ }
+    // Bóng đổ (05-environment.js, đợt 3): gán cast/receive theo type của
+    // object, giữ flag mesh đã có. Gọi sau Material để không bị ghi đè.
+    try {
+      if (ED.Environment && typeof ED.Environment.applyShadowFlags === 'function') {
+        ED.Environment.applyShadowFlags(group, obj);
+      }
+    } catch (e) { /* giữ mặc định */ }
+    // Mặt nước phản chiếu thật (đợt 3): thay mặt phẳng bằng THREE.Reflector
+    // nếu lib đã nối vào build và env.water.reflect bật; không có thì giữ
+    // mặt phẳng thường của 03-assets.
+    if (obj.type === 'water') _swapWaterMesh(group, obj);
     // Parent: gắn vào group cha, vị trí tương đối.
     var parentObj = obj.parent ? (ED.Core && ED.Core.getObject(obj.parent)) : null;
     var parentGroup = parentObj ? _meshes[parentObj.id] : null;
@@ -292,10 +323,26 @@ ED.Viewport = (function () {
 
   // ---------- Terrain ----------
   var PAINT_COLORS = [0x5a8a3c, 0x8a6a42, 0x7d7d7d, 0xd8c27a, 0x3a6a9a];
+  /* Đợt 4 — mặt đất chunk do ED.Terrain quản lý (16 mesh + texture
+     procedural, 04-terrain.js): Viewport KHÔNG vẽ thêm mesh đất đơn
+     nữa để tránh z-fight/che chunk. syncTerrain() chỉ uỷ quyền cho
+     Terrain.rebuildMesh() (nó tự dispose + dựng lại chunk từ project);
+     chỉ khi ED.Terrain chưa có (build thiếu module) mới vẽ mesh đơn
+     cũ làm fallback. rebuildMesh() không gọi ngược syncTerrain nên
+     không đệ quy (refreshViewportTerrain của Terrain mới gọi syncTerrain). */
   function syncTerrain() {
     if (!_scene || !ED.Core) return false;
     var proj = ED.Core.getProject();
     if (!proj || !proj.terrain) return false;
+    if (typeof ED !== 'undefined' && ED.Terrain && typeof ED.Terrain.rebuildMesh === 'function') {
+      if (_terrainMesh) {
+        _scene.remove(_terrainMesh);
+        if (_terrainMesh.geometry) _terrainMesh.geometry.dispose();
+        _terrainMesh = null;
+      }
+      try { ED.Terrain.rebuildMesh(); } catch (e) {}
+      return true;
+    }
     var t = proj.terrain;
     var seg = t.segments, size = t.size;
     if (_terrainMesh) {
@@ -320,8 +367,148 @@ ED.Viewport = (function () {
     var mat = new THREE.MeshLambertMaterial({ vertexColors: true });
     _terrainMesh = new THREE.Mesh(geo, mat);
     _terrainMesh.userData.objectId = null;
+    // Đợt 3 — bóng đổ: terrain nhận bóng khi shadow bật (theo project.env).
+    try {
+      var _sh = ED.Environment && typeof ED.Environment.getShadow === 'function' ? ED.Environment.getShadow() : null;
+      _terrainMesh.receiveShadow = !!(_sh && _sh.enabled);
+    } catch (e) { _terrainMesh.receiveShadow = false; }
     _scene.add(_terrainMesh);
     return true;
+  }
+
+  /* Đợt 4 — getter terrain mesh thật (09-play.js _raycastGround gọi qua
+     guard typeof, trước đây hàm không tồn tại nên click-to-move rơi
+     xuống fallback). Thứ tự: (1) ED.Terrain.getMesh() — mesh đất do
+     ED.Terrain quản lý (brush/heightmap/rebuild tạo lại ở 04-terrain.js,
+     là bản mới nhất); (2) _terrainMesh riêng của Viewport (syncTerrain
+     tạo); (3) null nếu cả hai chưa có (chưa sync terrain lần nào). */
+  function getTerrainMesh() {
+    try {
+      if (typeof ED !== 'undefined' && ED.Terrain && typeof ED.Terrain.getMesh === 'function') {
+        var m = ED.Terrain.getMesh();
+        if (m) return m;
+      }
+    } catch (e) { /* ED.Terrain chưa load/lỗi -> dùng mesh của Viewport */ }
+    return _terrainMesh || null;
+  }
+
+  // ---------- Mặt nước phản chiếu thật (đợt 3, THREE.Reflector r128) ----------
+  /* Shader nước: bản sao ReflectorShader gốc + uniform opacity để chỉnh
+     "độ trong" (shader gốc alpha luôn 1.0, không chỉnh được độ mờ).
+     Thuần theo nghĩa không cần scene/renderer — chỉ cần THREE.Reflector.
+     Trả null khi không có Reflector hoặc shader gốc lạ (khi đó giữ mặt phẳng). */
+  function buildWaterShader(color, opacity) {
+    if (typeof THREE === 'undefined' || !THREE.Reflector || !THREE.Reflector.ReflectorShader) return null;
+    var base = THREE.Reflector.ReflectorShader;
+    var frag = base.fragmentShader || '';
+    var op = (typeof opacity === 'number' && isFinite(opacity)) ? opacity : 0.85;
+    var shader = {
+      uniforms: {
+        color: { value: new THREE.Color(color || '#4da39e') },
+        tDiffuse: { value: null },
+        textureMatrix: { value: new THREE.Matrix4() },
+        opacity: { value: op }
+      },
+      vertexShader: base.vertexShader,
+      fragmentShader: frag
+    };
+    if (frag.indexOf('opacity') < 0) {
+      var f2 = frag.replace('uniform vec3 color;', 'uniform vec3 color;\n\t\tuniform float opacity;');
+      f2 = f2.replace(/gl_FragColor = vec4\( blendOverlay\( base\.rgb, color \), 1\.0 \);/,
+        'gl_FragColor = vec4( blendOverlay( base.rgb, color ), opacity );');
+      if (f2 === frag || f2.indexOf('opacity') < 0) return null;
+      shader.fragmentShader = f2;
+    }
+    return shader;
+  }
+  /* Thay mặt phẳng nước (PlaneGeometry) trong group bằng Reflector.
+     Giữ nguyên vị trí/xoay/tỉ lệ của mặt phẳng gốc; mặt phẳng cũ chỉ dispose
+     material (geometry tái dùng cho Reflector). Khi KHÔNG phản chiếu (tắt
+     trong env, build chưa nối Reflector, hoặc shader gốc lạ): áp màu + độ
+     trong của env nước lên mặt phẳng thường để setting nước luôn là chủ
+     (syncObject đã set màu theo obj.color trước đó). */
+  function _swapWaterMesh(group, obj) {
+    if (typeof THREE === 'undefined' || !group || typeof group.traverse !== 'function') return false;
+    var water = null;
+    try { water = ED.Environment && typeof ED.Environment.getWater === 'function' ? ED.Environment.getWater() : null; } catch (e) {}
+    if (!water) return false;
+    var plane = null;
+    group.traverse(function (c) {
+      if (!plane && c.isMesh && c.geometry && c.geometry.type === 'PlaneGeometry') plane = c;
+    });
+    if (!plane) return false;
+    var shader = (water.reflect && THREE.Reflector) ? buildWaterShader(water.color, water.opacity) : null;
+    if (!shader) {
+      if (plane.material) {
+        if (plane.material.color) plane.material.color.set(water.color);
+        plane.material.opacity = water.opacity;
+        plane.material.transparent = water.opacity < 1;
+      }
+      return false;
+    }
+    var reflector = new THREE.Reflector(plane.geometry, {
+      clipBias: 0.003, textureWidth: 512, textureHeight: 512, color: water.color, shader: shader
+    });
+    reflector.position.copy(plane.position);
+    reflector.rotation.copy(plane.rotation);
+    reflector.scale.copy(plane.scale);
+    reflector.userData.isWaterReflector = true;
+    reflector.userData.objectId = obj.id;
+    reflector.material.transparent = water.opacity < 1;
+    group.remove(plane);
+    if (plane.material && plane.material.dispose) plane.material.dispose();
+    group.add(reflector);
+    return true;
+  }
+  /* Dựng lại toàn bộ mặt nước trong scene (khi bật/tắt phản chiếu hoặc đổi
+     project/preset). Dispose render target của Reflector cũ trước khi xoá
+     mesh để không rò GPU memory. Trả số mặt nước đã dựng lại. */
+  function refreshWater() {
+    if (!_scene || !ED.Core || typeof ED.Core.listObjects !== 'function') return 0;
+    var count = 0;
+    ED.Core.listObjects().forEach(function (o) {
+      if (!o || o.type !== 'water' || !_meshes[o.id]) return;
+      var g = _meshes[o.id];
+      g.traverse(function (c) {
+        if (c && c.userData && c.userData.isWaterReflector && typeof c.getRenderTarget === 'function') {
+          try { var rt = c.getRenderTarget(); if (rt && rt.dispose) rt.dispose(); } catch (e) {}
+        }
+      });
+      removeMesh(o.id);
+      syncObject(o);
+      count++;
+    });
+    return count;
+  }
+  /* Cập nhật live màu + độ trong của mặt nước mà KHÔNG dựng lại mesh:
+     Reflector thì đổi uniform color/opacity, mặt phẳng thường thì đổi
+     material.color/opacity trực tiếp. Trả số mesh nước đã cập nhật. */
+  function updateWaterMaterial() {
+    if (!_scene) return 0;
+    var water = null;
+    try { water = ED.Environment && typeof ED.Environment.getWater === 'function' ? ED.Environment.getWater() : null; } catch (e) {}
+    if (!water) return 0;
+    var count = 0;
+    Object.keys(_meshes).forEach(function (id) {
+      var obj = null;
+      try { obj = ED.Core && typeof ED.Core.getObject === 'function' ? ED.Core.getObject(id) : null; } catch (e) {}
+      if (!obj || obj.type !== 'water') return;
+      _meshes[id].traverse(function (c) {
+        if (!c || !c.isMesh) return;
+        if (c.userData && c.userData.isWaterReflector) {
+          var u = c.material && c.material.uniforms;
+          if (u && u.color) u.color.value.set(water.color);
+          if (u && u.opacity) u.opacity.value = water.opacity;
+          if (c.material) c.material.transparent = water.opacity < 1;
+          count++;
+        } else if (c.geometry && c.geometry.type === 'PlaneGeometry') {
+          if (c.material && c.material.color) c.material.color.set(water.color);
+          if (c.material) { c.material.opacity = water.opacity; c.material.transparent = water.opacity < 1; }
+          count++;
+        }
+      });
+    });
+    return count;
   }
 
   // ---------- Gizmo tự vẽ ----------
@@ -480,11 +667,20 @@ ED.Viewport = (function () {
   function getCamera() { return _activeCamera(); }
   function getRenderer() { return _renderer; }
   // Điểm trên mặt đất từ tọa độ màn hình: raycast terrain nếu có, không thì mặt phẳng y=0.
+  /* Đợt 4 — target raycast là 16 chunk mesh của ED.Terrain (nếu có),
+     không thì mesh đất đơn _terrainMesh (fallback khi Terrain chưa load).
+     Không raycast được chunk nào thì rơi xuống mặt phẳng y=0 như cũ. */
   function _groundPoint(clientX, clientY) {
     if (!_canvas || !_scene) return null;
     var ray = _rayFromEvent({ clientX: clientX, clientY: clientY });
     var targets = [];
-    if (_terrainMesh) targets.push(_terrainMesh);
+    try {
+      if (typeof ED !== 'undefined' && ED.Terrain && typeof ED.Terrain.getChunkMeshes === 'function') {
+        var chunks = ED.Terrain.getChunkMeshes();
+        for (var ci = 0; ci < chunks.length; ci++) if (chunks[ci]) targets.push(chunks[ci]);
+      }
+    } catch (e) { /* Terrain chưa sẵn sàng -> dùng _terrainMesh */ }
+    if (!targets.length && _terrainMesh) targets.push(_terrainMesh);
     var hits = ray.intersectObjects(targets, false);
     if (hits.length) return { x: hits[0].point.x, z: hits[0].point.z };
     var plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -825,12 +1021,16 @@ ED.Viewport = (function () {
   return {
     init: init, meshes: _meshes,
     syncObject: syncObject, removeMesh: removeMesh, syncTerrain: syncTerrain,
+    getTerrainMesh: getTerrainMesh,
     setGizmoMode: setGizmoMode, getGizmoMode: getGizmoMode,
     focus: focus, setCameraPreset: setCameraPreset, getCameraPreset: getCameraPreset,
     setPlayMode: setPlayMode, resyncAll: resyncAll,
     getScene: getScene, getCamera: getCamera, getRenderer: getRenderer,
     screenToGround: screenToGround, raycastGround: raycastGround,
     getCameraFront: getCameraFront, setGroundClickHandler: setGroundClickHandler,
+    /* Đợt 3 — mặt nước phản chiếu thật (THREE.Reflector r128). */
+    buildWaterShader: buildWaterShader, refreshWater: refreshWater,
+    updateWaterMaterial: updateWaterMaterial,
     get scene() { return _scene; },
     get camera() { return _activeCamera(); },
     get renderer() { return _renderer; }
